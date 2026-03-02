@@ -36,6 +36,8 @@ type Props = {
   onZoomChange:   (z: number) => void;
   onSave?:        () => void;
   saving?:        boolean;
+  currentPage?:   number;
+  numPages?:      number;
 };
 
 export const PDFToolbar: React.FC<Props> = ({
@@ -47,6 +49,8 @@ export const PDFToolbar: React.FC<Props> = ({
   onZoomChange,
   onSave,
   saving = false,
+  currentPage = 1,
+  numPages = 0,
 }) => {
   const [colorOpen, setColorOpen] = useState(false);
   const colorRef = useRef<HTMLDivElement>(null);
@@ -80,7 +84,7 @@ export const PDFToolbar: React.FC<Props> = ({
         borderBottom: '1px solid #2a2a2a',
         flexShrink:   0,
       }}
-      className="flex items-center justify-between px-3"
+      className="flex items-center px-3"
     >
       {/* ── Left: tool buttons ── */}
       <div className="flex items-center gap-1">
@@ -140,6 +144,15 @@ export const PDFToolbar: React.FC<Props> = ({
         <button type="button" onClick={() => toggle('draw')}     className={btnClass('draw')}    title="Draw"><Pencil size={16} /></button>
         <button type="button" onClick={() => toggle('image')}    className={btnClass('image')}   title="Image Stamp"><Image size={16} /></button>
         <button type="button" onClick={() => toggle('eraser')}   className={btnClass('eraser')}  title="Eraser"><Eraser size={16} /></button>
+      </div>
+
+      {/* ── Center: page indicator ── */}
+      <div className="flex-1 flex items-center justify-center">
+        {numPages > 0 && (
+          <span className="text-xs text-[#8a8a8a] select-none">
+            Page {currentPage} / {numPages}
+          </span>
+        )}
       </div>
 
       {/* ── Right: save + zoom controls ── */}

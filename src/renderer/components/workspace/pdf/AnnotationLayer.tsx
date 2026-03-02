@@ -266,7 +266,7 @@ export const AnnotationLayer: React.FC<Props> = ({
             position: 'absolute', top: 0, left: 0,
             width: cssWidth, height: cssHeight,
             pointerEvents: 'all',
-            cursor: activeTool === 'eraser' ? 'not-allowed' : 'crosshair',
+            cursor: activeTool === 'eraser' ? 'pointer' : 'crosshair',
             zIndex: 5,
           }}
           onClick={activeTool === 'sticky' ? handleStickyClick : activeTool === 'eraser' ? handleEraserClick : undefined}

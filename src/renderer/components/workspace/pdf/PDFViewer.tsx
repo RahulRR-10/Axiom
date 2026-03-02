@@ -408,6 +408,8 @@ export const PDFViewer: React.FC<Props> = ({ filePath, fileId = '', vaultPath = 
         onZoomChange={setZoom}
         onSave={savePdf}
         saving={saving}
+        currentPage={currentPage}
+        numPages={numPages}
       />
 
       <div
@@ -440,17 +442,6 @@ export const PDFViewer: React.FC<Props> = ({ filePath, fileId = '', vaultPath = 
           />
         )}
       </div>
-
-      {!loading && !error && numPages > 0 && (
-        <div
-          style={{ height: '28px', background: '#1a1a1a', borderTop: '1px solid #2a2a2a', flexShrink: 0 }}
-          className="flex items-center justify-center"
-        >
-          <span className="text-[10px] text-[#6e6e6e] select-none">
-            Page {currentPage} / {numPages}
-          </span>
-        </div>
-      )}
     </div>
   );
 };

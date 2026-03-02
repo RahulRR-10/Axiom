@@ -53,6 +53,9 @@
   pointer-events: auto;
   -webkit-user-select: text;
   user-select: text;
+  /* Clip each span to its calculated bounding box so selection
+     doesn't bleed into adjacent lines at line boundaries */
+  overflow: hidden;
 }
 
 /* ── Font sizing & transform ───────────────────────────────────────────────── */
