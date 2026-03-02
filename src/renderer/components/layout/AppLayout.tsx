@@ -1,13 +1,15 @@
 import React, { useState } from 'react';
 
 import { AIPanel } from '../ai/AIPanel';
+import { SpotlightSearch } from '../search/SpotlightSearch';
 import { VaultSidebar } from '../vault/VaultSidebar';
 import { Workspace } from '../workspace/Workspace';
 import { WindowControlsToolbar } from './WindowControlsToolbar';
 
 export const AppLayout: React.FC = () => {
   const [vaultCollapsed, setVaultCollapsed] = useState<boolean>(false);
-  const [aiCollapsed, setAiCollapsed] = useState<boolean>(false);
+  const [aiCollapsed, setAiCollapsed]       = useState<boolean>(false);
+  const [vaultPath, setVaultPath]           = useState<string | null>(null);
 
   return (
     <div className="h-screen w-screen overflow-hidden flex flex-col bg-[#141414] text-[#d4d4d4]">
@@ -64,7 +66,7 @@ export const AppLayout: React.FC = () => {
                 </button>
               </div>
               <div className="flex-1 overflow-hidden">
-                <VaultSidebar />
+                <VaultSidebar onVaultOpen={setVaultPath} />
               </div>
             </div>
           )}
@@ -78,7 +80,7 @@ export const AppLayout: React.FC = () => {
           }}
           className="h-full overflow-hidden flex-1 min-w-0"
         >
-          <Workspace />
+          <Workspace vaultPath={vaultPath} />
         </main>
 
         {/* AI panel */}
@@ -124,6 +126,9 @@ export const AppLayout: React.FC = () => {
         </section>
 
       </div>
+
+      {/* Spotlight search modal — vaultPath may be null before vault opened */}
+      <SpotlightSearch vaultPath={vaultPath} />
     </div>
   );
 };

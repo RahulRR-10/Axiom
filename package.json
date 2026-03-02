@@ -36,6 +36,7 @@
     "@typescript-eslint/parser": "^5.62.0",
     "@vercel/webpack-asset-relocator-loader": "^1.7.3",
     "autoprefixer": "^10.4.27",
+    "copy-webpack-plugin": "^13.0.1",
     "css-loader": "^6.11.0",
     "electron": "40.6.1",
     "eslint": "^8.57.1",
@@ -60,6 +61,7 @@
     "electron-squirrel-startup": "^1.0.1",
     "electron-store": "^11.0.2",
     "lucide-react": "^0.576.0",
+    "officeparser": "^6.0.4",
     "pdf-lib": "^1.17.1",
     "pdf-parse": "^2.4.5",
     "pdfjs-dist": "^5.4.624",
@@ -67,7 +69,6 @@
     "react-dom": "^19.2.4",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
-    "officeparser": "^6.0.4",
     "uuid": "^13.0.0",
     "vectordb": "^0.21.2"
   }

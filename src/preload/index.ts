@@ -1,36 +1,92 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
-import type { FileNode } from '../shared/types';
+import { VAULT_CHANNELS, WINDOW_CHANNELS, SEARCH_CHANNELS, ANNOTATION_CHANNELS } from '../shared/ipc/channels';
+import type { FileNode, IndexStatus, SpotlightResult, SearchResult, Annotation } from '../shared/types';
+import type { VaultIndexProgressPayload } from '../shared/ipc/contracts';
 
 const electronAPI = {
-  selectVaultFolder: async (): Promise<string | null> => null,
-  readDirectory: async (_path: string): Promise<FileNode[]> => [],
-  readFile: async (_path: string): Promise<Buffer> => Buffer.from([]),
-  writeFile: async (_path: string, _data: Buffer): Promise<void> => undefined,
-  watchVault: (_path: string, _callback: (event: string, filePath: string) => void): void => undefined,
-  openExternal: (_url: string): void => undefined,
-  minimizeWindow: async (): Promise<void> => {
-    await ipcRenderer.invoke('window:minimize');
+  // ── Vault ────────────────────────────────────────────────────────────────
+  selectVaultFolder: (): Promise<string | null> =>
+    ipcRenderer.invoke(VAULT_CHANNELS.SELECT),
+
+  openVault: (vaultPath: string): Promise<{ files: FileNode[]; status: IndexStatus }> =>
+    ipcRenderer.invoke(VAULT_CHANNELS.OPEN, vaultPath),
+
+  readDirectory: (dirPath: string): Promise<FileNode[]> =>
+    ipcRenderer.invoke(VAULT_CHANNELS.READ_DIRECTORY, dirPath),
+
+  readFile: (filePath: string): Promise<Uint8Array> =>
+    ipcRenderer
+      .invoke(VAULT_CHANNELS.READ_FILE, filePath)
+      .then((buf: Buffer) => new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength)),
+
+  writeFile: (filePath: string, data: Uint8Array): Promise<void> =>
+    ipcRenderer.invoke(VAULT_CHANNELS.WRITE_FILE, filePath, Buffer.from(data)),
+
+  getIndexStatus: (vaultPath: string): Promise<IndexStatus> =>
+    ipcRenderer.invoke(VAULT_CHANNELS.GET_INDEX_STATUS, vaultPath),
+
+  getFileId: (vaultPath: string, filePath: string): Promise<string | null> =>
+    ipcRenderer.invoke(VAULT_CHANNELS.GET_FILE_ID, vaultPath, filePath),
+
+  onIndexProgress: (
+    callback: (payload: VaultIndexProgressPayload) => void,
+  ): (() => void) => {
+    const listener = (_: unknown, payload: VaultIndexProgressPayload): void => callback(payload);
+    ipcRenderer.on(VAULT_CHANNELS.INDEX_PROGRESS, listener);
+    return () => ipcRenderer.removeListener(VAULT_CHANNELS.INDEX_PROGRESS, listener);
   },
-  toggleMaximizeWindow: async (): Promise<void> => {
-    await ipcRenderer.invoke('window:toggle-maximize');
+
+  onFileChanged: (callback: (payload: { vaultPath: string }) => void): (() => void) => {
+    const listener = (_: unknown, payload: { vaultPath: string }): void => callback(payload);
+    ipcRenderer.on(VAULT_CHANNELS.FILE_CHANGED, listener);
+    return () => ipcRenderer.removeListener(VAULT_CHANNELS.FILE_CHANGED, listener);
   },
-  closeWindow: async (): Promise<void> => {
-    await ipcRenderer.invoke('window:close');
+
+  // ── Search ───────────────────────────────────────────────────────────────
+  spotlightSearch: (query: string, vaultPath: string): Promise<SpotlightResult[]> =>
+    ipcRenderer.invoke(SEARCH_CHANNELS.SPOTLIGHT, query, vaultPath),
+
+  fullSearch: (
+    query: string,
+    vaultPath: string,
+    subject?: string,
+    fileType?: string,
+  ): Promise<SearchResult[]> =>
+    ipcRenderer.invoke(SEARCH_CHANNELS.FULL, query, vaultPath, subject, fileType),
+
+  // ── Annotations ─────────────────────────────────────────────────────────
+  saveAnnotation: (vaultPath: string, annotation: Annotation): Promise<{ id: string }> =>
+    ipcRenderer.invoke(ANNOTATION_CHANNELS.SAVE, vaultPath, annotation),
+
+  loadAnnotations: (vaultPath: string, fileId: string): Promise<Annotation[]> =>
+    ipcRenderer.invoke(ANNOTATION_CHANNELS.LOAD, vaultPath, fileId),
+
+  deleteAnnotation: (vaultPath: string, annotationId: string): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(ANNOTATION_CHANNELS.DELETE, vaultPath, annotationId),
+
+  // ── Misc ─────────────────────────────────────────────────────────────────
+  openExternal: (url: string): void => {
+    void ipcRenderer.invoke('shell:openExternal', url);
   },
-  isWindowMaximized: async (): Promise<boolean> => {
-    return ipcRenderer.invoke('window:is-maximized');
-  },
+
+  // ── Window controls ──────────────────────────────────────────────────────
+  minimizeWindow: (): Promise<void> =>
+    ipcRenderer.invoke(WINDOW_CHANNELS.MINIMIZE),
+
+  toggleMaximizeWindow: (): Promise<void> =>
+    ipcRenderer.invoke(WINDOW_CHANNELS.TOGGLE_MAXIMIZE),
+
+  closeWindow: (): Promise<void> =>
+    ipcRenderer.invoke(WINDOW_CHANNELS.CLOSE),
+
+  isWindowMaximized: (): Promise<boolean> =>
+    ipcRenderer.invoke(WINDOW_CHANNELS.IS_MAXIMIZED),
+
   onWindowMaximizedChange: (callback: (isMaximized: boolean) => void): (() => void) => {
-    const listener = (_event: unknown, isMaximized: boolean): void => {
-      callback(isMaximized);
-    };
-
-    ipcRenderer.on('window:maximized-changed', listener);
-
-    return () => {
-      ipcRenderer.removeListener('window:maximized-changed', listener);
-    };
+    const listener = (_event: unknown, isMaximized: boolean): void => callback(isMaximized);
+    ipcRenderer.on(WINDOW_CHANNELS.MAXIMIZED_CHANGED, listener);
+    return () => ipcRenderer.removeListener(WINDOW_CHANNELS.MAXIMIZED_CHANGED, listener);
   },
 };
 

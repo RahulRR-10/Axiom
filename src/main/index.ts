@@ -1,4 +1,8 @@
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain, session } from 'electron';
+
+import { registerVaultHandlers } from './ipc/vaultHandlers';
+import { registerSearchHandlers } from './ipc/searchHandlers';
+import { registerAnnotationHandlers } from './ipc/annotationHandlers';
 
 declare const MAIN_WINDOW_WEBPACK_ENTRY: string;
 declare const MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY: string;
@@ -64,6 +68,7 @@ const createWindow = (): void => {
       contextIsolation: true,
       nodeIntegration: false,
       webSecurity: true,
+      webviewTag: true,
     },
   });
 
@@ -83,6 +88,10 @@ const createWindow = (): void => {
 
 app.whenReady().then(() => {
   registerWindowIpcHandlers();
+  registerVaultHandlers();
+  registerSearchHandlers();
+  registerAnnotationHandlers();
+  setupWebviewSessions();
   createWindow();
 });
 
@@ -97,3 +106,17 @@ app.on('activate', () => {
     createWindow();
   }
 });
+
+// ── Webview session CSP tweaks (Phase 6) ─────────────────────────────────────
+function setupWebviewSessions(): void {
+  const partitions = ['persist:chatgpt', 'persist:claude', 'persist:gemini'];
+  for (const partition of partitions) {
+    session.fromPartition(partition).webRequest.onHeadersReceived((details, callback) => {
+      const headers = { ...details.responseHeaders };
+      // Remove X-Frame-Options so the page can be embedded in a webview
+      delete headers['x-frame-options'];
+      delete headers['X-Frame-Options'];
+      callback({ responseHeaders: headers });
+    });
+  }
+}

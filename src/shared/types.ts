@@ -1,6 +1,112 @@
+// ── File System ─────────────────────────────────────────────────────────────
+
+export type FileNodeType = 'file' | 'folder';
+
 export type FileNode = {
   name: string;
   path: string;
-  type: 'file' | 'folder';
+  type: FileNodeType;
   children?: FileNode[];
+  /** lower-case extension without dot: 'pdf' | 'md' | 'txt' | 'pptx' */
+  fileType?: string;
 };
+
+// ── Indexing ─────────────────────────────────────────────────────────────────
+
+export type IndexStatus = {
+  total: number;
+  indexed: number;
+  failed: number;
+  inProgress: boolean;
+};
+
+export type IndexedFile = {
+  id: string;
+  path: string;
+  name: string;
+  type: 'pdf' | 'pptx' | 'md' | 'txt';
+  subject: string | null;
+  size: number | null;
+  mtime_ms: number | null;
+  content_hash: string | null;
+  indexed_at: number | null;
+  created_at: number;
+};
+
+export type Chunk = {
+  id: string;
+  file_id: string;
+  page_or_slide: number | null;
+  text: string;
+  chunk_index: number;
+  is_annotation: number; // 0 | 1
+};
+
+export type ChunkWithVector = Chunk & {
+  vector: number[];
+};
+
+// ── Search ───────────────────────────────────────────────────────────────────
+
+export type SearchResult = {
+  id: string;
+  file_id: string;
+  file_name: string;
+  file_type: string;
+  subject: string | null;
+  page_or_slide: number | null;
+  text: string;
+  score: number;
+  is_annotation: number;
+  source: 'fts' | 'semantic' | 'note';
+};
+
+export type SpotlightResult = {
+  id: string;
+  file_id: string | null;
+  file_name: string;
+  file_type: string;
+  subject: string | null;
+  page_or_slide: number | null;
+  snippet: string;
+  type: 'chunk' | 'note';
+};
+
+// ── Notes ────────────────────────────────────────────────────────────────────
+
+export type NoteSummary = {
+  id: string;
+  title: string;
+  subject: string | null;
+  source_file_id: string | null;
+  source_page: number | null;
+  created_at: number;
+  updated_at: number;
+};
+
+// ── Annotations ──────────────────────────────────────────────────────────────
+
+export type AnnotationType = 'highlight' | 'sticky' | 'textbox' | 'draw' | 'image';
+
+export type AnnotationBase = {
+  id: string;
+  file_id: string;
+  page: number;
+  type: AnnotationType;
+};
+
+export type HighlightAnnotation = AnnotationBase & {
+  type: 'highlight';
+  rects: Array<{ x: number; y: number; w: number; h: number }>;
+  color: string;
+  text: string;
+};
+
+export type StickyAnnotation = AnnotationBase & {
+  type: 'sticky';
+  x: number;
+  y: number;
+  content: string;
+};
+
+export type Annotation = HighlightAnnotation | StickyAnnotation;
