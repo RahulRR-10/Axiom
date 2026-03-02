@@ -53,6 +53,7 @@ const PDFPage = React.memo(function PDFPage({
   onAnnotationSaved,
   fontSize: propFontSize,
   textColor: propTextColor,
+  zoom: propZoom,
 }: {
   pdf:               PDFDocumentProxy;
   pageNum:           number;
@@ -67,6 +68,7 @@ const PDFPage = React.memo(function PDFPage({
   onAnnotationSaved: () => void;
   fontSize:          number;
   textColor:         string;
+  zoom:              number;
 }) {
   const canvasRef    = useRef<HTMLCanvasElement>(null);
   const textLayerRef = useRef<HTMLDivElement>(null);
@@ -167,6 +169,7 @@ const PDFPage = React.memo(function PDFPage({
         onAnnotationSaved={onAnnotationSaved}
         fontSize={propFontSize}
         textColor={propTextColor}
+        zoom={propZoom}
       />
     </div>
   );
@@ -324,10 +327,31 @@ export const PDFViewer: React.FC<Props> = ({ filePath, fileId = '', vaultPath = 
     }
   }, [filePath, annotations, saving]);
 
+  /* ── Escape to deactivate tool ───────────────────────────────────────────── */
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setActiveTool('none');
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, []);
+
   /* ── Scroll-based virtualization + page tracking ──────────────────────────── */
+  const prevZoomRef     = useRef(zoom);
+  const currentPageRef  = useRef(currentPage);
+  currentPageRef.current = currentPage;
+
   useEffect(() => {
     const el = scrollRef.current;
     if (!el || !pageMeta) return;
+
+    // If zoom changed, scroll to keep the same page in view
+    if (prevZoomRef.current !== zoom) {
+      prevZoomRef.current = zoom;
+      const pageH = Math.floor(pageMeta.height * zoom) + PAGE_GAP;
+      const targetScroll = (currentPageRef.current - 1) * pageH;
+      el.scrollTop = targetScroll;
+    }
 
     const computeRange = () => {
       const scrollTop    = el.scrollTop;
@@ -382,6 +406,7 @@ export const PDFViewer: React.FC<Props> = ({ filePath, fileId = '', vaultPath = 
           onAnnotationSaved={loadAnnotations}
           fontSize={fontSize}
           textColor={textColor}
+          zoom={zoom}
         />
       );
     });

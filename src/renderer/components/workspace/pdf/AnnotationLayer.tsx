@@ -22,6 +22,7 @@ type Props = {
   onAnnotationSaved: () => void;
   fontSize:          number;
   textColor:         string;
+  zoom:              number;
 };
 
 type StickyPopover = { id: string | null; x: number; y: number; content: string };
@@ -44,11 +45,18 @@ export const AnnotationLayer: React.FC<Props> = ({
   onAnnotationSaved,
   fontSize: propFontSize,
   textColor: propTextColor,
+  zoom: propZoom,
 }) => {
   const [newHighlights, setNewHighlights] = useState<HighlightAnnotation[]>([]);
   const [newDrawings, setNewDrawings]     = useState<DrawAnnotation[]>([]);
   const [popover, setPopover]             = useState<StickyPopover | null>(null);
   const [textboxEdit, setTextboxEdit]     = useState<{ x: number; y: number; content: string } | null>(null);
+
+  // Refs to always have the latest text color / font size (avoids stale closures in onBlur)
+  const textColorRef = useRef(propTextColor);
+  const fontSizeRef  = useRef(propFontSize);
+  useEffect(() => { textColorRef.current = propTextColor; }, [propTextColor]);
+  useEffect(() => { fontSizeRef.current  = propFontSize; },  [propFontSize]);
 
   // ── Draw state ──────────────────────────────────────────────────────────
   const [drawing, setDrawing]             = useState(false);
@@ -409,7 +417,7 @@ export const AnnotationLayer: React.FC<Props> = ({
             top: tb.y * cssHeight,
             left: tb.x * cssWidth,
             color: tb.color,
-            fontSize: `${tb.fontSize}px`,
+            fontSize: `${tb.fontSize * propZoom}px`,
             fontFamily: 'sans-serif',
             pointerEvents: 'none',
             zIndex: 4,
@@ -445,7 +453,7 @@ export const AnnotationLayer: React.FC<Props> = ({
                 const ann: TextboxAnnotation = {
                   id: uuidv4(), file_id: fileId, page, type: 'textbox',
                   x: textboxEdit.x, y: textboxEdit.y,
-                  content: textboxEdit.content, color: propTextColor, fontSize: propFontSize,
+                  content: textboxEdit.content, color: textColorRef.current, fontSize: fontSizeRef.current,
                 };
                 window.electronAPI.saveAnnotation(vaultPath, ann)
                   .then(() => { setTextboxEdit(null); onAnnotationSaved(); })
@@ -459,7 +467,7 @@ export const AnnotationLayer: React.FC<Props> = ({
                 const ann: TextboxAnnotation = {
                   id: uuidv4(), file_id: fileId, page, type: 'textbox',
                   x: textboxEdit.x, y: textboxEdit.y,
-                  content: textboxEdit.content, color: propTextColor, fontSize: propFontSize,
+                  content: textboxEdit.content, color: textColorRef.current, fontSize: fontSizeRef.current,
                 };
                 window.electronAPI.saveAnnotation(vaultPath, ann)
                   .then(() => { setTextboxEdit(null); onAnnotationSaved(); })
