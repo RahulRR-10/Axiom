@@ -46,6 +46,13 @@ export const VaultSidebar: React.FC<VaultSidebarProps> = ({ onVaultOpen, onFileO
     onVaultOpen?.(selected);
   }, [onVaultOpen]);
 
+  // Allow external trigger (e.g. header "Open Vault" button) via custom event
+  useEffect(() => {
+    const handler = (): void => { void handleOpenVault(); };
+    window.addEventListener('triggerOpenVault', handler);
+    return () => window.removeEventListener('triggerOpenVault', handler);
+  }, [handleOpenVault]);
+
   async function refreshTree(vp: string): Promise<void> {
     const tree = await window.electronAPI.readDirectory(vp);
     setFiles(tree);

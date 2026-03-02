@@ -5,6 +5,7 @@ import type { PDFTool } from './PDFToolbar';
 
 type Props = {
   activeTool:        PDFTool;
+  highlightColor:    string;
   fileId:            string;
   page:              number;
   vaultPath:         string;
@@ -25,6 +26,7 @@ type StickyPopover = {
 
 export const AnnotationLayer: React.FC<Props> = ({
   activeTool,
+  highlightColor,
   fileId,
   page,
   vaultPath,
@@ -68,7 +70,7 @@ export const AnnotationLayer: React.FC<Props> = ({
       page,
       type:    'highlight',
       rects,
-      color:   '#fde68a',
+      color:   highlightColor,
       text,
     };
 
@@ -79,7 +81,7 @@ export const AnnotationLayer: React.FC<Props> = ({
         onAnnotationSaved();
       })
       .catch(console.error);
-  }, [activeTool, fileId, page, vaultPath, wrapperRef, onAnnotationSaved]);
+  }, [activeTool, highlightColor, fileId, page, vaultPath, wrapperRef, onAnnotationSaved]);
 
   // Attach mouseup to the wrapper so we capture selections across text layer
   useEffect(() => {

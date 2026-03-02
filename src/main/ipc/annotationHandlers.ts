@@ -16,7 +16,7 @@ export function registerAnnotationHandlers(): void {
 
       db.prepare(`
         INSERT OR REPLACE INTO annotations
-          (id, file_id, page, type, data, created_at)
+          (id, file_id, page, type, data_json, created_at)
         VALUES (?, ?, ?, ?, ?, COALESCE(
           (SELECT created_at FROM annotations WHERE id = ?),
           unixepoch()
@@ -40,10 +40,10 @@ export function registerAnnotationHandlers(): void {
     async (_event, vaultPath: string, fileId: string) => {
       const db = getDb(vaultPath);
       const rows = db.prepare(
-        'SELECT data FROM annotations WHERE file_id = ? ORDER BY page, created_at',
-      ).all(fileId) as Array<{ data: string }>;
+        'SELECT data_json FROM annotations WHERE file_id = ? ORDER BY page, created_at',
+      ).all(fileId) as Array<{ data_json: string }>;
 
-      return rows.map(r => JSON.parse(r.data) as Annotation);
+      return rows.map(r => JSON.parse(r.data_json) as Annotation);
     },
   );
 

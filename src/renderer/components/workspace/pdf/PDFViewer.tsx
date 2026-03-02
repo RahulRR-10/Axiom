@@ -115,13 +115,36 @@ const PDFPage = React.memo(function PDFPage({
       // ── Text layer ────────────────────────────────────────────────────────
       // Populates textLayerDiv with transparent but DOM-selectable <span>s,
       // enabling native text selection (and therefore highlight tool capture).
+      //
+      // pdfjs v5 TextLayer internally does:
+      //   this.#scale = viewport.scale * devicePixelRatio
+      // and uses that to measure text widths via a hidden canvas.
+      // setLayerDimensions() sizes the container with:
+      //   width: calc(var(--total-scale-factor) * <pageWidth>px)
+      // So we must provide --total-scale-factor on the container equal to
+      // the CSS-space scale (viewport.scale) so the div is the right size.
+      //
+      // The viewport we pass should be scale=1 (unit-scale) so that internal
+      // #scale = 1 * DPR and positions are in page-coordinate percentages.
+      // We then use --total-scale-factor to scale the container to CSS size.
       const textLayerDiv = textLayerRef.current!;
       textLayerDiv.innerHTML = '';
+
+      // Unit-scale viewport — pdfjs positions spans via % of page dimensions
+      const unitViewport = page.getViewport({ scale: 1 });
+
+      // Tell the container its CSS size via --total-scale-factor
+      textLayerDiv.style.setProperty('--total-scale-factor', `${scale}`);
+      // Also set scale-round helpers (used by CSS round() when supported)
+      const dprForRound = window.devicePixelRatio || 1;
+      textLayerDiv.style.setProperty('--scale-round-x', `${1 / (scale * dprForRound)}px`);
+      textLayerDiv.style.setProperty('--scale-round-y', `${1 / (scale * dprForRound)}px`);
+
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const tl = new (pdfjsLib as any).TextLayer({
         textContentSource: await page.getTextContent(),
         container:         textLayerDiv,
-        viewport:          cssViewport, // MUST be CSS-scale, not DPR-scale
+        viewport:          unitViewport,
       });
       await tl.render();
 
@@ -143,22 +166,27 @@ const PDFPage = React.memo(function PDFPage({
         boxShadow:    '0 2px 8px rgba(0,0,0,0.5)',
         background:   '#ffffff',
         overflow:     'hidden',
+        cursor:       activeTool === 'highlight' ? 'text'
+                    : activeTool === 'sticky' ? 'crosshair'
+                    : activeTool === 'draw' ? 'crosshair'
+                    : 'default',
       }}
     >
       {/* Pixel-perfect canvas render of the PDF page */}
       <canvas
         ref={canvasRef}
-        style={{ position: 'absolute', top: 0, left: 0, zIndex: 1 }}
+        style={{ position: 'absolute', top: 0, left: 0, zIndex: 1, pointerEvents: 'none' }}
       />
       {/* Transparent selectable text spans — enables highlight + clipboard */}
       <div
         ref={textLayerRef}
         className="textLayer"
-        style={{ zIndex: 2 }}
+        style={{ zIndex: 2, pointerEvents: 'auto', userSelect: 'text', WebkitUserSelect: 'text' } as React.CSSProperties}
       />
       {/* Highlight/sticky overlays — pointer-events: none so text stays selectable */}
       <AnnotationLayer
         activeTool={activeTool}
+        highlightColor={highlightColor}
         fileId={fileId}
         page={pageNum}
         vaultPath={vaultPath}

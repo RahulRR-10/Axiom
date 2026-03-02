@@ -1,26 +1,36 @@
 /*
- * Essential CSS for pdfjs TextLayer.
- * Extracted from pdfjs-dist/web/pdf_viewer.css — only the rules needed for
- * our minimal text-layer + selection use case.
+ * Essential CSS for pdfjs-dist v5.x TextLayer.
+ *
+ * In v5 the TextLayer positions spans with percentage left/top values
+ * relative to the container.  setLayerDimensions() sizes the container via
+ * calc(var(--total-scale-factor) * <pageWidth>px).  Each span receives
+ * --font-height (WITH px unit, e.g. "12.34px"), --scale-x, --rotate as
+ * inline CSS custom properties.
+ *
+ * We MUST provide:
+ *   1.  --total-scale-factor on the container (set in PDFViewer.tsx)
+ *   2.  font-size: var(--font-height)  (NOT multiplied by 1px — already has it)
+ *   3.  transform using --scale-x and --rotate
  */
 
 .textLayer {
   position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  overflow: clip;
-  line-height: 1;
   text-align: initial;
+  inset: 0;
+  overflow: clip;
+  opacity: 1;
+  line-height: 1;
   -webkit-text-size-adjust: none;
      -moz-text-size-adjust: none;
           text-size-adjust: none;
   forced-color-adjust: none;
   transform-origin: 0 0;
   z-index: 2;
-  /* Ensure dark-mode/color-scheme of the app doesn't recolour PDF text */
   color-scheme: only light;
+  /* Receive pointer events & allow text selection */
+  pointer-events: auto;
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 .textLayer :is(span, br) {
@@ -29,26 +39,31 @@
   white-space: pre;
   cursor: text;
   transform-origin: 0% 0%;
-  /* reset inherited font/line-height so spans sit exactly where pdf.js places them */
   font-family: sans-serif;
+  pointer-events: auto;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/*
+ * Font sizing — pdfjs v5 sets --font-height as e.g. "12.34px" directly.
+ * Do NOT multiply by 1px again.
+ * --scale-x  adjusts horizontal stretch for multi-char spans.
+ * --rotate   handles rotated text runs.
+ */
+.textLayer > :not(.markedContent),
+.textLayer .markedContent span:not(.markedContent) {
+  z-index: 1;
+  font-size: var(--font-height, 0px);
+  transform: scaleX(var(--scale-x, 1)) rotate(var(--rotate, 0deg));
+}
+
+.textLayer .markedContent {
+  display: contents;
 }
 
 /* Selection highlight colour visible through transparent text spans */
 .textLayer ::selection {
   background-color: rgba(0, 80, 255, 0.25);
   color: transparent;
-}
-
-/* pdfjs v5 uses CSS custom properties for per-span font sizing */
-.textLayer > :not(.markedContent),
-.textLayer .markedContent span:not(.markedContent) {
-  z-index: 1;
-  --font-height: 0;
-  font-size: calc(var(--text-scale-factor, 1) * var(--font-height) * 1px);
-  --scale-x: 1;
-  --rotate: 0deg;
-}
-
-.textLayer .markedContent {
-  display: contents;
 }
