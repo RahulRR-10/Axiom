@@ -8,6 +8,7 @@ import {
   Eraser,
   ZoomIn,
   ZoomOut,
+  Save,
 } from 'lucide-react';
 
 export type PDFTool =
@@ -33,6 +34,8 @@ type Props = {
   onColorChange:  (color: string) => void;
   zoomLevel:      number;
   onZoomChange:   (z: number) => void;
+  onSave?:        () => void;
+  saving?:        boolean;
 };
 
 export const PDFToolbar: React.FC<Props> = ({
@@ -42,6 +45,8 @@ export const PDFToolbar: React.FC<Props> = ({
   onColorChange,
   zoomLevel,
   onZoomChange,
+  onSave,
+  saving = false,
 }) => {
   const [colorOpen, setColorOpen] = useState(false);
   const colorRef = useRef<HTMLDivElement>(null);
@@ -108,16 +113,10 @@ export const PDFToolbar: React.FC<Props> = ({
           {colorOpen && (
             <div
               style={{
-                position: 'absolute',
-                top: '36px',
-                left: 0,
-                background: '#2d2d2d',
-                border: '1px solid #444',
-                borderRadius: '8px',
-                padding: '6px',
-                zIndex: 100,
-                display: 'flex',
-                gap: '6px',
+                position: 'absolute', top: '36px', left: 0,
+                background: '#2d2d2d', border: '1px solid #444',
+                borderRadius: '8px', padding: '6px', zIndex: 100,
+                display: 'flex', gap: '6px',
               }}
             >
               {HIGHLIGHT_COLORS.map(c => (
@@ -143,8 +142,28 @@ export const PDFToolbar: React.FC<Props> = ({
         <button type="button" onClick={() => toggle('eraser')}   className={btnClass('eraser')}  title="Eraser"><Eraser size={16} /></button>
       </div>
 
-      {/* ── Right: zoom controls ── */}
+      {/* ── Right: save + zoom controls ── */}
       <div className="flex items-center gap-1">
+        {/* Save button */}
+        {onSave && (
+          <button
+            type="button"
+            onClick={onSave}
+            disabled={saving}
+            className={`h-8 px-3 flex items-center gap-1.5 rounded text-xs transition-colors ${
+              saving
+                ? 'bg-[#2a2a2a] text-[#6e6e6e] cursor-wait'
+                : 'text-[#8a8a8a] hover:bg-[#2a2a2a] hover:text-[#d4d4d4]'
+            }`}
+            title="Save annotated PDF"
+          >
+            <Save size={14} />
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        )}
+
+        <span className="w-px h-5 bg-[#333] mx-1" />
+
         <button
           type="button"
           onClick={() => onZoomChange(Math.max(0.25, zoomLevel - 0.25))}

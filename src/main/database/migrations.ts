@@ -73,4 +73,29 @@ export const MIGRATIONS: Array<{ version: string; sql: string }> = [
       CREATE INDEX IF NOT EXISTS idx_annotations_file_id ON annotations(file_id);
     `,
   },
+  {
+    version: '003_annotations_drop_fk',
+    sql: `
+      -- SQLite cannot ALTER TABLE to drop a constraint, so we recreate the
+      -- table without the FOREIGN KEY on file_id.  This allows annotations
+      -- to be saved for PDFs that haven't been indexed yet.
+      CREATE TABLE IF NOT EXISTS annotations_new (
+        id         TEXT PRIMARY KEY,
+        file_id    TEXT NOT NULL,
+        page       INTEGER NOT NULL,
+        type       TEXT NOT NULL,
+        data_json  TEXT NOT NULL,
+        created_at INTEGER DEFAULT (unixepoch())
+      );
+
+      INSERT OR IGNORE INTO annotations_new
+        SELECT id, file_id, page, type, data_json, created_at
+        FROM annotations;
+
+      DROP TABLE IF EXISTS annotations;
+      ALTER TABLE annotations_new RENAME TO annotations;
+
+      CREATE INDEX IF NOT EXISTS idx_annotations_file_id ON annotations(file_id);
+    `,
+  },
 ];

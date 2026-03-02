@@ -1,22 +1,23 @@
 /*
- * Essential CSS for pdfjs-dist v5.x TextLayer.
+ * CSS for pdfjs-dist v5.x TextLayer.
  *
- * In v5 the TextLayer positions spans with percentage left/top values
- * relative to the container.  setLayerDimensions() sizes the container via
- * calc(var(--total-scale-factor) * <pageWidth>px).  Each span receives
- * --font-height (WITH px unit, e.g. "12.34px"), --scale-x, --rotate as
- * inline CSS custom properties.
+ * Based on the official pdfjs text layer CSS and react-pdf's approach.
  *
- * We MUST provide:
- *   1.  --total-scale-factor on the container (set in PDFViewer.tsx)
- *   2.  font-size: var(--font-height)  (NOT multiplied by 1px — already has it)
- *   3.  transform using --scale-x and --rotate
+ * How it works:
+ *   PDFViewer.tsx sets --scale-factor and --total-scale-factor on the div.
+ *   pdfjs setLayerDimensions() uses --scale-factor to compute width/height.
+ *   pdfjs TextLayer sets --font-height and --scale-x on each <span>.
+ *   font-size = --text-scale-factor * --font-height (produces px length).
  */
 
+/* ── Container ─────────────────────────────────────────────────────────────── */
 .textLayer {
   position: absolute;
+  left: 0;
+  top: 0;
+  /* width & height are computed by pdfjs setLayerDimensions() using
+     calc(var(--scale-factor) * rawPageWidth).  Do NOT override them. */
   text-align: initial;
-  inset: 0;
   overflow: clip;
   opacity: 1;
   line-height: 1;
@@ -25,45 +26,78 @@
           text-size-adjust: none;
   forced-color-adjust: none;
   transform-origin: 0 0;
+  caret-color: CanvasText;
   z-index: 2;
   color-scheme: only light;
-  /* Receive pointer events & allow text selection */
+
+  /* Receive pointer events & allow native text selection */
   pointer-events: auto;
   -webkit-user-select: text;
   user-select: text;
 }
 
+/* Scale helpers (official formula) */
+.textLayer {
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+}
+
+/* ── Spans & line-breaks ───────────────────────────────────────────────────── */
 .textLayer :is(span, br) {
   color: transparent;
   position: absolute;
   white-space: pre;
   cursor: text;
   transform-origin: 0% 0%;
-  font-family: sans-serif;
   pointer-events: auto;
   -webkit-user-select: text;
   user-select: text;
 }
 
-/*
- * Font sizing — pdfjs v5 sets --font-height as e.g. "12.34px" directly.
- * Do NOT multiply by 1px again.
- * --scale-x  adjusts horizontal stretch for multi-char spans.
- * --rotate   handles rotated text runs.
- */
+/* ── Font sizing & transform ───────────────────────────────────────────────── */
 .textLayer > :not(.markedContent),
 .textLayer .markedContent span:not(.markedContent) {
   z-index: 1;
-  font-size: var(--font-height, 0px);
-  transform: scaleX(var(--scale-x, 1)) rotate(var(--rotate, 0deg));
+  --font-height: 0;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  --scale-x: 1;
+  --rotate: 0deg;
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
 }
 
 .textLayer .markedContent {
   display: contents;
 }
 
-/* Selection highlight colour visible through transparent text spans */
+/* Image spans should not be selectable */
+.textLayer span[role="img"] {
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: default;
+}
+
+/* ── End-of-content sentinel ──────────────────────────────────────────────── */
+.textLayer .endOfContent {
+  display: block;
+  position: absolute;
+  inset: 100% 0 0;
+  z-index: -1;
+  cursor: default;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.textLayer.selecting .endOfContent {
+  top: 0;
+}
+
+/* ── Selection highlight colour ────────────────────────────────────────────── */
 .textLayer ::selection {
-  background-color: rgba(0, 80, 255, 0.25);
+  background: rgba(0, 0, 255, 0.25);
   color: transparent;
+}
+
+.textLayer br::selection {
+  background: transparent;
 }

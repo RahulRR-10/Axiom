@@ -1,6 +1,11 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import type { Annotation, HighlightAnnotation, StickyAnnotation } from '../../../../shared/types';
+import type {
+  Annotation,
+  HighlightAnnotation,
+  StickyAnnotation,
+  DrawAnnotation,
+} from '../../../../shared/types';
 import type { PDFTool } from './PDFToolbar';
 
 type Props = {
@@ -11,19 +16,18 @@ type Props = {
   vaultPath:         string;
   cssWidth:          number;
   cssHeight:         number;
-  /** Ref to the page wrapper div — coordinate origin for rects */
   wrapperRef:        React.RefObject<HTMLDivElement>;
   annotations:       Annotation[];
   onAnnotationSaved: () => void;
 };
 
-type StickyPopover = {
-  id:      string | null; // null = new sticky
-  x:       number;
-  y:       number;
-  content: string;
-};
+type StickyPopover = { id: string | null; x: number; y: number; content: string };
 
+/**
+ * Renders annotation elements as DIRECT children of the page wrapper
+ * (React Fragment — no container div that could block text selection).
+ * All coordinates stored normalized (0-1).
+ */
 export const AnnotationLayer: React.FC<Props> = ({
   activeTool,
   highlightColor,
@@ -37,53 +41,56 @@ export const AnnotationLayer: React.FC<Props> = ({
   onAnnotationSaved,
 }) => {
   const [newHighlights, setNewHighlights] = useState<HighlightAnnotation[]>([]);
+  const [newDrawings, setNewDrawings]     = useState<DrawAnnotation[]>([]);
   const [popover, setPopover]             = useState<StickyPopover | null>(null);
 
-  // ── Highlight tool: capture text-layer selection rects ────────────────────
+  // ── Draw state ──────────────────────────────────────────────────────────
+  const [drawing, setDrawing]             = useState(false);
+  const [drawPoints, setDrawPoints]       = useState<Array<{ x: number; y: number }>>([]);
+  const drawRef                           = useRef(false);
+
+  /* ══════════════════════════════════════════════════════════════════════════
+     HIGHLIGHT TOOL
+  ══════════════════════════════════════════════════════════════════════════ */
   const handleMouseUp = useCallback(() => {
     if (activeTool !== 'highlight') return;
     const sel = window.getSelection();
     if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
-
     const text = sel.toString().trim();
     if (!text || !wrapperRef.current) return;
 
     const wrapRect = wrapperRef.current.getBoundingClientRect();
     const range    = sel.getRangeAt(0);
-    const domRects = Array.from(range.getClientRects());
+    const ancestor = range.commonAncestorContainer;
+    const within   = wrapperRef.current === ancestor
+      || wrapperRef.current.contains(
+        ancestor.nodeType === Node.TEXT_NODE ? ancestor.parentNode as Node : ancestor,
+      );
+    if (!within) return;
 
-    const rects = domRects
+    const wrapW = wrapRect.width || 1;
+    const wrapH = wrapRect.height || 1;
+    const rects = Array.from(range.getClientRects())
       .filter(r => r.width > 0 && r.height > 0)
       .map(r => ({
-        x: r.left - wrapRect.left,
-        y: r.top  - wrapRect.top,
-        w: r.width,
-        h: r.height,
+        x: (r.left - wrapRect.left) / wrapW,
+        y: (r.top  - wrapRect.top)  / wrapH,
+        w: r.width  / wrapW,
+        h: r.height / wrapH,
       }));
-
     if (!rects.length) return;
-    sel.removeAllRanges();
 
-    const annotation: HighlightAnnotation = {
-      id:      uuidv4(),
-      file_id: fileId,
-      page,
-      type:    'highlight',
-      rects,
-      color:   highlightColor,
-      text,
+    const ann: HighlightAnnotation = {
+      id: uuidv4(), file_id: fileId, page, type: 'highlight',
+      rects, color: highlightColor, text,
     };
-
-    window.electronAPI
-      .saveAnnotation(vaultPath, annotation)
-      .then(() => {
-        setNewHighlights(prev => [...prev, annotation]);
-        onAnnotationSaved();
-      })
-      .catch(console.error);
+    setNewHighlights(prev => [...prev, ann]);
+    if (!fileId || !vaultPath) { sel.removeAllRanges(); return; }
+    window.electronAPI.saveAnnotation(vaultPath, ann)
+      .then(() => { sel.removeAllRanges(); onAnnotationSaved(); })
+      .catch(err => { console.error(err); sel.removeAllRanges(); });
   }, [activeTool, highlightColor, fileId, page, vaultPath, wrapperRef, onAnnotationSaved]);
 
-  // Attach mouseup to the wrapper so we capture selections across text layer
   useEffect(() => {
     const el = wrapperRef.current;
     if (!el) return;
@@ -91,37 +98,142 @@ export const AnnotationLayer: React.FC<Props> = ({
     return () => el.removeEventListener('mouseup', handleMouseUp);
   }, [wrapperRef, handleMouseUp]);
 
-  // ── Sticky tool: click-catcher overlay ───────────────────────────────────
+  /* ══════════════════════════════════════════════════════════════════════════
+     STICKY NOTE TOOL
+  ══════════════════════════════════════════════════════════════════════════ */
   const handleStickyClick = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
       if (activeTool !== 'sticky') return;
-      const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
-      setPopover({ id: null, x: e.clientX - rect.left, y: e.clientY - rect.top, content: '' });
+      const rect = e.currentTarget.getBoundingClientRect();
+      setPopover({
+        id: null,
+        x: (e.clientX - rect.left) / (rect.width  || 1),
+        y: (e.clientY - rect.top)  / (rect.height || 1),
+        content: '',
+      });
     },
     [activeTool],
   );
 
   const saveSticky = () => {
     if (!popover) return;
-    const annotation: StickyAnnotation = {
-      id:      uuidv4(),
-      file_id: fileId,
-      page,
-      type:    'sticky',
-      x:       popover.x,
-      y:       popover.y,
-      content: popover.content,
+    const ann: StickyAnnotation = {
+      id: uuidv4(), file_id: fileId, page, type: 'sticky',
+      x: popover.x, y: popover.y, content: popover.content,
     };
-    window.electronAPI
-      .saveAnnotation(vaultPath, annotation)
-      .then(() => {
-        setPopover(null);
-        onAnnotationSaved();
-      })
+    window.electronAPI.saveAnnotation(vaultPath, ann)
+      .then(() => { setPopover(null); onAnnotationSaved(); })
       .catch(console.error);
   };
 
-  // Dedup persisted + newly placed highlights
+  /* ══════════════════════════════════════════════════════════════════════════
+     FREEHAND DRAW TOOL
+  ══════════════════════════════════════════════════════════════════════════ */
+  const getRelPos = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      const rect = e.currentTarget.getBoundingClientRect();
+      return {
+        x: (e.clientX - rect.left) / (rect.width  || 1),
+        y: (e.clientY - rect.top)  / (rect.height || 1),
+      };
+    },
+    [],
+  );
+
+  const handleDrawDown = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      if (activeTool !== 'draw') return;
+      e.preventDefault();
+      const pt = getRelPos(e);
+      setDrawPoints([pt]);
+      setDrawing(true);
+      drawRef.current = true;
+    },
+    [activeTool, getRelPos],
+  );
+
+  const handleDrawMove = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      if (!drawRef.current) return;
+      const pt = getRelPos(e);
+      setDrawPoints(prev => [...prev, pt]);
+    },
+    [getRelPos],
+  );
+
+  const handleDrawUp = useCallback(() => {
+    if (!drawRef.current) return;
+    drawRef.current = false;
+    setDrawing(false);
+    setDrawPoints(prev => {
+      if (prev.length < 2) return [];
+      const ann: DrawAnnotation = {
+        id: uuidv4(), file_id: fileId, page, type: 'draw',
+        points: prev, color: highlightColor, strokeWidth: 2,
+      };
+      setNewDrawings(d => [...d, ann]);
+      if (fileId && vaultPath) {
+        window.electronAPI.saveAnnotation(vaultPath, ann)
+          .then(() => onAnnotationSaved())
+          .catch(console.error);
+      }
+      return [];
+    });
+  }, [fileId, page, vaultPath, highlightColor, onAnnotationSaved]);
+
+  /* ══════════════════════════════════════════════════════════════════════════
+     ERASER TOOL
+  ══════════════════════════════════════════════════════════════════════════ */
+  const handleEraserClick = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      if (activeTool !== 'eraser') return;
+      const rect = e.currentTarget.getBoundingClientRect();
+      const cx = (e.clientX - rect.left) / (rect.width  || 1);
+      const cy = (e.clientY - rect.top)  / (rect.height || 1);
+      const threshold = 0.03; // ~3% of page — generous hit area
+
+      // Find nearest annotation to delete
+      const allAnns = [...annotations, ...newHighlights, ...newDrawings];
+      let hit: Annotation | null = null;
+
+      for (const ann of allAnns) {
+        if (ann.page !== page) continue;
+        if (ann.type === 'highlight') {
+          for (const r of ann.rects) {
+            if (cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h) {
+              hit = ann; break;
+            }
+          }
+        } else if (ann.type === 'sticky') {
+          if (Math.abs(cx - ann.x) < threshold && Math.abs(cy - ann.y) < threshold) {
+            hit = ann;
+          }
+        } else if (ann.type === 'draw') {
+          for (const pt of ann.points) {
+            if (Math.abs(cx - pt.x) < threshold && Math.abs(cy - pt.y) < threshold) {
+              hit = ann; break;
+            }
+          }
+        }
+        if (hit) break;
+      }
+
+      if (hit && vaultPath) {
+        // Remove from local state
+        setNewHighlights(prev => prev.filter(a => a.id !== hit!.id));
+        setNewDrawings(prev => prev.filter(a => a.id !== hit!.id));
+        // Remove from database
+        window.electronAPI.deleteAnnotation(vaultPath, hit.id)
+          .then(() => onAnnotationSaved())
+          .catch(console.error);
+      }
+    },
+    [activeTool, annotations, newHighlights, newDrawings, page, vaultPath, onAnnotationSaved],
+  );
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+     MERGE ANNOTATIONS
+  ═══════════════════════════════════════════════════════════════════════════ */
   const allHighlights = [
     ...annotations.filter((a): a is HighlightAnnotation => a.type === 'highlight'),
     ...newHighlights,
@@ -131,138 +243,140 @@ export const AnnotationLayer: React.FC<Props> = ({
     (a): a is StickyAnnotation => a.type === 'sticky',
   );
 
+  const allDrawings = [
+    ...annotations.filter((a): a is DrawAnnotation => a.type === 'draw'),
+    ...newDrawings,
+  ].filter((a, i, arr) => arr.findIndex(b => b.id === a.id) === i);
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+     HELPER: SVG points string
+  ═══════════════════════════════════════════════════════════════════════════ */
+  const toSvgPoints = (pts: Array<{ x: number; y: number }>) =>
+    pts.map(p => `${p.x * cssWidth},${p.y * cssHeight}`).join(' ');
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+     RENDER — all elements via Fragment, no container div
+  ═══════════════════════════════════════════════════════════════════════════ */
   return (
     <>
-      {/* ── Sticky click-catcher (only when sticky tool active) ── */}
-      {activeTool === 'sticky' && (
+      {/* ── Tool interaction layer (sticky / draw / eraser) ── */}
+      {(activeTool === 'sticky' || activeTool === 'draw' || activeTool === 'eraser') && (
         <div
           style={{
-            position:      'absolute',
-            top:           0,
-            left:          0,
-            width:         cssWidth,
-            height:        cssHeight,
+            position: 'absolute', top: 0, left: 0,
+            width: cssWidth, height: cssHeight,
             pointerEvents: 'all',
-            cursor:        'crosshair',
-            zIndex:        3,
+            cursor: activeTool === 'eraser' ? 'not-allowed' : 'crosshair',
+            zIndex: 5,
           }}
-          onClick={handleStickyClick}
+          onClick={activeTool === 'sticky' ? handleStickyClick : activeTool === 'eraser' ? handleEraserClick : undefined}
+          onMouseDown={activeTool === 'draw' ? handleDrawDown : undefined}
+          onMouseMove={activeTool === 'draw' ? handleDrawMove : undefined}
+          onMouseUp={activeTool === 'draw' ? handleDrawUp : undefined}
+          onMouseLeave={activeTool === 'draw' ? handleDrawUp : undefined}
         />
       )}
 
-      {/* ── Annotation overlay (pointer-events none — text layer stays selectable) ── */}
-      <div
-        style={{
-          position:      'absolute',
-          top:           0,
-          left:          0,
-          width:         cssWidth,
-          height:        cssHeight,
-          pointerEvents: 'none',
-          zIndex:        4,
-        }}
-      >
-        {/* Highlight rects */}
-        {allHighlights.map(h =>
-          h.rects.map((r, i) => (
-            <div
-              key={`${h.id}-${i}`}
-              style={{
-                position:      'absolute',
-                top:           r.y,
-                left:          r.x,
-                width:         r.w,
-                height:        r.h,
-                background:    h.color,
-                opacity:       0.4,
-                mixBlendMode:  'multiply',
-                borderRadius:  2,
-                pointerEvents: 'none',
-              }}
-            />
-          )),
-        )}
-
-        {/* Sticky note pins */}
-        {allStickies.map(s => (
-          <button
-            key={s.id}
-            type="button"
-            style={{
-              position:      'absolute',
-              top:           s.y - 12,
-              left:          s.x - 8,
-              background:    'transparent',
-              border:        'none',
-              cursor:        'pointer',
-              fontSize:      '20px',
-              lineHeight:    1,
-              padding:       0,
-              pointerEvents: 'all',
-            }}
-            onClick={e => {
-              e.stopPropagation();
-              setPopover({ id: s.id, x: s.x, y: s.y, content: s.content });
-            }}
-            title="Sticky note"
-          >
-            📌
-          </button>
-        ))}
-
-        {/* New / edit sticky popover */}
-        {popover && (
+      {/* ── Highlight rects ── */}
+      {allHighlights.map(h =>
+        h.rects.map((r, i) => (
           <div
+            key={`hl-${h.id}-${i}`}
             style={{
-              position:      'absolute',
-              top:           popover.y,
-              left:          popover.x,
-              background:    '#fffde7',
-              borderRadius:  '8px',
-              padding:       '12px',
-              minWidth:      '200px',
-              boxShadow:     '0 4px 16px rgba(0,0,0,0.5)',
-              zIndex:        20,
-              pointerEvents: 'all',
+              position: 'absolute',
+              top: r.y * cssHeight, left: r.x * cssWidth,
+              width: r.w * cssWidth, height: r.h * cssHeight,
+              background: h.color, opacity: 0.4, mixBlendMode: 'multiply',
+              borderRadius: 2, pointerEvents: 'none', zIndex: 3,
             }}
-            onClick={e => e.stopPropagation()}
-          >
-            <textarea
-              autoFocus
-              value={popover.content}
-              onChange={e => setPopover(p => p ? { ...p, content: e.target.value } : p)}
-              placeholder="Add a note…"
-              rows={4}
-              style={{
-                width:      '100%',
-                background: 'transparent',
-                border:     'none',
-                outline:    'none',
-                resize:     'none',
-                fontFamily: 'inherit',
-                fontSize:   '13px',
-                color:      '#333',
-              }}
+          />
+        )),
+      )}
+
+      {/* ── Draw strokes (SVG) ── */}
+      {(allDrawings.length > 0 || drawing) && (
+        <svg
+          style={{
+            position: 'absolute', top: 0, left: 0,
+            width: cssWidth, height: cssHeight,
+            pointerEvents: 'none', zIndex: 3, overflow: 'visible',
+          }}
+        >
+          {allDrawings.map(d => (
+            <polyline
+              key={`dr-${d.id}`}
+              points={toSvgPoints(d.points)}
+              fill="none"
+              stroke={d.color}
+              strokeWidth={d.strokeWidth}
+              strokeLinecap="round"
+              strokeLinejoin="round"
             />
-            <div className="flex justify-end gap-2 mt-2">
-              <button
-                type="button"
-                onClick={() => setPopover(null)}
-                className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={saveSticky}
-                className="text-xs bg-yellow-400 text-yellow-900 px-3 py-1 rounded hover:bg-yellow-500"
-              >
-                Save
-              </button>
-            </div>
+          ))}
+          {/* Live drawing preview */}
+          {drawing && drawPoints.length > 1 && (
+            <polyline
+              points={toSvgPoints(drawPoints)}
+              fill="none"
+              stroke={highlightColor}
+              strokeWidth={2}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeDasharray="4 2"
+            />
+          )}
+        </svg>
+      )}
+
+      {/* ── Sticky note pins ── */}
+      {allStickies.map(s => (
+        <button
+          key={`st-${s.id}`}
+          type="button"
+          style={{
+            position: 'absolute',
+            top: s.y * cssHeight - 12, left: s.x * cssWidth - 8,
+            background: 'transparent', border: 'none',
+            cursor: 'pointer', fontSize: '20px', lineHeight: 1,
+            padding: 0, pointerEvents: 'all', zIndex: 5,
+          }}
+          onClick={e => { e.stopPropagation(); setPopover({ id: s.id, x: s.x, y: s.y, content: s.content }); }}
+          title="Sticky note"
+        >
+          📌
+        </button>
+      ))}
+
+      {/* ── Sticky popover ── */}
+      {popover && (
+        <div
+          style={{
+            position: 'absolute',
+            top: popover.y * cssHeight, left: popover.x * cssWidth,
+            background: '#fffde7', borderRadius: '8px', padding: '12px',
+            minWidth: '200px', boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+            zIndex: 20, pointerEvents: 'all',
+          }}
+          onClick={e => e.stopPropagation()}
+        >
+          <textarea
+            autoFocus value={popover.content}
+            onChange={e => setPopover(p => p ? { ...p, content: e.target.value } : p)}
+            placeholder="Add a note…" rows={4}
+            style={{
+              width: '100%', background: 'transparent', border: 'none',
+              outline: 'none', resize: 'none', fontFamily: 'inherit',
+              fontSize: '13px', color: '#333',
+            }}
+          />
+          <div className="flex justify-end gap-2 mt-2">
+            <button type="button" onClick={() => setPopover(null)}
+              className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1">Cancel</button>
+            <button type="button" onClick={saveSticky}
+              className="text-xs bg-yellow-400 text-yellow-900 px-3 py-1 rounded hover:bg-yellow-500">Save</button>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </>
   );
 };

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { ChevronDown } from 'lucide-react';
 
 type AITarget = 'claude' | 'chatgpt' | 'gemini';
@@ -24,34 +24,49 @@ export const FloatingActionBar: React.FC<Props> = ({
   const [hlOpen, setHlOpen]       = useState(false);
   const barRef                    = useRef<HTMLDivElement>(null);
 
+  // ── Calculate bar position relative to the scrollable container ─────────
+  const computePosition = useCallback(() => {
+    const container = containerRef.current;
+    if (!container) return null;
+
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || sel.rangeCount === 0) return null;
+
+    const text = sel.toString().trim();
+    if (!text) return null;
+
+    const range = sel.getRangeAt(0);
+    const rect  = range.getBoundingClientRect();
+    const containerRect = container.getBoundingClientRect();
+
+    // Position is relative to the container's content (including scroll offset)
+    return {
+      text,
+      pos: {
+        top:  rect.top  - containerRect.top  + container.scrollTop  - 40, // 8px above
+        left: rect.left - containerRect.left + container.scrollLeft + rect.width / 2,
+      },
+    };
+  }, [containerRef]);
+
   // Show bar after text selection
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
     const onMouseUp = () => {
-      const sel = window.getSelection();
-      if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
+      const result = computePosition();
+      if (!result) return;
 
-      const text = sel.toString().trim();
-      if (!text) return;
-
-      const range = sel.getRangeAt(0);
-      const rect  = range.getBoundingClientRect();
-      const containerRect = container.getBoundingClientRect();
-
-      setSelectedText(text);
+      setSelectedText(result.text);
       setAiOpen(false);
       setHlOpen(false);
-      setPos({
-        top:  rect.top  - containerRect.top  - 40, // 8px above
-        left: rect.left - containerRect.left + rect.width / 2,
-      });
+      setPos(result.pos);
     };
 
     container.addEventListener('mouseup', onMouseUp);
     return () => container.removeEventListener('mouseup', onMouseUp);
-  }, [containerRef]);
+  }, [containerRef, computePosition]);
 
   // Hide bar on external mousedown
   useEffect(() => {

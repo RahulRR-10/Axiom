@@ -109,4 +109,12 @@ export type StickyAnnotation = AnnotationBase & {
   content: string;
 };
 
-export type Annotation = HighlightAnnotation | StickyAnnotation;
+export type DrawAnnotation = AnnotationBase & {
+  type: 'draw';
+  /** Normalized 0-1 points relative to page dimensions */
+  points: Array<{ x: number; y: number }>;
+  color: string;
+  strokeWidth: number;
+};
+
+export type Annotation = HighlightAnnotation | StickyAnnotation | DrawAnnotation;
