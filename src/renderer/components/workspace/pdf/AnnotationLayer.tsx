@@ -20,6 +20,8 @@ type Props = {
   wrapperRef:        React.RefObject<HTMLDivElement>;
   annotations:       Annotation[];
   onAnnotationSaved: () => void;
+  fontSize:          number;
+  textColor:         string;
 };
 
 type StickyPopover = { id: string | null; x: number; y: number; content: string };
@@ -40,6 +42,8 @@ export const AnnotationLayer: React.FC<Props> = ({
   wrapperRef,
   annotations,
   onAnnotationSaved,
+  fontSize: propFontSize,
+  textColor: propTextColor,
 }) => {
   const [newHighlights, setNewHighlights] = useState<HighlightAnnotation[]>([]);
   const [newDrawings, setNewDrawings]     = useState<DrawAnnotation[]>([]);
@@ -441,7 +445,7 @@ export const AnnotationLayer: React.FC<Props> = ({
                 const ann: TextboxAnnotation = {
                   id: uuidv4(), file_id: fileId, page, type: 'textbox',
                   x: textboxEdit.x, y: textboxEdit.y,
-                  content: textboxEdit.content, color: highlightColor, fontSize: 14,
+                  content: textboxEdit.content, color: propTextColor, fontSize: propFontSize,
                 };
                 window.electronAPI.saveAnnotation(vaultPath, ann)
                   .then(() => { setTextboxEdit(null); onAnnotationSaved(); })
@@ -455,7 +459,7 @@ export const AnnotationLayer: React.FC<Props> = ({
                 const ann: TextboxAnnotation = {
                   id: uuidv4(), file_id: fileId, page, type: 'textbox',
                   x: textboxEdit.x, y: textboxEdit.y,
-                  content: textboxEdit.content, color: highlightColor, fontSize: 14,
+                  content: textboxEdit.content, color: propTextColor, fontSize: propFontSize,
                 };
                 window.electronAPI.saveAnnotation(vaultPath, ann)
                   .then(() => { setTextboxEdit(null); onAnnotationSaved(); })
@@ -467,10 +471,10 @@ export const AnnotationLayer: React.FC<Props> = ({
             placeholder="Type here…"
             style={{
               background: 'rgba(0,0,0,0.7)',
-              border: `1px solid ${highlightColor}`,
+              border: `1px solid ${propTextColor}`,
               borderRadius: '4px',
-              color: highlightColor,
-              fontSize: '14px',
+              color: propTextColor,
+              fontSize: `${propFontSize}px`,
               fontFamily: 'sans-serif',
               padding: '4px 8px',
               outline: 'none',

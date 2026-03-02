@@ -51,6 +51,8 @@ const PDFPage = React.memo(function PDFPage({
   vaultPath,
   annotations,
   onAnnotationSaved,
+  fontSize: propFontSize,
+  textColor: propTextColor,
 }: {
   pdf:               PDFDocumentProxy;
   pageNum:           number;
@@ -63,6 +65,8 @@ const PDFPage = React.memo(function PDFPage({
   vaultPath:         string;
   annotations:       Annotation[];
   onAnnotationSaved: () => void;
+  fontSize:          number;
+  textColor:         string;
 }) {
   const canvasRef    = useRef<HTMLCanvasElement>(null);
   const textLayerRef = useRef<HTMLDivElement>(null);
@@ -161,6 +165,8 @@ const PDFPage = React.memo(function PDFPage({
         wrapperRef={wrapRef}
         annotations={annotations.filter(a => a.page === pageNum)}
         onAnnotationSaved={onAnnotationSaved}
+        fontSize={propFontSize}
+        textColor={propTextColor}
       />
     </div>
   );
@@ -201,6 +207,8 @@ export const PDFViewer: React.FC<Props> = ({ filePath, fileId = '', vaultPath = 
   const [zoom,        setZoom]        = useState(1.0);
   const [activeTool,  setActiveTool]  = useState<PDFTool>('none');
   const [hlColor,     setHlColor]     = useState('#fde68a');
+  const [fontSize,    setFontSize]    = useState(14);
+  const [textColor,   setTextColor]   = useState('#ffffff');
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [error,       setError]       = useState<string | null>(null);
   const [loading,     setLoading]     = useState(true);
@@ -372,6 +380,8 @@ export const PDFViewer: React.FC<Props> = ({ filePath, fileId = '', vaultPath = 
           vaultPath={vaultPath ?? ''}
           annotations={annotations}
           onAnnotationSaved={loadAnnotations}
+          fontSize={fontSize}
+          textColor={textColor}
         />
       );
     });
@@ -394,6 +404,10 @@ export const PDFViewer: React.FC<Props> = ({ filePath, fileId = '', vaultPath = 
         saving={saving}
         currentPage={currentPage}
         numPages={numPages}
+        fontSize={fontSize}
+        onFontSizeChange={setFontSize}
+        textColor={textColor}
+        onTextColorChange={setTextColor}
       />
 
       <div

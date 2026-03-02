@@ -27,17 +27,32 @@ export const HIGHLIGHT_COLORS = [
   { label: 'Blue',   value: '#93c5fd' },
 ] as const;
 
+export const TEXT_COLORS = [
+  { label: 'White',  value: '#ffffff' },
+  { label: 'Red',    value: '#ef4444' },
+  { label: 'Yellow', value: '#facc15' },
+  { label: 'Green',  value: '#22c55e' },
+  { label: 'Blue',   value: '#3b82f6' },
+  { label: 'Black',  value: '#1a1a1a' },
+] as const;
+
+export const FONT_SIZES = [10, 12, 14, 16, 18, 20, 24, 28, 32, 36] as const;
+
 type Props = {
-  activeTool:     PDFTool;
-  onToolChange:   (tool: PDFTool) => void;
-  highlightColor: string;
-  onColorChange:  (color: string) => void;
-  zoomLevel:      number;
-  onZoomChange:   (z: number) => void;
-  onSave?:        () => void;
-  saving?:        boolean;
-  currentPage?:   number;
-  numPages?:      number;
+  activeTool:        PDFTool;
+  onToolChange:      (tool: PDFTool) => void;
+  highlightColor:    string;
+  onColorChange:     (color: string) => void;
+  zoomLevel:         number;
+  onZoomChange:      (z: number) => void;
+  onSave?:           () => void;
+  saving?:           boolean;
+  currentPage?:      number;
+  numPages?:         number;
+  fontSize:          number;
+  onFontSizeChange:  (s: number) => void;
+  textColor:         string;
+  onTextColorChange: (c: string) => void;
 };
 
 export const PDFToolbar: React.FC<Props> = ({
@@ -51,16 +66,24 @@ export const PDFToolbar: React.FC<Props> = ({
   saving = false,
   currentPage = 1,
   numPages = 0,
+  fontSize,
+  onFontSizeChange,
+  textColor,
+  onTextColorChange,
 }) => {
-  const [colorOpen, setColorOpen] = useState(false);
-  const colorRef = useRef<HTMLDivElement>(null);
+  const [colorOpen, setColorOpen]       = useState(false);
+  const [fontSizeOpen, setFontSizeOpen] = useState(false);
+  const [textColorOpen, setTextColorOpen] = useState(false);
+  const colorRef    = useRef<HTMLDivElement>(null);
+  const fontRef     = useRef<HTMLDivElement>(null);
+  const textColRef  = useRef<HTMLDivElement>(null);
 
-  // Close dropdown on outside click
+  // Close dropdowns on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (colorRef.current && !colorRef.current.contains(e.target as Node)) {
-        setColorOpen(false);
-      }
+      if (colorRef.current && !colorRef.current.contains(e.target as Node)) setColorOpen(false);
+      if (fontRef.current && !fontRef.current.contains(e.target as Node)) setFontSizeOpen(false);
+      if (textColRef.current && !textColRef.current.contains(e.target as Node)) setTextColorOpen(false);
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
@@ -140,7 +163,77 @@ export const PDFToolbar: React.FC<Props> = ({
         </div>
 
         <button type="button" onClick={() => toggle('sticky')}   className={btnClass('sticky')}  title="Sticky Note"><StickyNote size={16} /></button>
-        <button type="button" onClick={() => toggle('textbox')}  className={btnClass('textbox')} title="Text Box"><Type  size={16} /></button>
+
+        {/* Textbox + font size + text color */}
+        <div className="flex items-center">
+          <button type="button" onClick={() => toggle('textbox')} className={btnClass('textbox')} title="Text Box"><Type size={16} /></button>
+
+          {/* Font size dropdown */}
+          <div className="relative" ref={fontRef}>
+            <button
+              type="button"
+              onClick={() => { setFontSizeOpen(o => !o); setTextColorOpen(false); }}
+              className="h-8 flex items-center px-1 rounded hover:bg-[#2a2a2a] transition-colors text-[#8a8a8a] text-xs"
+              title="Font size"
+            >
+              {fontSize}
+              <span className="text-[#6e6e6e] ml-0.5">▾</span>
+            </button>
+            {fontSizeOpen && (
+              <div style={{
+                position: 'absolute', top: '36px', left: 0,
+                background: '#2d2d2d', border: '1px solid #444',
+                borderRadius: '6px', padding: '4px', zIndex: 100,
+                maxHeight: '200px', overflowY: 'auto',
+              }}>
+                {FONT_SIZES.map(s => (
+                  <button
+                    key={s} type="button"
+                    onClick={() => { onFontSizeChange(s); setFontSizeOpen(false); }}
+                    className={`block w-full text-left px-3 py-1 text-xs rounded transition-colors ${
+                      fontSize === s ? 'bg-[#3a3a3a] text-white' : 'text-[#ccc] hover:bg-[#333]'
+                    }`}
+                  >
+                    {s}px
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Text color picker */}
+          <div className="relative" ref={textColRef}>
+            <button
+              type="button"
+              onClick={() => { setTextColorOpen(o => !o); setFontSizeOpen(false); }}
+              className="h-8 flex items-center px-1 rounded hover:bg-[#2a2a2a] transition-colors"
+              title="Text color"
+            >
+              <span style={{ background: textColor }} className="inline-block w-3 h-3 rounded-sm border border-[#444]" />
+              <span className="text-[#6e6e6e] text-xs ml-0.5">▾</span>
+            </button>
+            {textColorOpen && (
+              <div style={{
+                position: 'absolute', top: '36px', left: 0,
+                background: '#2d2d2d', border: '1px solid #444',
+                borderRadius: '8px', padding: '6px', zIndex: 100,
+                display: 'flex', gap: '6px',
+              }}>
+                {TEXT_COLORS.map(c => (
+                  <button
+                    key={c.value} type="button"
+                    onClick={() => { onTextColorChange(c.value); setTextColorOpen(false); }}
+                    title={c.label}
+                    style={{ background: c.value }}
+                    className={`w-6 h-6 rounded border-2 transition-colors ${
+                      textColor === c.value ? 'border-white' : 'border-transparent'
+                    }`}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
         <button type="button" onClick={() => toggle('draw')}     className={btnClass('draw')}    title="Draw"><Pencil size={16} /></button>
         <button type="button" onClick={() => toggle('image')}    className={btnClass('image')}   title="Image Stamp"><Image size={16} /></button>
         <button type="button" onClick={() => toggle('eraser')}   className={btnClass('eraser')}  title="Eraser"><Eraser size={16} /></button>
