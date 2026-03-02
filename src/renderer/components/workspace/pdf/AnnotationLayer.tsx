@@ -5,6 +5,7 @@ import type {
   HighlightAnnotation,
   StickyAnnotation,
   DrawAnnotation,
+  TextboxAnnotation,
 } from '../../../../shared/types';
 import type { PDFTool } from './PDFToolbar';
 
@@ -43,6 +44,7 @@ export const AnnotationLayer: React.FC<Props> = ({
   const [newHighlights, setNewHighlights] = useState<HighlightAnnotation[]>([]);
   const [newDrawings, setNewDrawings]     = useState<DrawAnnotation[]>([]);
   const [popover, setPopover]             = useState<StickyPopover | null>(null);
+  const [textboxEdit, setTextboxEdit]     = useState<{ x: number; y: number; content: string } | null>(null);
 
   // ── Draw state ──────────────────────────────────────────────────────────
   const [drawing, setDrawing]             = useState(false);
@@ -248,6 +250,10 @@ export const AnnotationLayer: React.FC<Props> = ({
     ...newDrawings,
   ].filter((a, i, arr) => arr.findIndex(b => b.id === a.id) === i);
 
+  const allTextboxes = annotations.filter(
+    (a): a is TextboxAnnotation => a.type === 'textbox',
+  );
+
   /* ═══════════════════════════════════════════════════════════════════════════
      HELPER: SVG points string
   ═══════════════════════════════════════════════════════════════════════════ */
@@ -259,8 +265,8 @@ export const AnnotationLayer: React.FC<Props> = ({
   ═══════════════════════════════════════════════════════════════════════════ */
   return (
     <>
-      {/* ── Tool interaction layer (sticky / draw / eraser) ── */}
-      {(activeTool === 'sticky' || activeTool === 'draw' || activeTool === 'eraser') && (
+      {/* ── Tool interaction layer (sticky / draw / eraser / textbox) ── */}
+      {(activeTool === 'sticky' || activeTool === 'draw' || activeTool === 'eraser' || activeTool === 'textbox') && (
         <div
           style={{
             position: 'absolute', top: 0, left: 0,
@@ -269,7 +275,19 @@ export const AnnotationLayer: React.FC<Props> = ({
             cursor: activeTool === 'eraser' ? 'pointer' : 'crosshair',
             zIndex: 5,
           }}
-          onClick={activeTool === 'sticky' ? handleStickyClick : activeTool === 'eraser' ? handleEraserClick : undefined}
+          onClick={
+            activeTool === 'sticky' ? handleStickyClick
+            : activeTool === 'eraser' ? handleEraserClick
+            : activeTool === 'textbox' ? ((e: React.MouseEvent<HTMLDivElement>) => {
+                const rect = e.currentTarget.getBoundingClientRect();
+                setTextboxEdit({
+                  x: (e.clientX - rect.left) / (rect.width || 1),
+                  y: (e.clientY - rect.top) / (rect.height || 1),
+                  content: '',
+                });
+              })
+            : undefined
+          }
           onMouseDown={activeTool === 'draw' ? handleDrawDown : undefined}
           onMouseMove={activeTool === 'draw' ? handleDrawMove : undefined}
           onMouseUp={activeTool === 'draw' ? handleDrawUp : undefined}
@@ -375,6 +393,90 @@ export const AnnotationLayer: React.FC<Props> = ({
             <button type="button" onClick={saveSticky}
               className="text-xs bg-yellow-400 text-yellow-900 px-3 py-1 rounded hover:bg-yellow-500">Save</button>
           </div>
+        </div>
+      )}
+
+      {/* ── Saved textbox annotations ── */}
+      {allTextboxes.map(tb => (
+        <div
+          key={`tb-${tb.id}`}
+          style={{
+            position: 'absolute',
+            top: tb.y * cssHeight,
+            left: tb.x * cssWidth,
+            color: tb.color,
+            fontSize: `${tb.fontSize}px`,
+            fontFamily: 'sans-serif',
+            pointerEvents: 'none',
+            zIndex: 4,
+            whiteSpace: 'pre-wrap',
+            maxWidth: `${cssWidth - tb.x * cssWidth - 8}px`,
+            lineHeight: 1.3,
+            textShadow: '0 0 2px rgba(0,0,0,0.5)',
+          }}
+        >
+          {tb.content}
+        </div>
+      ))}
+
+      {/* ── Active textbox input ── */}
+      {textboxEdit && (
+        <div
+          style={{
+            position: 'absolute',
+            top: textboxEdit.y * cssHeight,
+            left: textboxEdit.x * cssWidth,
+            zIndex: 20,
+            pointerEvents: 'all',
+          }}
+          onClick={e => e.stopPropagation()}
+        >
+          <input
+            autoFocus
+            type="text"
+            value={textboxEdit.content}
+            onChange={e => setTextboxEdit(prev => prev ? { ...prev, content: e.target.value } : prev)}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && textboxEdit.content.trim()) {
+                const ann: TextboxAnnotation = {
+                  id: uuidv4(), file_id: fileId, page, type: 'textbox',
+                  x: textboxEdit.x, y: textboxEdit.y,
+                  content: textboxEdit.content, color: highlightColor, fontSize: 14,
+                };
+                window.electronAPI.saveAnnotation(vaultPath, ann)
+                  .then(() => { setTextboxEdit(null); onAnnotationSaved(); })
+                  .catch(console.error);
+              } else if (e.key === 'Escape') {
+                setTextboxEdit(null);
+              }
+            }}
+            onBlur={() => {
+              if (textboxEdit.content.trim()) {
+                const ann: TextboxAnnotation = {
+                  id: uuidv4(), file_id: fileId, page, type: 'textbox',
+                  x: textboxEdit.x, y: textboxEdit.y,
+                  content: textboxEdit.content, color: highlightColor, fontSize: 14,
+                };
+                window.electronAPI.saveAnnotation(vaultPath, ann)
+                  .then(() => { setTextboxEdit(null); onAnnotationSaved(); })
+                  .catch(console.error);
+              } else {
+                setTextboxEdit(null);
+              }
+            }}
+            placeholder="Type here…"
+            style={{
+              background: 'rgba(0,0,0,0.7)',
+              border: `1px solid ${highlightColor}`,
+              borderRadius: '4px',
+              color: highlightColor,
+              fontSize: '14px',
+              fontFamily: 'sans-serif',
+              padding: '4px 8px',
+              outline: 'none',
+              minWidth: '150px',
+            }}
+          />
         </div>
       )}
     </>

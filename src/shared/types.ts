@@ -117,4 +117,13 @@ export type DrawAnnotation = AnnotationBase & {
   strokeWidth: number;
 };
 
-export type Annotation = HighlightAnnotation | StickyAnnotation | DrawAnnotation;
+export type TextboxAnnotation = AnnotationBase & {
+  type: 'textbox';
+  x: number;       // normalized 0-1
+  y: number;       // normalized 0-1
+  content: string;
+  color: string;
+  fontSize: number; // in px at 100% zoom
+};
+
+export type Annotation = HighlightAnnotation | StickyAnnotation | DrawAnnotation | TextboxAnnotation;

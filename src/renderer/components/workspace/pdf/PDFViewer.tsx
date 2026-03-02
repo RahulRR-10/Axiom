@@ -51,7 +51,6 @@ const PDFPage = React.memo(function PDFPage({
   vaultPath,
   annotations,
   onAnnotationSaved,
-  onVisible,
 }: {
   pdf:               PDFDocumentProxy;
   pageNum:           number;
@@ -64,23 +63,10 @@ const PDFPage = React.memo(function PDFPage({
   vaultPath:         string;
   annotations:       Annotation[];
   onAnnotationSaved: () => void;
-  onVisible:         (pageNum: number) => void;
 }) {
   const canvasRef    = useRef<HTMLCanvasElement>(null);
   const textLayerRef = useRef<HTMLDivElement>(null);
   const wrapRef      = useRef<HTMLDivElement>(null);
-
-  /* IntersectionObserver — report when page is visible */
-  useEffect(() => {
-    const el = wrapRef.current;
-    if (!el) return;
-    const obs = new IntersectionObserver(
-      entries => { if (entries[0].isIntersecting) onVisible(pageNum); },
-      { threshold: 0.3 },
-    );
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, [pageNum, onVisible]);
 
   /* Render canvas + text layer */
   useEffect(() => {
@@ -330,13 +316,7 @@ export const PDFViewer: React.FC<Props> = ({ filePath, fileId = '', vaultPath = 
     }
   }, [filePath, annotations, saving]);
 
-  /* ── Visible page tracker ────────────────────────────────────────────────── */
-  const handlePageVisible = useCallback((p: number) => {
-    visiblePages.current.add(p);
-    setCurrentPage(Math.min(...Array.from(visiblePages.current)));
-  }, []);
-
-  /* ── Scroll-based virtualization ─────────────────────────────────────────── */
+  /* ── Scroll-based virtualization + page tracking ──────────────────────────── */
   useEffect(() => {
     const el = scrollRef.current;
     if (!el || !pageMeta) return;
@@ -346,6 +326,11 @@ export const PDFViewer: React.FC<Props> = ({ filePath, fileId = '', vaultPath = 
       const viewportH    = el.clientHeight;
       const pageH        = Math.floor(pageMeta.height * zoom) + PAGE_GAP;
       if (pageH <= 0) return;
+
+      // Current page = which page is at the center of the viewport
+      const centerY      = scrollTop + viewportH / 2;
+      const centerPage   = Math.max(1, Math.min(numPages, Math.ceil(centerY / pageH)));
+      setCurrentPage(centerPage);
 
       const firstVisible = Math.max(1, Math.floor((scrollTop - BUFFER_PX) / pageH) + 1);
       const lastVisible  = Math.min(numPages, Math.ceil((scrollTop + viewportH + BUFFER_PX) / pageH));
@@ -387,11 +372,10 @@ export const PDFViewer: React.FC<Props> = ({ filePath, fileId = '', vaultPath = 
           vaultPath={vaultPath ?? ''}
           annotations={annotations}
           onAnnotationSaved={loadAnnotations}
-          onVisible={handlePageVisible}
         />
       );
     });
-  }, [pdf, pageMeta, zoom, numPages, visibleRange, filePath, activeTool, hlColor, effectiveFileId, vaultPath, annotations, loadAnnotations, handlePageVisible]);
+  }, [pdf, pageMeta, zoom, numPages, visibleRange, filePath, activeTool, hlColor, effectiveFileId, vaultPath, annotations, loadAnnotations]);
 
   /* ── Render ──────────────────────────────────────────────────────────────── */
   return (
