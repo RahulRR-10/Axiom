@@ -10,6 +10,9 @@ import type { PDFTool } from './PDFToolbar';
 import { PDFToolbar } from './PDFToolbar';
 import { FloatingActionBar } from '../FloatingActionBar';
 import { AnnotationLayer } from './AnnotationLayer';
+// Text layer CSS — webpack style-loader injects this at runtime
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+require('../../../styles/pdf-text-layer.css');
 
 /* ─── pdf.js setup ─────────────────────────────────────────────────────────── */
 // pdfjs-dist v5 requires a fully-qualified URL for the worker — a bare module
@@ -65,9 +68,10 @@ const PDFPage = React.memo(function PDFPage({
   onAnnotationSaved: () => void;
   onVisible:        (pageNum: number) => void;
 }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const wrapRef   = useRef<HTMLDivElement>(null);
-  const rendered  = useRef(false);
+  const canvasRef    = useRef<HTMLCanvasElement>(null);
+  const textLayerRef = useRef<HTMLDivElement>(null);
+  const wrapRef      = useRef<HTMLDivElement>(null);
+  const rendered     = useRef(false);
 
   // IntersectionObserver to report visibility
   useEffect(() => {
@@ -83,27 +87,44 @@ const PDFPage = React.memo(function PDFPage({
     return () => obs.disconnect();
   }, [pageNum, onVisible]);
 
-  // Render canvas
+  // Render canvas + text layer
   useEffect(() => {
-    if (!canvasRef.current) return;
+    if (!canvasRef.current || !textLayerRef.current) return;
     rendered.current = false;
     let cancelled = false;
 
     (async () => {
-      const page      = await pdf.getPage(pageNum);
-      const dpr       = window.devicePixelRatio || 1;
-      // Scale viewport by zoom × devicePixelRatio for crisp rendering
-      const viewport  = page.getViewport({ scale: scale * dpr });
-      const canvas    = canvasRef.current!;
+      const page = await pdf.getPage(pageNum);
+      const dpr  = window.devicePixelRatio || 1;
 
-      canvas.width  = Math.floor(viewport.width);
-      canvas.height = Math.floor(viewport.height);
-      // CSS size stays at non-DPR dimensions so it fits the layout
-      canvas.style.width  = `${Math.floor(viewport.width  / dpr)}px`;
-      canvas.style.height = `${Math.floor(viewport.height / dpr)}px`;
+      // CSS-scale viewport — text layer positioning and canvas CSS size
+      const cssViewport    = page.getViewport({ scale });
+      // Hi-DPI viewport — canvas pixel buffer only
+      const canvasViewport = page.getViewport({ scale: scale * dpr });
 
-      // pdfjs v5: pass canvas element directly
-      await page.render({ canvas, viewport }).promise;
+      // ── Canvas ────────────────────────────────────────────────────────────
+      const canvas = canvasRef.current!;
+      canvas.width  = Math.floor(canvasViewport.width);
+      canvas.height = Math.floor(canvasViewport.height);
+      canvas.style.width  = `${Math.floor(cssViewport.width)}px`;
+      canvas.style.height = `${Math.floor(cssViewport.height)}px`;
+      await page.render({ canvas, viewport: canvasViewport }).promise;
+
+      if (cancelled) return;
+
+      // ── Text layer ────────────────────────────────────────────────────────
+      // Populates textLayerDiv with transparent but DOM-selectable <span>s,
+      // enabling native text selection (and therefore highlight tool capture).
+      const textLayerDiv = textLayerRef.current!;
+      textLayerDiv.innerHTML = '';
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const tl = new (pdfjsLib as any).TextLayer({
+        textContentSource: await page.getTextContent(),
+        container:         textLayerDiv,
+        viewport:          cssViewport, // MUST be CSS-scale, not DPR-scale
+      });
+      await tl.render();
+
       if (!cancelled) rendered.current = true;
     })().catch(console.error);
 
@@ -114,16 +135,28 @@ const PDFPage = React.memo(function PDFPage({
     <div
       ref={wrapRef}
       style={{
-        position:       'relative',
-        width:          cssWidth,
-        height:         cssHeight,
-        flexShrink:     0,
-        marginBottom:   PAGE_GAP,
-        boxShadow:      '0 2px 8px rgba(0,0,0,0.5)',
-        background:     '#ffffff',
+        position:     'relative',
+        width:        cssWidth,
+        height:       cssHeight,
+        flexShrink:   0,
+        marginBottom: PAGE_GAP,
+        boxShadow:    '0 2px 8px rgba(0,0,0,0.5)',
+        background:   '#ffffff',
+        overflow:     'hidden',
       }}
     >
-      <canvas ref={canvasRef} style={{ display: 'block' }} />
+      {/* Pixel-perfect canvas render of the PDF page */}
+      <canvas
+        ref={canvasRef}
+        style={{ position: 'absolute', top: 0, left: 0, zIndex: 1 }}
+      />
+      {/* Transparent selectable text spans — enables highlight + clipboard */}
+      <div
+        ref={textLayerRef}
+        className="textLayer"
+        style={{ zIndex: 2 }}
+      />
+      {/* Highlight/sticky overlays — pointer-events: none so text stays selectable */}
       <AnnotationLayer
         activeTool={activeTool}
         fileId={fileId}
@@ -131,6 +164,7 @@ const PDFPage = React.memo(function PDFPage({
         vaultPath={vaultPath}
         cssWidth={cssWidth}
         cssHeight={cssHeight}
+        wrapperRef={wrapRef}
         annotations={annotations.filter(a => a.page === pageNum)}
         onAnnotationSaved={onAnnotationSaved}
       />

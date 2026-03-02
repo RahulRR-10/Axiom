@@ -1,16 +1,18 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import type { Annotation, HighlightAnnotation, StickyAnnotation } from '../../../../shared/types';
 import type { PDFTool } from './PDFToolbar';
 
 type Props = {
-  activeTool:       PDFTool;
-  fileId:           string;
-  page:             number;
-  vaultPath:        string;
-  cssWidth:         number;
-  cssHeight:        number;
-  annotations:      Annotation[];
+  activeTool:        PDFTool;
+  fileId:            string;
+  page:              number;
+  vaultPath:         string;
+  cssWidth:          number;
+  cssHeight:         number;
+  /** Ref to the page wrapper div — coordinate origin for rects */
+  wrapperRef:        React.RefObject<HTMLDivElement>;
+  annotations:       Annotation[];
   onAnnotationSaved: () => void;
 };
 
@@ -28,31 +30,31 @@ export const AnnotationLayer: React.FC<Props> = ({
   vaultPath,
   cssWidth,
   cssHeight,
+  wrapperRef,
   annotations,
   onAnnotationSaved,
 }) => {
   const [newHighlights, setNewHighlights] = useState<HighlightAnnotation[]>([]);
   const [popover, setPopover]             = useState<StickyPopover | null>(null);
-  const layerRef = useRef<HTMLDivElement>(null);
 
-  // ── Highlight tool: capture text selection rects ──────────────────────────
+  // ── Highlight tool: capture text-layer selection rects ────────────────────
   const handleMouseUp = useCallback(() => {
     if (activeTool !== 'highlight') return;
     const sel = window.getSelection();
     if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
 
     const text = sel.toString().trim();
-    if (!text || !layerRef.current) return;
+    if (!text || !wrapperRef.current) return;
 
-    const layerRect = layerRef.current.getBoundingClientRect();
-    const range     = sel.getRangeAt(0);
-    const domRects  = Array.from(range.getClientRects());
+    const wrapRect = wrapperRef.current.getBoundingClientRect();
+    const range    = sel.getRangeAt(0);
+    const domRects = Array.from(range.getClientRects());
 
     const rects = domRects
       .filter(r => r.width > 0 && r.height > 0)
       .map(r => ({
-        x: r.left - layerRect.left,
-        y: r.top  - layerRect.top,
+        x: r.left - wrapRect.left,
+        y: r.top  - wrapRect.top,
         w: r.width,
         h: r.height,
       }));
@@ -70,7 +72,6 @@ export const AnnotationLayer: React.FC<Props> = ({
       text,
     };
 
-    // Persist via IPC
     window.electronAPI
       .saveAnnotation(vaultPath, annotation)
       .then(() => {
@@ -78,10 +79,18 @@ export const AnnotationLayer: React.FC<Props> = ({
         onAnnotationSaved();
       })
       .catch(console.error);
-  }, [activeTool, fileId, page, vaultPath, onAnnotationSaved]);
+  }, [activeTool, fileId, page, vaultPath, wrapperRef, onAnnotationSaved]);
 
-  // ── Sticky note tool: click to place ─────────────────────────────────────
-  const handleClick = useCallback(
+  // Attach mouseup to the wrapper so we capture selections across text layer
+  useEffect(() => {
+    const el = wrapperRef.current;
+    if (!el) return;
+    el.addEventListener('mouseup', handleMouseUp);
+    return () => el.removeEventListener('mouseup', handleMouseUp);
+  }, [wrapperRef, handleMouseUp]);
+
+  // ── Sticky tool: click-catcher overlay ───────────────────────────────────
+  const handleStickyClick = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
       if (activeTool !== 'sticky') return;
       const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
@@ -110,7 +119,7 @@ export const AnnotationLayer: React.FC<Props> = ({
       .catch(console.error);
   };
 
-  // Combine persisted + newly placed highlights (dedup by id)
+  // Dedup persisted + newly placed highlights
   const allHighlights = [
     ...annotations.filter((a): a is HighlightAnnotation => a.type === 'highlight'),
     ...newHighlights,
@@ -121,125 +130,137 @@ export const AnnotationLayer: React.FC<Props> = ({
   );
 
   return (
-    <div
-      ref={layerRef}
-      style={{
-        position:       'absolute',
-        top:            0,
-        left:           0,
-        width:          cssWidth,
-        height:         cssHeight,
-        pointerEvents:  activeTool === 'none' ? 'none' : 'all',
-        userSelect:     activeTool === 'highlight' ? 'text' : 'none',
-        cursor:
-          activeTool === 'highlight' ? 'text'
-          : activeTool === 'sticky'  ? 'crosshair'
-          : 'default',
-        zIndex: 10,
-      }}
-      onMouseUp={handleMouseUp}
-      onClick={handleClick}
-    >
-      {/* ── Highlight rects ── */}
-      {allHighlights.map(h =>
-        h.rects.map((r, i) => (
-          <div
-            key={`${h.id}-${i}`}
-            style={{
-              position:        'absolute',
-              top:             r.y,
-              left:            r.x,
-              width:           r.w,
-              height:          r.h,
-              background:      h.color,
-              opacity:         0.35,
-              pointerEvents:   'none',
-              mixBlendMode:    'multiply',
-              borderRadius:    2,
-            }}
-          />
-        )),
-      )}
-
-      {/* ── Sticky note pins ── */}
-      {allStickies.map(s => (
-        <button
-          key={s.id}
-          type="button"
-          style={{
-            position:   'absolute',
-            top:        s.y - 12,
-            left:       s.x - 8,
-            background: 'transparent',
-            border:     'none',
-            cursor:     'pointer',
-            fontSize:   '20px',
-            lineHeight: 1,
-            padding:    0,
-            pointerEvents: 'all',
-          }}
-          onClick={e => {
-            e.stopPropagation();
-            setPopover({ id: s.id, x: s.x, y: s.y, content: s.content });
-          }}
-          title="Sticky note"
-        >
-          📌
-        </button>
-      ))}
-
-      {/* ── New sticky popover ── */}
-      {popover && (
+    <>
+      {/* ── Sticky click-catcher (only when sticky tool active) ── */}
+      {activeTool === 'sticky' && (
         <div
           style={{
-            position:     'absolute',
-            top:          popover.y,
-            left:         popover.x,
-            background:   '#fffde7',
-            borderRadius: '8px',
-            padding:      '12px',
-            minWidth:     '200px',
-            boxShadow:    '0 4px 16px rgba(0,0,0,0.5)',
-            zIndex:       20,
+            position:      'absolute',
+            top:           0,
+            left:          0,
+            width:         cssWidth,
+            height:        cssHeight,
             pointerEvents: 'all',
+            cursor:        'crosshair',
+            zIndex:        3,
           }}
-          onClick={e => e.stopPropagation()}
-        >
-          <textarea
-            autoFocus
-            value={popover.content}
-            onChange={e => setPopover(p => p ? { ...p, content: e.target.value } : p)}
-            placeholder="Add a note…"
-            rows={4}
-            style={{
-              width:        '100%',
-              background:   'transparent',
-              border:       'none',
-              outline:      'none',
-              resize:       'none',
-              fontFamily:   'inherit',
-              fontSize:     '13px',
-              color:        '#333',
-            }}
-          />
-          <div className="flex justify-end gap-2 mt-2">
-            <button
-              type="button"
-              onClick={() => setPopover(null)}
-              className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={saveSticky}
-              className="text-xs bg-yellow-400 text-yellow-900 px-3 py-1 rounded hover:bg-yellow-500"
-            >
-              Save
-            </button>
-          </div>
-        </div>
+          onClick={handleStickyClick}
+        />
       )}
-    </div>
+
+      {/* ── Annotation overlay (pointer-events none — text layer stays selectable) ── */}
+      <div
+        style={{
+          position:      'absolute',
+          top:           0,
+          left:          0,
+          width:         cssWidth,
+          height:        cssHeight,
+          pointerEvents: 'none',
+          zIndex:        4,
+        }}
+      >
+        {/* Highlight rects */}
+        {allHighlights.map(h =>
+          h.rects.map((r, i) => (
+            <div
+              key={`${h.id}-${i}`}
+              style={{
+                position:      'absolute',
+                top:           r.y,
+                left:          r.x,
+                width:         r.w,
+                height:        r.h,
+                background:    h.color,
+                opacity:       0.4,
+                mixBlendMode:  'multiply',
+                borderRadius:  2,
+                pointerEvents: 'none',
+              }}
+            />
+          )),
+        )}
+
+        {/* Sticky note pins */}
+        {allStickies.map(s => (
+          <button
+            key={s.id}
+            type="button"
+            style={{
+              position:      'absolute',
+              top:           s.y - 12,
+              left:          s.x - 8,
+              background:    'transparent',
+              border:        'none',
+              cursor:        'pointer',
+              fontSize:      '20px',
+              lineHeight:    1,
+              padding:       0,
+              pointerEvents: 'all',
+            }}
+            onClick={e => {
+              e.stopPropagation();
+              setPopover({ id: s.id, x: s.x, y: s.y, content: s.content });
+            }}
+            title="Sticky note"
+          >
+            📌
+          </button>
+        ))}
+
+        {/* New / edit sticky popover */}
+        {popover && (
+          <div
+            style={{
+              position:      'absolute',
+              top:           popover.y,
+              left:          popover.x,
+              background:    '#fffde7',
+              borderRadius:  '8px',
+              padding:       '12px',
+              minWidth:      '200px',
+              boxShadow:     '0 4px 16px rgba(0,0,0,0.5)',
+              zIndex:        20,
+              pointerEvents: 'all',
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            <textarea
+              autoFocus
+              value={popover.content}
+              onChange={e => setPopover(p => p ? { ...p, content: e.target.value } : p)}
+              placeholder="Add a note…"
+              rows={4}
+              style={{
+                width:      '100%',
+                background: 'transparent',
+                border:     'none',
+                outline:    'none',
+                resize:     'none',
+                fontFamily: 'inherit',
+                fontSize:   '13px',
+                color:      '#333',
+              }}
+            />
+            <div className="flex justify-end gap-2 mt-2">
+              <button
+                type="button"
+                onClick={() => setPopover(null)}
+                className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={saveSticky}
+                className="text-xs bg-yellow-400 text-yellow-900 px-3 py-1 rounded hover:bg-yellow-500"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </>
   );
 };

@@ -1,0 +1,54 @@
+/*
+ * Essential CSS for pdfjs TextLayer.
+ * Extracted from pdfjs-dist/web/pdf_viewer.css — only the rules needed for
+ * our minimal text-layer + selection use case.
+ */
+
+.textLayer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  overflow: clip;
+  line-height: 1;
+  text-align: initial;
+  -webkit-text-size-adjust: none;
+     -moz-text-size-adjust: none;
+          text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  z-index: 2;
+  /* Ensure dark-mode/color-scheme of the app doesn't recolour PDF text */
+  color-scheme: only light;
+}
+
+.textLayer :is(span, br) {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+  /* reset inherited font/line-height so spans sit exactly where pdf.js places them */
+  font-family: sans-serif;
+}
+
+/* Selection highlight colour visible through transparent text spans */
+.textLayer ::selection {
+  background-color: rgba(0, 80, 255, 0.25);
+  color: transparent;
+}
+
+/* pdfjs v5 uses CSS custom properties for per-span font sizing */
+.textLayer > :not(.markedContent),
+.textLayer .markedContent span:not(.markedContent) {
+  z-index: 1;
+  --font-height: 0;
+  font-size: calc(var(--text-scale-factor, 1) * var(--font-height) * 1px);
+  --scale-x: 1;
+  --rotate: 0deg;
+}
+
+.textLayer .markedContent {
+  display: contents;
+}
