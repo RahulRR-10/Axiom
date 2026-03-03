@@ -48,14 +48,21 @@
   color: transparent;
   position: absolute;
   white-space: pre;
-  cursor: text;
+  cursor: auto;
   transform-origin: 0% 0%;
   pointer-events: auto;
   -webkit-user-select: text;
   user-select: text;
-  /* Clip each span to its calculated bounding box so selection
-     doesn't bleed into adjacent lines at line boundaries */
-  overflow: hidden;
+
+  /* ── Prevent selection bleed into adjacent lines ── */
+  overflow: clip;                          /* stricter than hidden — no scroll container */
+  padding: 0;
+  margin: 0;
+  /* Clamp each span to exactly its font height so the selection
+     highlight cannot extend beyond the line bounding-box */
+  max-height: calc(var(--text-scale-factor) * var(--font-height) + 1px);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;            /* clip selection per-fragment */
 }
 
 /* ── Font sizing & transform ───────────────────────────────────────────────── */

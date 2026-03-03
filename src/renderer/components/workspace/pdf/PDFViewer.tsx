@@ -95,7 +95,14 @@ const PDFPage = React.memo(function PDFPage({
       canvas.style.width    = `${cssWidth}px`;
       canvas.style.height   = `${cssHeight}px`;
 
-      await page.render({ canvas, viewport: canvasViewport }).promise;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      // Reset transform & clear before rendering to avoid stale/mirrored content
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      await page.render({ canvas, canvasContext: ctx, viewport: canvasViewport }).promise;
       if (cancelled) return;
 
       textLayerDiv.innerHTML = '';
@@ -144,11 +151,13 @@ const PDFPage = React.memo(function PDFPage({
         marginBottom: PAGE_GAP,
         boxShadow:    '0 2px 8px rgba(0,0,0,0.5)',
         background:   '#ffffff',
-        cursor:       activeTool === 'sticky'  ? 'crosshair'
-                    : activeTool === 'draw'    ? 'crosshair'
-                    : activeTool === 'image'   ? 'crosshair'
-                    : activeTool === 'eraser'  ? 'crosshair'
-                    : 'text',
+        cursor:       activeTool === 'sticky'    ? 'crosshair'
+                    : activeTool === 'draw'      ? 'crosshair'
+                    : activeTool === 'image'     ? 'crosshair'
+                    : activeTool === 'eraser'    ? 'crosshair'
+                    : activeTool === 'highlight' ? 'text'
+                    : activeTool === 'textbox'   ? 'crosshair'
+                    : 'default',
       }}
     >
       <canvas

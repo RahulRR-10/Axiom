@@ -1,5 +1,6 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 
+import { Settings, Search } from 'lucide-react';
 import { AIPanel } from '../ai/AIPanel';
 import { SpotlightSearch } from '../search/SpotlightSearch';
 import { VaultSidebar } from '../vault/VaultSidebar';
@@ -11,23 +12,67 @@ export const AppLayout: React.FC = () => {
   const [aiCollapsed, setAiCollapsed]       = useState<boolean>(false);
   const [vaultPath, setVaultPath]           = useState<string | null>(null);
 
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
   const handleOpenNewVault = useCallback(() => {
     window.dispatchEvent(new CustomEvent('triggerOpenVault'));
   }, []);
 
+  /* ── Ctrl+K → focus search ── */
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        searchInputRef.current?.focus();
+        window.dispatchEvent(new CustomEvent('spotlight:open'));
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
+  const noDragStyle = { WebkitAppRegion: 'no-drag' } as React.CSSProperties;
+
   return (
     <div className="h-screen w-screen overflow-hidden flex flex-col bg-[#141414] text-[#d4d4d4]">
 
-      {/* ── Global title bar ── spans full width, independent of all panels */}
+      {/* ── Global title bar ── search, Axiom, settings, window controls */}
       <header
         style={{
           background: '#1a1a1a',
           borderBottom: '1px solid #2a2a2a',
           WebkitAppRegion: 'drag',
         } as React.CSSProperties}
-        className="h-10 shrink-0 w-full flex items-center justify-end"
+        className="h-10 shrink-0 w-full flex items-center px-4"
       >
-        <WindowControlsToolbar />
+        {/* Left: Axiom branding */}
+        <div className="text-xs text-[#8a8a8a] shrink-0 mr-4 select-none">Axiom</div>
+
+        {/* Center: Search bar */}
+        <div className="flex-1 flex justify-center" style={noDragStyle}>
+          <div className="relative w-full max-w-[400px]">
+            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#5a5a5a] pointer-events-none" />
+            <input
+              ref={searchInputRef}
+              placeholder="Search your vault... (Ctrl+K)"
+              onClick={() => window.dispatchEvent(new CustomEvent('spotlight:open'))}
+              readOnly
+              className="w-full rounded-md bg-[#141414] border border-[#2a2a2a] pl-8 pr-3 py-1.5 text-sm text-[#d4d4d4] outline-none focus:border-[#3a3a3a] cursor-pointer"
+            />
+          </div>
+        </div>
+
+        {/* Right: Settings + window controls */}
+        <div className="flex items-center shrink-0 ml-4" style={noDragStyle}>
+          <button
+            type="button"
+            aria-label="Settings"
+            className="h-8 w-8 rounded-md text-[#9a9a9a] hover:bg-[#2a2a2a] hover:text-[#d4d4d4] flex items-center justify-center"
+          >
+            <Settings size={16} />
+          </button>
+          <WindowControlsToolbar />
+        </div>
       </header>
 
       {/* ── Three-panel row ── fills remaining height */}

@@ -1,7 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { X } from 'lucide-react';
 
-import { TopBar } from '../layout/TopBar';
 import { PDFViewer } from './pdf/PDFViewer';
 
 type OpenFile = {
@@ -104,7 +103,6 @@ export const Workspace: React.FC<WorkspaceProps> = ({ vaultPath }) => {
 
   return (
     <section className="h-full w-full flex flex-col overflow-hidden">
-      <TopBar />
 
       {/* ── Tab bar ── */}
       {openFiles.length > 0 && (
