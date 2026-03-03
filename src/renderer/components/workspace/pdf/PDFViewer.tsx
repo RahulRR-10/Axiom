@@ -471,6 +471,9 @@ export const PDFViewer: React.FC<Props> = ({ filePath, fileId = '', vaultPath = 
             containerRef={scrollRef as React.RefObject<HTMLElement>}
             currentPage={currentPage}
             filePath={filePath}
+            fileId={effectiveFileId}
+            vaultPath={vaultPath ?? ''}
+            onAnnotationSaved={loadAnnotations}
           />
         )}
       </div>

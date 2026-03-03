@@ -1,28 +1,101 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, Highlighter } from 'lucide-react';
+import { v4 as uuidv4 } from 'uuid';
+import type { HighlightAnnotation } from '../../../shared/types';
 
 type AITarget = 'claude' | 'chatgpt' | 'gemini';
 const AI_TARGETS: AITarget[] = ['claude', 'chatgpt', 'gemini'];
 
 type Position = { top: number; left: number };
 
+const HL_COLORS = [
+  { label: 'Yellow', value: '#fde68a' },
+  { label: 'Green',  value: '#a7f3d0' },
+  { label: 'Pink',   value: '#fbb6ce' },
+  { label: 'Blue',   value: '#93c5fd' },
+];
+
 type Props = {
   /** Container element to anchor mouse-up listener on */
   containerRef: React.RefObject<HTMLElement>;
   currentPage:  number;
   filePath:     string;
+  fileId:       string;
+  vaultPath:    string;
+  onAnnotationSaved: () => void;
 };
+
+/**
+ * Build a highlight annotation from the current browser selection.
+ * Returns null if the selection doesn't live inside a page wrapper.
+ */
+function buildHighlightFromSelection(
+  fileId: string,
+  color: string,
+): { annotation: HighlightAnnotation; page: number } | null {
+  const sel = window.getSelection();
+  if (!sel || sel.isCollapsed || sel.rangeCount === 0) return null;
+
+  const text = sel.toString().trim();
+  if (!text) return null;
+
+  const range    = sel.getRangeAt(0);
+  const ancestor = range.commonAncestorContainer;
+  const node     = ancestor.nodeType === Node.TEXT_NODE ? ancestor.parentElement : ancestor as HTMLElement;
+  if (!node) return null;
+
+  // Walk up to find the textLayer, then its parent page wrapper
+  const textLayer = node.closest('.textLayer');
+  if (!textLayer) return null;
+  const pageWrapper = textLayer.parentElement;
+  if (!pageWrapper) return null;
+
+  // Determine page number from sibling index
+  const allPages = pageWrapper.parentElement?.children;
+  let pageNum = 1;
+  if (allPages) {
+    for (let i = 0; i < allPages.length; i++) {
+      if (allPages[i] === pageWrapper) { pageNum = i + 1; break; }
+    }
+  }
+
+  const wrapRect = pageWrapper.getBoundingClientRect();
+  const wrapW    = wrapRect.width  || 1;
+  const wrapH    = wrapRect.height || 1;
+
+  const rects = Array.from(range.getClientRects())
+    .filter(r => r.width > 0 && r.height > 0)
+    .map(r => ({
+      x: (r.left - wrapRect.left) / wrapW,
+      y: (r.top  - wrapRect.top)  / wrapH,
+      w: r.width  / wrapW,
+      h: r.height / wrapH,
+    }));
+
+  if (!rects.length) return null;
+
+  const annotation: HighlightAnnotation = {
+    id: uuidv4(), file_id: fileId, page: pageNum,
+    type: 'highlight', rects, color, text,
+  };
+
+  return { annotation, page: pageNum };
+}
 
 export const FloatingActionBar: React.FC<Props> = ({
   containerRef,
   currentPage,
   filePath,
+  fileId,
+  vaultPath,
+  onAnnotationSaved,
 }) => {
-  const [pos, setPos]             = useState<Position | null>(null);
+  const [pos, setPos]                   = useState<Position | null>(null);
   const [selectedText, setSelectedText] = useState('');
-  const [aiOpen, setAiOpen]       = useState(false);
-  const [hlOpen, setHlOpen]       = useState(false);
-  const barRef                    = useRef<HTMLDivElement>(null);
+  const [aiOpen, setAiOpen]             = useState(false);
+  const [hlOpen, setHlOpen]             = useState(false);
+  const [defaultColor, setDefaultColor] = useState('#fde68a');
+  const barRef                          = useRef<HTMLDivElement>(null);
 
   // ── Calculate bar position relative to the scrollable container ─────────
   const computePosition = useCallback(() => {
@@ -39,11 +112,10 @@ export const FloatingActionBar: React.FC<Props> = ({
     const rect  = range.getBoundingClientRect();
     const containerRect = container.getBoundingClientRect();
 
-    // Position is relative to the container's content (including scroll offset)
     return {
       text,
       pos: {
-        top:  rect.top  - containerRect.top  + container.scrollTop  - 40, // 8px above
+        top:  rect.top  - containerRect.top  + container.scrollTop  - 40,
         left: rect.left - containerRect.left + container.scrollLeft + rect.width / 2,
       },
     };
@@ -81,6 +153,22 @@ export const FloatingActionBar: React.FC<Props> = ({
     return () => document.removeEventListener('mousedown', onMouseDown);
   }, []);
 
+  // ── Instant highlight with given color ──────────────────────────────────
+  const doHighlight = useCallback((color: string) => {
+    const result = buildHighlightFromSelection(fileId, color);
+    if (!result || !vaultPath) return;
+
+    window.electronAPI.saveAnnotation(vaultPath, result.annotation)
+      .then(() => {
+        onAnnotationSaved();
+        window.getSelection()?.removeAllRanges();
+      })
+      .catch(console.error);
+
+    setPos(null);
+    setHlOpen(false);
+  }, [fileId, vaultPath, onAnnotationSaved]);
+
   // Dispatch helpers
   const dispatchSendToAI = (target: AITarget) => {
     window.dispatchEvent(new CustomEvent('sendToAI', { detail: { text: selectedText, target } }));
@@ -92,21 +180,8 @@ export const FloatingActionBar: React.FC<Props> = ({
     }));
     setPos(null);
   };
-  const dispatchHighlight = (color: string) => {
-    window.dispatchEvent(new CustomEvent('floatingHighlight', {
-      detail: { text: selectedText, color, page: currentPage },
-    }));
-    setPos(null);
-  };
 
   if (!pos) return null;
-
-  const HL_COLORS = [
-    { label: 'Yellow', value: '#fde68a' },
-    { label: 'Green',  value: '#a7f3d0' },
-    { label: 'Pink',   value: '#fbb6ce' },
-    { label: 'Blue',   value: '#93c5fd' },
-  ];
 
   return (
     <div
@@ -128,21 +203,36 @@ export const FloatingActionBar: React.FC<Props> = ({
         whiteSpace:   'nowrap',
       }}
     >
-      {/* Highlight ▾ */}
-      <div className="relative">
+      {/* ── Highlight: click = instant, chevron = color picker ── */}
+      <div className="relative flex items-center">
+        <button
+          type="button"
+          onClick={() => doHighlight(defaultColor)}
+          className="flex items-center gap-1 px-2 py-1 text-xs text-[#d4d4d4] rounded-l hover:bg-[#3a3a3a] transition-colors"
+          title={`Highlight (${HL_COLORS.find(c => c.value === defaultColor)?.label ?? 'Yellow'})`}
+        >
+          <Highlighter size={13} />
+          <span
+            style={{ background: defaultColor }}
+            className="inline-block w-2.5 h-2.5 rounded-sm border border-[#555]"
+          />
+        </button>
         <button
           type="button"
           onClick={() => { setHlOpen(o => !o); setAiOpen(false); }}
-          className="flex items-center gap-1 px-2 py-1 text-xs text-[#d4d4d4] rounded hover:bg-[#3a3a3a] transition-colors"
+          className="px-1 py-1 text-xs text-[#8a8a8a] rounded-r hover:bg-[#3a3a3a] transition-colors"
+          title="Pick highlight color"
         >
-          Highlight <ChevronDown size={12} />
+          <ChevronDown size={12} />
         </button>
+
         {hlOpen && (
           <div
             style={{
               position: 'absolute',
               top: '100%',
               left: 0,
+              marginTop: 4,
               background: '#2d2d2d',
               border: '1px solid #444',
               borderRadius: '8px',
@@ -156,10 +246,15 @@ export const FloatingActionBar: React.FC<Props> = ({
               <button
                 key={c.value}
                 type="button"
-                onClick={() => dispatchHighlight(c.value)}
+                onClick={() => {
+                  setDefaultColor(c.value);
+                  doHighlight(c.value);
+                }}
                 title={c.label}
                 style={{ background: c.value }}
-                className="w-6 h-6 rounded border border-[#555] hover:scale-110 transition-transform"
+                className={`w-6 h-6 rounded border-2 hover:scale-110 transition-transform ${
+                  defaultColor === c.value ? 'border-white' : 'border-transparent'
+                }`}
               />
             ))}
           </div>
@@ -217,3 +312,4 @@ export const FloatingActionBar: React.FC<Props> = ({
     </div>
   );
 };
+
