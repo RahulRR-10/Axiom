@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
-import { VAULT_CHANNELS, WINDOW_CHANNELS, SEARCH_CHANNELS, ANNOTATION_CHANNELS } from '../shared/ipc/channels';
-import type { FileNode, IndexStatus, SpotlightResult, SearchResult, Annotation } from '../shared/types';
+import { VAULT_CHANNELS, WINDOW_CHANNELS, SEARCH_CHANNELS, ANNOTATION_CHANNELS, NOTES_CHANNELS } from '../shared/ipc/channels';
+import type { FileNode, IndexStatus, SpotlightResult, SearchResult, Annotation, NoteSummary, NoteDetail } from '../shared/types';
 import type { VaultIndexProgressPayload } from '../shared/ipc/contracts';
 
 const electronAPI = {
@@ -64,6 +64,34 @@ const electronAPI = {
 
   deleteAnnotation: (vaultPath: string, annotationId: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(ANNOTATION_CHANNELS.DELETE, vaultPath, annotationId),
+
+  // ── Notes ──────────────────────────────────────────────────────────────
+  createNote: (
+    vaultPath: string,
+    targetDirectory: string,
+    title: string,
+    sourceFileId?: string,
+    sourcePage?: number,
+  ): Promise<NoteSummary> =>
+    ipcRenderer.invoke(NOTES_CHANNELS.CREATE, vaultPath, targetDirectory, title, sourceFileId, sourcePage),
+
+  readNote: (vaultPath: string, noteId: string): Promise<NoteDetail> =>
+    ipcRenderer.invoke(NOTES_CHANNELS.READ, vaultPath, noteId),
+
+  updateNote: (vaultPath: string, noteId: string, content: string): Promise<void> =>
+    ipcRenderer.invoke(NOTES_CHANNELS.UPDATE, vaultPath, noteId, content),
+
+  listNotes: (vaultPath: string): Promise<NoteSummary[]> =>
+    ipcRenderer.invoke(NOTES_CHANNELS.LIST, vaultPath),
+
+  deleteNote: (vaultPath: string, noteId: string): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(NOTES_CHANNELS.DELETE, vaultPath, noteId),
+
+  moveNote: (vaultPath: string, noteId: string, newDirectory: string): Promise<NoteSummary> =>
+    ipcRenderer.invoke(NOTES_CHANNELS.MOVE, vaultPath, noteId, newDirectory),
+
+  renameNote: (vaultPath: string, noteId: string, newTitle: string): Promise<NoteSummary> =>
+    ipcRenderer.invoke(NOTES_CHANNELS.RENAME, vaultPath, noteId, newTitle),
 
   // ── Misc ─────────────────────────────────────────────────────────────────
   openExternal: (url: string): void => {

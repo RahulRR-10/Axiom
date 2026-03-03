@@ -1,0 +1,290 @@
+/* ── Notes Editor ─────────────────────────────────────────────────────────── */
+
+.notes-editor {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    background: #141414;
+    overflow: hidden;
+}
+
+/* ── Toolbar ──────────────────────────────────────────────────────────────── */
+
+.notes-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 4px 8px;
+    background: #1a1a1a;
+    border-bottom: 1px solid #2a2a2a;
+    flex-shrink: 0;
+    min-height: 36px;
+}
+
+.notes-toolbar-group {
+    display: flex;
+    align-items: center;
+    gap: 1px;
+}
+
+.notes-toolbar-sep {
+    width: 1px;
+    height: 18px;
+    background: #333;
+    margin: 0 6px;
+}
+
+.notes-toolbar-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: #8a8a8a;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 120ms ease;
+}
+
+.notes-toolbar-btn:hover {
+    background: #2a2a2a;
+    color: #d4d4d4;
+}
+
+.notes-toolbar-btn.active {
+    background: #3a3a3a;
+    color: #e4e4e4;
+}
+
+/* ── Mode toggle (segmented control) ──────────────────────────────────────── */
+
+.notes-mode-toggle {
+    display: flex;
+    margin-left: auto;
+    background: #252525;
+    border-radius: 6px;
+    padding: 2px;
+    gap: 1px;
+}
+
+.notes-mode-btn {
+    border: none;
+    background: transparent;
+    color: #8a8a8a;
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 120ms ease;
+    white-space: nowrap;
+}
+
+.notes-mode-btn:hover {
+    color: #c4c4c4;
+}
+
+.notes-mode-btn.active {
+    background: #3a3a3a;
+    color: #d4d4d4;
+}
+
+/* ── Editor area ──────────────────────────────────────────────────────────── */
+
+.notes-editor-area {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    position: relative;
+}
+
+.notes-editor-area .cm-editor {
+    height: 100%;
+    font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 14px;
+}
+
+.notes-editor-area .cm-editor .cm-scroller {
+    overflow: auto;
+}
+
+.notes-editor-area .cm-editor.cm-focused {
+    outline: none;
+}
+
+.notes-editor-area .cm-editor .cm-gutters {
+    background: #1a1a1a;
+    border-right: 1px solid #2a2a2a;
+    color: #4a4a4a;
+}
+
+.notes-editor-area .cm-editor .cm-activeLineGutter {
+    background: #222;
+}
+
+.notes-editor-area .cm-editor .cm-activeLine {
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.notes-editor-area .cm-editor .cm-selectionBackground {
+    background: rgba(74, 158, 255, 0.2) !important;
+}
+
+.notes-editor-area .cm-editor .cm-cursor {
+    border-left-color: #4a9eff;
+}
+
+/* ── Read mode ────────────────────────────────────────────────────────────── */
+
+.notes-read-view {
+    height: 100%;
+    overflow-y: auto;
+    padding: 24px 32px;
+    color: #d4d4d4;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: 15px;
+    line-height: 1.7;
+}
+
+.notes-read-view h1 {
+    font-size: 28px;
+    font-weight: 700;
+    color: #e8e8e8;
+    margin: 24px 0 12px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid #2a2a2a;
+}
+
+.notes-read-view h2 {
+    font-size: 22px;
+    font-weight: 600;
+    color: #e4e4e4;
+    margin: 20px 0 10px;
+}
+
+.notes-read-view h3 {
+    font-size: 18px;
+    font-weight: 600;
+    color: #ddd;
+    margin: 16px 0 8px;
+}
+
+.notes-read-view h4,
+.notes-read-view h5,
+.notes-read-view h6 {
+    font-size: 15px;
+    font-weight: 600;
+    color: #ccc;
+    margin: 12px 0 6px;
+}
+
+.notes-read-view p {
+    margin: 8px 0;
+}
+
+.notes-read-view a {
+    color: #4a9eff;
+    text-decoration: none;
+}
+
+.notes-read-view a:hover {
+    text-decoration: underline;
+}
+
+.notes-read-view code {
+    background: #2a2a2a;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 13px;
+    color: #e06c75;
+}
+
+.notes-read-view pre {
+    background: #1e1e1e;
+    border: 1px solid #2a2a2a;
+    border-radius: 6px;
+    padding: 12px 16px;
+    overflow-x: auto;
+    margin: 12px 0;
+}
+
+.notes-read-view pre code {
+    background: none;
+    padding: 0;
+    color: #d4d4d4;
+    font-size: 13px;
+}
+
+.notes-read-view blockquote {
+    border-left: 3px solid #4a9eff;
+    margin: 12px 0;
+    padding: 4px 16px;
+    color: #999;
+    background: rgba(74, 158, 255, 0.05);
+    border-radius: 0 4px 4px 0;
+}
+
+.notes-read-view ul,
+.notes-read-view ol {
+    padding-left: 24px;
+    margin: 8px 0;
+}
+
+.notes-read-view li {
+    margin: 4px 0;
+}
+
+.notes-read-view input[type="checkbox"] {
+    margin-right: 6px;
+    accent-color: #4a9eff;
+}
+
+.notes-read-view table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0;
+}
+
+.notes-read-view th,
+.notes-read-view td {
+    border: 1px solid #333;
+    padding: 8px 12px;
+    text-align: left;
+}
+
+.notes-read-view th {
+    background: #1e1e1e;
+    font-weight: 600;
+    color: #e0e0e0;
+}
+
+.notes-read-view hr {
+    border: none;
+    border-top: 1px solid #2a2a2a;
+    margin: 20px 0;
+}
+
+.notes-read-view img {
+    max-width: 100%;
+    border-radius: 6px;
+}
+
+/* ── Save indicator ───────────────────────────────────────────────────────── */
+
+.notes-save-indicator {
+    font-size: 10px;
+    color: #555;
+    margin-left: 8px;
+    transition: color 300ms ease;
+}
+
+.notes-save-indicator.saving {
+    color: #e5c07b;
+}
+
+.notes-save-indicator.saved {
+    color: #98c379;
+}

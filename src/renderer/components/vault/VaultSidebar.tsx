@@ -17,13 +17,119 @@ type VaultSidebarProps = {
   onFileOpen?: (filePath: string, fileType: string) => void;
 };
 
+// ── New Note Modal ────────────────────────────────────────────────────────────
+
+type NewNoteModalProps = {
+  targetFolder: string;
+  onCancel: () => void;
+  onCreate: (title: string) => void;
+};
+
+const NewNoteModal: React.FC<NewNoteModalProps> = ({ targetFolder, onCancel, onCreate }) => {
+  const [title, setTitle] = useState('');
+
+  const folderName = targetFolder.split(/[/\\]/).filter(Boolean).pop() ?? targetFolder;
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = title.trim();
+    if (!trimmed) return;
+    onCreate(trimmed);
+  };
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 9999,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: 'rgba(0,0,0,0.5)',
+      }}
+      onClick={onCancel}
+    >
+      <form
+        onSubmit={handleSubmit}
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: '#252525',
+          border: '1px solid #3a3a3a',
+          borderRadius: '10px',
+          padding: '20px',
+          width: '320px',
+          boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+        }}
+      >
+        <h3 style={{ margin: '0 0 4px', fontSize: '14px', fontWeight: 600, color: '#e4e4e4' }}>
+          New Note
+        </h3>
+        <p style={{ margin: '0 0 12px', fontSize: '11px', color: '#6a6a6a' }}>
+          in {folderName}/
+        </p>
+        <input
+          autoFocus
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="Note title…"
+          style={{
+            width: '100%',
+            padding: '8px 10px',
+            borderRadius: '6px',
+            border: '1px solid #3a3a3a',
+            background: '#1a1a1a',
+            color: '#d4d4d4',
+            fontSize: '13px',
+            outline: 'none',
+            boxSizing: 'border-box',
+          }}
+        />
+        <div style={{ display: 'flex', gap: '8px', marginTop: '12px', justifyContent: 'flex-end' }}>
+          <button
+            type="button"
+            onClick={onCancel}
+            style={{
+              padding: '5px 14px',
+              borderRadius: '6px',
+              border: '1px solid #3a3a3a',
+              background: 'transparent',
+              color: '#8a8a8a',
+              fontSize: '12px',
+              cursor: 'pointer',
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            style={{
+              padding: '5px 14px',
+              borderRadius: '6px',
+              border: 'none',
+              background: '#4a9eff',
+              color: '#fff',
+              fontSize: '12px',
+              cursor: 'pointer',
+              fontWeight: 500,
+            }}
+          >
+            Create
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+};
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export const VaultSidebar: React.FC<VaultSidebarProps> = ({ onVaultOpen, onFileOpen }) => {
-  const [vaultPath, setVaultPath]     = useState<string | null>(null);
-  const [files, setFiles]             = useState<FileNode[]>([]);
+  const [vaultPath, setVaultPath] = useState<string | null>(null);
+  const [files, setFiles] = useState<FileNode[]>([]);
   const [indexStatus, setIndexStatus] = useState<IndexStatus | null>(null);
-  const [activeFile, setActiveFile]   = useState<string | null>(null);
+  const [activeFile, setActiveFile] = useState<string | null>(null);
+  const [newNoteFolder, setNewNoteFolder] = useState<string | null>(null);
 
   // Subscribe to background indexing progress and file-change events
   useEffect(() => {
@@ -66,6 +172,38 @@ export const VaultSidebar: React.FC<VaultSidebarProps> = ({ onVaultOpen, onFileO
     );
   }, [onFileOpen]);
 
+  // ── New Note handler ──────────────────────────────────────────────────────
+  const handleNewNote = useCallback(() => {
+    if (!vaultPath) return;
+    setNewNoteFolder(vaultPath);
+  }, [vaultPath]);
+
+  // Listen for newNote event from the + button
+  useEffect(() => {
+    const handler = (): void => { handleNewNote(); };
+    window.addEventListener('newNote', handler);
+    return () => window.removeEventListener('newNote', handler);
+  }, [handleNewNote]);
+
+  const handleCreateNote = useCallback(async (title: string) => {
+    if (!vaultPath || !newNoteFolder) return;
+    try {
+      const note = await window.electronAPI.createNote(vaultPath, newNoteFolder, title);
+      setNewNoteFolder(null);
+      // Refresh tree
+      await refreshTree(vaultPath);
+      // Open the created note
+      if (note.file_path) {
+        window.dispatchEvent(
+          new CustomEvent('openFile', { detail: { filePath: note.file_path, fileType: 'md' } }),
+        );
+      }
+    } catch (err) {
+      console.error('[VaultSidebar] Failed to create note:', err);
+      setNewNoteFolder(null);
+    }
+  }, [vaultPath, newNoteFolder]);
+
   const vaultName = vaultPath
     ? vaultPath.split(/[/\\]/).filter(Boolean).slice(-1)[0] ?? vaultPath
     : null;
@@ -103,7 +241,7 @@ export const VaultSidebar: React.FC<VaultSidebarProps> = ({ onVaultOpen, onFileO
           type="button"
           title="New Note"
           className="h-6 w-6 rounded text-[#8a8a8a] hover:text-[#d4d4d4] hover:bg-[#2a2a2a] flex items-center justify-center shrink-0"
-          onClick={() => window.dispatchEvent(new CustomEvent('newNote'))}
+          onClick={handleNewNote}
         >
           <PlusCircle size={14} />
         </button>
@@ -137,10 +275,20 @@ export const VaultSidebar: React.FC<VaultSidebarProps> = ({ onVaultOpen, onFileO
               depth={0}
               activeFile={activeFile}
               onFileClick={handleFileClick}
+              onNewNoteInFolder={(folderPath) => setNewNoteFolder(folderPath)}
             />
           ))
         )}
       </div>
+
+      {/* New Note Modal */}
+      {newNoteFolder && (
+        <NewNoteModal
+          targetFolder={newNoteFolder}
+          onCancel={() => setNewNoteFolder(null)}
+          onCreate={(title) => void handleCreateNote(title)}
+        />
+      )}
     </div>
   );
 };
@@ -152,10 +300,24 @@ type TreeNodeProps = {
   depth: number;
   activeFile: string | null;
   onFileClick: (node: FileNode) => void;
+  onNewNoteInFolder?: (folderPath: string) => void;
 };
 
-const TreeNode: React.FC<TreeNodeProps> = ({ node, depth, activeFile, onFileClick }) => {
+const TreeNode: React.FC<TreeNodeProps> = ({ node, depth, activeFile, onFileClick, onNewNoteInFolder }) => {
   const [open, setOpen] = useState<boolean>(true);
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
+
+  // Close context menu on outside click
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const dismiss = () => setCtxMenu(null);
+    window.addEventListener('click', dismiss);
+    window.addEventListener('contextmenu', dismiss);
+    return () => {
+      window.removeEventListener('click', dismiss);
+      window.removeEventListener('contextmenu', dismiss);
+    };
+  }, [ctxMenu]);
 
   if (node.type === 'folder') {
     return (
@@ -163,6 +325,11 @@ const TreeNode: React.FC<TreeNodeProps> = ({ node, depth, activeFile, onFileClic
         <button
           type="button"
           onClick={() => setOpen((o) => !o)}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setCtxMenu({ x: e.clientX, y: e.clientY });
+          }}
           style={{ paddingLeft: depth * 12 + 8 }}
           className="w-full flex items-center gap-1.5 py-1 pr-2 text-left hover:bg-[#2a2a2a] rounded transition-colors"
         >
@@ -174,6 +341,38 @@ const TreeNode: React.FC<TreeNodeProps> = ({ node, depth, activeFile, onFileClic
           </span>
           <span className="text-xs text-[#c4c4c4] truncate">{node.name}</span>
         </button>
+
+        {/* Right-click context menu */}
+        {ctxMenu && (
+          <div
+            style={{
+              position: 'fixed',
+              top: ctxMenu.y,
+              left: ctxMenu.x,
+              zIndex: 9998,
+              background: '#2d2d2d',
+              border: '1px solid #444',
+              borderRadius: '6px',
+              padding: '4px 0',
+              boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+              minWidth: '140px',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => {
+                setCtxMenu(null);
+                onNewNoteInFolder?.(node.path);
+              }}
+              className="w-full text-left px-3 py-1.5 text-xs text-[#d4d4d4] hover:bg-[#3a3a3a] transition-colors flex items-center gap-2"
+            >
+              <PlusCircle size={12} />
+              New Note
+            </button>
+          </div>
+        )}
+
         {open && node.children?.map((child) => (
           <TreeNode
             key={child.path}
@@ -181,6 +380,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({ node, depth, activeFile, onFileClic
             depth={depth + 1}
             activeFile={activeFile}
             onFileClick={onFileClick}
+            onNewNoteInFolder={onNewNoteInFolder}
           />
         ))}
       </div>
@@ -194,9 +394,8 @@ const TreeNode: React.FC<TreeNodeProps> = ({ node, depth, activeFile, onFileClic
       type="button"
       onClick={() => onFileClick(node)}
       style={{ paddingLeft: depth * 12 + 20 }}
-      className={`w-full flex items-center gap-1.5 py-1 pr-2 text-left rounded transition-colors ${
-        isActive ? 'bg-[#3a3a3a]' : 'hover:bg-[#2a2a2a]'
-      }`}
+      className={`w-full flex items-center gap-1.5 py-1 pr-2 text-left rounded transition-colors ${isActive ? 'bg-[#3a3a3a]' : 'hover:bg-[#2a2a2a]'
+        }`}
     >
       <FileIcon fileType={node.fileType ?? ''} />
       <span className="text-xs text-[#d4d4d4] truncate">{node.name}</span>
@@ -208,9 +407,9 @@ const TreeNode: React.FC<TreeNodeProps> = ({ node, depth, activeFile, onFileClic
 
 const FileIcon: React.FC<{ fileType: string }> = ({ fileType }) => {
   const colors: Record<string, string> = {
-    pdf:  '#f87171',
-    md:   '#60a5fa',
-    txt:  '#9ca3af',
+    pdf: '#f87171',
+    md: '#60a5fa',
+    txt: '#9ca3af',
     pptx: '#fb923c',
   };
   return (

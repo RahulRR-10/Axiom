@@ -77,11 +77,16 @@ export type SpotlightResult = {
 export type NoteSummary = {
   id: string;
   title: string;
+  file_path: string;
   subject: string | null;
   source_file_id: string | null;
   source_page: number | null;
   created_at: number;
   updated_at: number;
+};
+
+export type NoteDetail = NoteSummary & {
+  content: string;
 };
 
 // ── Annotations ──────────────────────────────────────────────────────────────

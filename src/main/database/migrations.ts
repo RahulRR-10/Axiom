@@ -98,4 +98,11 @@ export const MIGRATIONS: Array<{ version: string; sql: string }> = [
       CREATE INDEX IF NOT EXISTS idx_annotations_file_id ON annotations(file_id);
     `,
   },
+  {
+    version: '004_notes_file_path',
+    sql: `
+      ALTER TABLE notes ADD COLUMN file_path TEXT;
+      CREATE INDEX IF NOT EXISTS idx_notes_file_path ON notes(file_path);
+    `,
+  },
 ];

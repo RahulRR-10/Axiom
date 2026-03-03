@@ -3,6 +3,7 @@ import { app, BrowserWindow, ipcMain, session } from 'electron';
 import { registerVaultHandlers } from './ipc/vaultHandlers';
 import { registerSearchHandlers } from './ipc/searchHandlers';
 import { registerAnnotationHandlers } from './ipc/annotationHandlers';
+import { registerNotesHandlers } from './ipc/notesHandlers';
 
 declare const MAIN_WINDOW_WEBPACK_ENTRY: string;
 declare const MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY: string;
@@ -91,6 +92,7 @@ app.whenReady().then(() => {
   registerVaultHandlers();
   registerSearchHandlers();
   registerAnnotationHandlers();
+  registerNotesHandlers();
   setupWebviewSessions();
   createWindow();
 });

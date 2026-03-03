@@ -435,188 +435,492 @@ npm run package -- --dry-run
 ---
 
 ## Phase 4 — Workspace: Notes Editor *(NOT STARTED)*
+---
 
-> **Status:** This is the next phase to implement. No `NotesEditor.tsx` exists yet.
+# 📘 Phase 4 — Workspace: Markdown Notes Editor (Obsidian-Style)
 
-### Step 4.0 — Install Notes Dependencies
-
-**Prompt for Copilot:**
-> "Install the following dependencies for the Notes Editor:
-> - `@codemirror/state` `@codemirror/view` `@codemirror/lang-markdown` `@codemirror/language` `@codemirror/commands` `@codemirror/autocomplete`
-> - `@codemirror/theme-one-dark` (dark theme)
-> - `react-markdown` + `remark-gfm` (read mode rendering)
-> - `@lezer/markdown` (CodeMirror markdown parser)
->
-> These are all dev/runtime dependencies for the renderer process, no native modules needed."
+> **Status:** NOT STARTED
+> This phase implements a full Markdown note editor similar to Obsidian.
+> The Notes system supports **ONLY `.md` files**.
+> No other file formats are treated as editable notes.
 
 ---
 
-### Step 4.1 — Notes IPC Handlers
+# 🔒 Critical Constraints
 
-**Prompt for Copilot:**
-> "Add notes CRUD IPC handlers to the existing codebase. These are needed before the UI can work.
->
-> In `src/shared/ipc/channels.ts`, add a `NOTES_CHANNELS` object:
-> ```ts
-> export const NOTES_CHANNELS = {
->   CREATE:  'notes:create',
->   READ:    'notes:read',
->   UPDATE:  'notes:update',
->   LIST:    'notes:list',
->   DELETE:  'notes:delete',
-> } as const;
-> ```
->
-> In `src/main/ipc/notesHandlers.ts` (new file), implement:
-> - `notes:create(vaultPath, subject, title)` — creates a `.md` file on disk at `{vaultPath}/{subject}/{title}.md`, inserts a record into the `notes` SQLite table, returns `{ id, path }`
-> - `notes:read(vaultPath, noteId)` — fetches note record from SQLite, reads file content from disk, returns `{ id, title, content, subject, source_file_id, source_page }`
-> - `notes:update(vaultPath, noteId, content)` — writes content to the `.md` file on disk, updates `updated_at` in SQLite
-> - `notes:list(vaultPath)` — returns all `NoteSummary[]` from SQLite
-> - `notes:delete(vaultPath, noteId)` — deletes file from disk + SQLite record
->
-> Register the handlers in `src/main/index.ts` alongside the existing vault/search/annotation handlers.
-> Add the corresponding methods to `src/preload/index.ts` electronAPI object.
-> Add typed contracts to `src/shared/ipc/contracts.ts`."
+1. The Notes Editor must:
+
+   * Accept and render **ONLY `.md` files**
+   * Reject all other extensions
+   * Never treat `.txt`, `.docx`, `.rtf`, etc. as notes
+
+2. Users must be able to:
+
+   * Create notes in **any folder inside the vault**
+   * Rename / delete notes
+   * Move notes between folders (filesystem-based)
+
+3. Goal:
+
+   > Achieve Obsidian-level Markdown editing experience inside Axiom.
 
 ---
 
-### Step 4.2 — Notes Editor Core
+# 🧱 Step 4.0 — Install Markdown Editor Dependencies
 
 **Prompt for Copilot:**
-> "Create `src/renderer/components/workspace/notes/NotesEditor.tsx` using CodeMirror 6.
+
+> Install dependencies required for a full-featured Markdown editor (Obsidian-style):
 >
-> Props: `filePath: string`, `noteId: string`, `vaultPath: string`
+> Core:
 >
-> Setup:
-> - Use `@codemirror/lang-markdown` with full markdown extensions
-> - Dark theme using `@codemirror/theme-one-dark` customized to match app (background `#141414`, gutter `#1a1a1a`)
-> - Font: system monospace (`'JetBrains Mono', 'Fira Code', 'Consolas', monospace`), 14px
+> * `@codemirror/state`
+> * `@codemirror/view`
+> * `@codemirror/lang-markdown`
+> * `@codemirror/language`
+> * `@codemirror/commands`
+> * `@codemirror/autocomplete`
+> * `@codemirror/search`
+> * `@codemirror/history`
+> * `@codemirror/highlight`
+> * `@lezer/markdown`
 >
-> Three view modes (toggle buttons in top-right corner of the editor area):
-> 1. **Edit mode**: Raw CodeMirror editor, always shows markdown syntax
-> 2. **Live Preview mode** (default): CodeMirror with markdown decorations — renders inline formatting (bold, italic, links, headings) while editing. Only shows raw syntax on the line the cursor is on.
-> 3. **Read mode**: Hide CodeMirror, render content as HTML using `react-markdown` with `remark-gfm` (tables, strikethrough, task lists). Not editable.
+> Theme:
 >
-> Mode toggle: three small buttons (Edit | Live | Read) styled as a segmented control. Background `#252525`, active segment `#3a3a3a`, text `#d4d4d4`.
+> * `@codemirror/theme-one-dark`
 >
-> Keyboard shortcut: `Ctrl+E` cycles Edit → Live → Read → Edit.
+> Markdown rendering:
 >
-> Autosave: debounce content changes by 1000ms, then call `electronAPI.updateNote(vaultPath, noteId, content)`.
+> * `react-markdown`
+> * `remark-gfm`
+> * `rehype-raw`
+> * `rehype-slug`
 >
-> Load note content on mount via `electronAPI.readNote(vaultPath, noteId)`."
+> All dependencies are renderer-only. No native modules.
 
 ---
 
-### Step 4.3 — Workspace Integration for Notes
+# 🧠 Step 4.1 — Notes IPC Handlers (Strict `.md` Enforcement)
 
-**Prompt for Copilot:**
-> "Modify `src/renderer/components/workspace/Workspace.tsx` to handle `.md` files.
->
-> Currently, `renderContent()` only handles `fileType === 'pdf'`. Add a case for `fileType === 'md'`:
-> ```tsx
-> if (activeFile.fileType === 'md') {
->   return (
->     <div className='flex-1 min-h-0 overflow-hidden'>
->       <NotesEditor
->         key={activeFile.filePath}
->         filePath={activeFile.filePath}
->         noteId={activeFile.fileId ?? ''}
->         vaultPath={vaultPath ?? ''}
->       />
->     </div>
->   );
-> }
-> ```
->
-> Import NotesEditor at the top of the file."
+## 🔹 Add Channels
+
+In `src/shared/ipc/channels.ts`:
+
+```ts
+export const NOTES_CHANNELS = {
+  CREATE: 'notes:create',
+  READ: 'notes:read',
+  UPDATE: 'notes:update',
+  LIST: 'notes:list',
+  DELETE: 'notes:delete',
+  MOVE: 'notes:move',
+  RENAME: 'notes:rename',
+} as const;
+```
 
 ---
 
-### Step 4.4 — New Note Button in Vault Sidebar
+## 🔹 Strict Markdown-Only Rule
 
-**Prompt for Copilot:**
-> "Modify `src/renderer/components/vault/VaultSidebar.tsx`:
->
-> The '+ New Note' button already exists visually at the top of the sidebar. Wire it to actually create a note:
-> 1. On click: call `electronAPI.createNote(vaultPath, subject, 'Untitled Note')` where `subject` is the current expanded folder name (or empty if none)
-> 2. On success: dispatch an `openFile` event with the new note's path and `fileType: 'md'`
-> 3. Refresh the file tree after creation
->
-> Also: ensure `.md` files in the file tree open in the NotesEditor when clicked (the `onFileClick` handler should set `fileType: 'md'` for markdown files)."
+Inside `notesHandlers.ts`:
 
----
+* Before ANY operation:
 
-### Step 4.5 — Pinned Reference Strip
+  * Validate file extension
+  * Throw error if extension !== `.md`
 
-**Prompt for Copilot:**
-> "Create `src/renderer/components/workspace/notes/PinnedReferenceStrip.tsx`.
->
-> This is a slim bar (height 36px) pinned at the top of the notes editor content area (below the mode toggle buttons).
->
-> Props: `sourceFileName: string | null`, `sourcePage: number | null`, `onNavigate: () => void`, `onDismiss: () => void`
->
-> It shows: `📄 {fileName} — Page {pageNumber}` with an × dismiss button on the right.
->
-> Behavior:
-> - Visible only when both `sourceFileName` and `sourcePage` are non-null
-> - Clicking the strip text calls `onNavigate()` which dispatches an `openFile` event to open the source PDF at that page
-> - Clicking × calls `onDismiss()` to hide the strip
->
-> Style: `background: #252525`, `border-bottom: 1px solid #333`, `font-size: 12px`, `color: #888`, clickable text turns `#ccc` on hover."
+```ts
+if (!filePath.endsWith('.md')) {
+  throw new Error('Only .md files are supported in Notes Editor');
+}
+```
 
 ---
 
-### Step 4.6 — Exam Templates
+## 🔹 Create Note (Anywhere in Vault)
 
-**Prompt for Copilot:**
-> "Add a Templates dropdown button to the NotesEditor toolbar area (next to the mode toggle buttons).
->
-> When clicked, show a dropdown with these options:
-> - 2-mark definition
-> - 5-mark answer
-> - 10-mark answer
-> - Comparison table
-> - Formula sheet block
->
-> Clicking a template inserts the corresponding markdown template at the cursor position in CodeMirror. Templates:
-> - **2-mark**: `## [Term]\n**Definition:** \n\n**Example:** `
-> - **5-mark**: `## [Topic]\n\n**Key Points:**\n1. \n2. \n3. \n\n**Explanation:**\n\n**Example:**`
-> - **10-mark**: `## [Topic]\n\n### Introduction\n\n### Main Points\n\n#### 1. [Point]\n- Sub-point\n- Sub-point\n\n#### 2. [Point]\n- Sub-point\n- Sub-point\n\n#### 3. [Point]\n- Sub-point\n- Sub-point\n\n### Comparison\n| Aspect | A | B |\n|--------|---|---|\n| | | |\n\n### Conclusion\n`
-> - **Comparison table**: `| Topic | A | B |\n|-------|---|---|\n| | | |\n| | | |\n| | | |`
-> - **Formula sheet**: `` ```math\n% Formula Sheet\n% Add formulas below\n\n``` ``
->
-> Use CodeMirror's `dispatch` and `replaceSelection` to insert at cursor."
+`notes:create(vaultPath, targetDirectory, title)`
+
+* `targetDirectory` = absolute path inside vault
+* Validate that `targetDirectory` is inside vault
+* Auto-append `.md`
+* Create file at:
+
+```
+{vaultPath}/{targetDirectory}/{title}.md
+```
+
+* Insert SQLite record
+* Return `{ id, path }`
+
+⚠ Must prevent directory traversal (`../` protection)
 
 ---
 
-### Step 4.7 — Wire "Save to Notes" from Floating Action Bar
+## 🔹 Additional IPC
 
-**Prompt for Copilot:**
-> "The FloatingActionBar in `src/renderer/components/workspace/FloatingActionBar.tsx` has a 'Save to Notes' button that dispatches a `saveToNotes` custom event, but nothing listens for it.
->
-> Add a listener in `Workspace.tsx` or the `NotesEditor`:
-> 1. Listen for the `saveToNotes` event
-> 2. On event, show a small dropdown/modal asking: create new note or append to existing note
-> 3. If 'new note': call `electronAPI.createNote()` with the selected text as initial content, set `source_file_id` and `source_page` from the event detail
-> 4. If 'append to existing': call `electronAPI.readNote()` → append text with `\n\n---\n### Saved from PDF — Page {page}\n{text}\n---\n` → call `electronAPI.updateNote()`
-> 5. Open the note in the workspace after saving"
+### `notes:move(noteId, newDirectory)`
 
-**Debug checkpoint for Phase 4:**
-- [ ] Notes dependencies install without errors
-- [ ] `notes:create` IPC creates `.md` file on disk + SQLite record
-- [ ] Clicking '+ New Note' in sidebar creates and opens a note
-- [ ] Notes editor opens in Live Preview mode by default
-- [ ] `Ctrl+E` cycles through Edit → Live → Read modes
-- [ ] Read mode renders markdown correctly (headings, tables, code blocks, task lists)
-- [ ] Autosave writes file to disk after 1 second of no typing
-- [ ] `.md` files in sidebar open in NotesEditor (not PDFViewer)
-- [ ] Pinned reference strip appears for notes with source links
-- [ ] Clicking reference strip opens the source PDF at the correct page
-- [ ] Templates insert correct markdown at cursor position
-- [ ] "Save to Notes" from FloatingActionBar creates note with source reference
+* Move file on disk
+* Update SQLite path
+
+### `notes:rename(noteId, newTitle)`
+
+* Rename `.md` file
+* Update DB record
 
 ---
 
+## 🔹 Preload Exposure
+
+Expose:
+
+```ts
+createNote
+readNote
+updateNote
+deleteNote
+moveNote
+renameNote
+```
+
+Typed contracts in `contracts.ts`.
+
+---
+
+# 🧠 Step 4.2 — Obsidian-Style NotesEditor.tsx
+
+Create:
+
+```
+src/renderer/components/workspace/notes/NotesEditor.tsx
+```
+
+## Props
+
+```ts
+filePath: string
+noteId: string
+vaultPath: string
+```
+
+---
+
+# 🧩 Core Editor Features (Match Obsidian)
+
+The editor must include:
+
+### 1️⃣ Markdown Editing
+
+* CodeMirror 6
+* `@codemirror/lang-markdown`
+* GitHub Flavored Markdown
+* Tables
+* Task lists
+* Strikethrough
+* Code blocks
+* Inline code
+* Blockquotes
+* Horizontal rules
+
+---
+
+### 2️⃣ Live Preview Mode (Default)
+
+* Render markdown formatting visually
+* Show raw syntax only on active line
+* Similar to Obsidian’s Live Preview
+
+---
+
+### 3️⃣ Source Mode
+
+* Raw markdown editing
+* No decoration
+
+---
+
+### 4️⃣ Read Mode
+
+* Hide CodeMirror
+* Render using:
+
+```tsx
+<ReactMarkdown
+  remarkPlugins={[remarkGfm]}
+  rehypePlugins={[rehypeRaw, rehypeSlug]}
+/>
+```
+
+---
+
+### 5️⃣ Mode Toggle UI
+
+Segmented control:
+
+```
+[ Source | Live | Read ]
+```
+
+Style:
+
+* Background: `#252525`
+* Active: `#3a3a3a`
+* Text: `#d4d4d4`
+
+Keyboard shortcut:
+
+```
+Ctrl + E → cycle modes
+```
+
+---
+
+# ✍️ Editing Experience Requirements
+
+Must support:
+
+* Undo / Redo (history extension)
+* Ctrl + F search
+* Ctrl + H replace
+* Tab indentation
+* Smart list continuation
+* Auto-close brackets
+* Autocomplete for:
+
+  * `[[Wiki Links]]`
+  * `#tags`
+  * `@mentions` (future)
+
+---
+
+# 🔗 Wiki Links (Obsidian Feature)
+
+Support internal links:
+
+```
+[[Note Name]]
+```
+
+Implementation:
+
+* Detect `[[...]]`
+* Provide autocomplete of existing `.md` files in vault
+* Clicking link:
+
+  * Dispatch openFile event
+  * Open note
+
+---
+
+# 🧠 Backlinks (Optional but Recommended)
+
+In sidebar or right panel:
+
+* Show:
+
+  ```
+  Linked from:
+  - Note A
+  - Note B
+  ```
+
+Scan `.md` files for `[[CurrentNote]]`.
+
+---
+
+# 💾 Autosave
+
+* Debounce 1000ms
+* Call:
+
+```ts
+electronAPI.updateNote(vaultPath, noteId, content)
+```
+
+---
+
+# 📁 Step 4.3 — Workspace Integration (Strict File Type)
+
+In `Workspace.tsx`:
+
+```tsx
+if (activeFile.fileType === 'md') {
+  if (!activeFile.filePath.endsWith('.md')) {
+    return <div>Unsupported file type</div>;
+  }
+
+  return (
+    <NotesEditor
+      key={activeFile.filePath}
+      filePath={activeFile.filePath}
+      noteId={activeFile.fileId ?? ''}
+      vaultPath={vaultPath ?? ''}
+    />
+  );
+}
+```
+
+⚠ Only `.md` files open in NotesEditor.
+
+All other file types:
+
+* `.pdf` → PDF Viewer
+* Everything else → Unsupported
+
+---
+
+# ➕ Step 4.4 — Create Note Anywhere (Vault Sidebar)
+
+Modify `VaultSidebar.tsx`:
+
+### Remove fixed subject logic.
+
+Instead:
+
+When user clicks “+ New Note”:
+
+1. Detect currently selected folder
+2. Show small modal:
+
+   * Note Title
+   * Target folder (default = current folder)
+3. Call:
+
+```ts
+electronAPI.createNote(vaultPath, selectedFolder, title)
+```
+
+4. Refresh file tree
+5. Open created note
+
+---
+
+# 📌 Step 4.5 — Pinned Reference Strip (Keep)
+
+Same as original design.
+
+Only visible if:
+
+```
+source_file_id !== null
+AND
+source_page !== null
+```
+
+Click → opens PDF at that page.
+
+---
+
+# 🧩 Step 4.6 — Remove Exam Templates
+
+Remove:
+
+* 2-mark
+* 5-mark
+* 10-mark
+* Comparison template
+* Formula sheet
+
+Replace with:
+
+## Markdown Formatting Toolbar
+
+Add toolbar buttons:
+
+* Bold
+* Italic
+* Code
+* Link
+* Heading
+* Bullet list
+* Numbered list
+* Task list
+* Blockquote
+* Table
+* Code block
+
+Each inserts markdown syntax at cursor.
+
+Use:
+
+```ts
+view.dispatch({
+  changes: { from, to, insert: syntax }
+})
+```
+
+---
+
+# 🧠 Step 4.7 — "Save to Notes" Integration
+
+When `saveToNotes` event fires:
+
+Modal:
+
+```
+Save to:
+( ) New Note
+( ) Existing Note
+```
+
+If New:
+
+* Ask for title
+* Create `.md`
+* Insert:
+
+```
+---
+Saved from: PDF_NAME
+Page: X
+---
+
+<selected text>
+```
+
+If Existing:
+
+* Append with divider
+
+Open note after saving.
+
+---
+
+# 🧪 Updated Debug Checklist
+
+* [ ] `.md` files only open in NotesEditor
+* [ ] Other file types rejected
+* [ ] Create note in ANY folder inside vault
+* [ ] Rename + move works
+* [ ] Live preview works
+* [ ] Ctrl+E cycles modes
+* [ ] Autosave works
+* [ ] Wiki links autocomplete works
+* [ ] Clicking `[[link]]` opens note
+* [ ] Backlinks detected
+* [ ] Save to Notes creates proper markdown file
+* [ ] No exam template UI present
+* [ ] Markdown toolbar inserts syntax correctly
+
+---
+
+# 🎯 Final Architecture Principle
+
+This is NOT a basic text editor.
+
+This is:
+
+> A full Obsidian-style Markdown knowledge system embedded into Axiom.
+
+Strict rules:
+
+* `.md` only
+* Filesystem-first
+* SQLite only for indexing/metadata
+* Markdown is source of truth
+
+---
 ## Phase 5 — Search Engine *(NOT STARTED)*
 
 > **Status:** Not yet implemented. Spotlight search, full hybrid search, and search handlers all need to be built.

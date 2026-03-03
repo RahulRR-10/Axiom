@@ -1,4 +1,4 @@
-import type { Annotation, FileNode, IndexStatus, SearchResult, SpotlightResult } from '../shared/types';
+import type { Annotation, FileNode, IndexStatus, NoteDetail, NoteSummary, SearchResult, SpotlightResult } from '../shared/types';
 import type { VaultIndexProgressPayload } from '../shared/ipc/contracts';
 
 declare global {
@@ -29,6 +29,15 @@ declare global {
       loadAnnotations: (vaultPath: string, fileId: string) => Promise<Annotation[]>;
       deleteAnnotation: (vaultPath: string, annotationId: string) => Promise<{ ok: boolean }>;
 
+      // ── Notes ──────────────────────────────────────────────────────────
+      createNote: (vaultPath: string, targetDirectory: string, title: string, sourceFileId?: string, sourcePage?: number) => Promise<NoteSummary>;
+      readNote: (vaultPath: string, noteId: string) => Promise<NoteDetail>;
+      updateNote: (vaultPath: string, noteId: string, content: string) => Promise<void>;
+      listNotes: (vaultPath: string) => Promise<NoteSummary[]>;
+      deleteNote: (vaultPath: string, noteId: string) => Promise<{ ok: boolean }>;
+      moveNote: (vaultPath: string, noteId: string, newDirectory: string) => Promise<NoteSummary>;
+      renameNote: (vaultPath: string, noteId: string, newTitle: string) => Promise<NoteSummary>;
+
       // ── Misc ───────────────────────────────────────────────────────────
       openExternal: (url: string) => void;
 
@@ -42,4 +51,4 @@ declare global {
   }
 }
 
-export {};
+export { };

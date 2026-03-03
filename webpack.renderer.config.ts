@@ -14,6 +14,12 @@ rules.push({
   ],
 });
 
+// Font files used by KaTeX for math rendering
+rules.push({
+  test: /\.(woff|woff2|eot|ttf|otf)$/,
+  type: 'asset/resource',
+});
+
 export const rendererConfig: Configuration = {
   module: {
     rules,

@@ -2,12 +2,13 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { X } from 'lucide-react';
 
 import { PDFViewer } from './pdf/PDFViewer';
+import { NotesEditor } from './notes/NotesEditor';
 
 type OpenFile = {
   filePath: string;
-  fileId:   string | null;
+  fileId: string | null;
   fileType: string;
-  name:     string;
+  name: string;
 };
 
 type WorkspaceProps = {
@@ -91,14 +92,34 @@ export const Workspace: React.FC<WorkspaceProps> = ({ vaultPath }) => {
       );
     }
 
-    // Non-PDF files — placeholder for now
+    if (activeFile.fileType === 'md') {
+      return (
+        <div className="flex-1 min-h-0 overflow-hidden">
+          <NotesEditor
+            key={activeFile.filePath}
+            filePath={activeFile.filePath}
+            noteId={activeFile.fileId ?? ''}
+            vaultPath={vaultPath ?? ''}
+          />
+        </div>
+      );
+    }
+
+    // Non-PDF / non-MD files — placeholder
     return (
       <div className="flex-1 flex items-center justify-center">
         <p className="text-[#4e4e4e] text-sm select-none">
-          {activeFile.name} — viewer coming soon
+          {activeFile.name} — unsupported file type
         </p>
       </div>
     );
+  };
+
+  // ── Tab color based on file type ────────────────────────────────────────
+  const tabColor = (ft: string) => {
+    if (ft === 'pdf') return 'bg-red-500';
+    if (ft === 'md') return 'bg-blue-400';
+    return 'bg-gray-400';
   };
 
   return (
@@ -108,10 +129,10 @@ export const Workspace: React.FC<WorkspaceProps> = ({ vaultPath }) => {
       {openFiles.length > 0 && (
         <div
           style={{
-            height:       '36px',
-            background:   '#181818',
+            height: '36px',
+            background: '#181818',
             borderBottom: '1px solid #2a2a2a',
-            flexShrink:   0,
+            flexShrink: 0,
           }}
           className="flex items-stretch overflow-x-auto"
         >
@@ -120,17 +141,14 @@ export const Workspace: React.FC<WorkspaceProps> = ({ vaultPath }) => {
               key={f.filePath}
               type="button"
               onClick={() => setActiveIdx(i)}
-              className={`group flex items-center gap-1.5 px-3 text-xs border-r border-[#2a2a2a] whitespace-nowrap transition-colors ${
-                i === activeIdx
+              className={`group flex items-center gap-1.5 px-3 text-xs border-r border-[#2a2a2a] whitespace-nowrap transition-colors ${i === activeIdx
                   ? 'bg-[#1e1e1e] text-[#e4e4e4]'
                   : 'text-[#6e6e6e] hover:bg-[#222] hover:text-[#aaa]'
-              }`}
+                }`}
               style={{ maxWidth: '200px' }}
             >
               {/* File type indicator */}
-              <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${
-                f.fileType === 'pdf' ? 'bg-red-500' : 'bg-blue-400'
-              }`} />
+              <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${tabColor(f.fileType)}`} />
 
               {/* File name — truncated */}
               <span className="truncate">{f.name}</span>
