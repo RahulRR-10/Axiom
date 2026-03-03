@@ -9,13 +9,17 @@ import { addVectors, deleteVectorsByFileId } from '../database/vectorStore';
 import { getDb } from '../database/schema';
 
 // ── Feature flags (vertical-slice gate: Phase 2.9) ───────────────────────────
-export const ENABLE_PDF_INDEXING  = false;
+export const ENABLE_PDF_INDEXING = true;
 export const ENABLE_PPTX_INDEXING = false;
+
+// ── Safety limits ────────────────────────────────────────────────────────────
+const EXTRACT_TIMEOUT_MS = 30_000;   // 30 s per file
+const EMBED_SUB_BATCH = 32;       // chunks sent to embedder at a time
 
 const SUPPORTED_EXTENSIONS = new Set([
   '.md',
   '.txt',
-  ...(ENABLE_PDF_INDEXING  ? ['.pdf']  : []),
+  ...(ENABLE_PDF_INDEXING ? ['.pdf'] : []),
   ...(ENABLE_PPTX_INDEXING ? ['.pptx'] : []),
 ]);
 
@@ -96,11 +100,11 @@ export async function indexFile(filePath: string, vaultPath: string): Promise<vo
     const pieces = chunkText(text, 300, 50);
     pieces.forEach((piece, idx) => {
       allChunks.push({
-        id:           uuidv4(),
-        file_id:      fileId,
+        id: uuidv4(),
+        file_id: fileId,
         page_or_slide: page,
-        text:         piece,
-        chunk_index:  idx,
+        text: piece,
+        chunk_index: idx,
       });
     });
   }
@@ -123,9 +127,15 @@ export async function indexFile(filePath: string, vaultPath: string): Promise<vo
     SELECT rowid, text, file_id, page_or_slide FROM chunks WHERE file_id = ?
   `).run(fileId);
 
-  // ── Generate embeddings and upsert vectors ───────────────────────────────
-  const texts   = allChunks.map((c) => c.text);
-  const vectors = await embedBatch(texts);
+  // ── Generate embeddings and upsert vectors (in sub-batches to cap memory) ─
+  const vectors: number[][] = [];
+  for (let i = 0; i < allChunks.length; i += EMBED_SUB_BATCH) {
+    const batchTexts = allChunks.slice(i, i + EMBED_SUB_BATCH).map((c) => c.text);
+    const batchVecs = await embedBatch(batchTexts);
+    vectors.push(...batchVecs);
+    // Yield to event loop between sub-batches
+    if (i + EMBED_SUB_BATCH < allChunks.length) await new Promise((r) => setTimeout(r, 0));
+  }
 
   const chunksWithVecs = allChunks.map((c, i) => ({
     ...c,
@@ -168,14 +178,13 @@ async function extractPages(
       return [{ page: 1, text: raw.toString('utf-8') }];
 
     case 'pdf': {
-      // Guard — should never reach here unless flag is enabled
       if (!ENABLE_PDF_INDEXING) return [];
-      const pdfParseModule = await import('pdf-parse');
-      // pdf-parse exports differently across module systems
-      const pdfParseFn = (pdfParseModule.default ?? pdfParseModule) as unknown as
-        (buf: Buffer) => Promise<{ text: string }>;
-      const data = await pdfParseFn(raw);
-      return [{ page: 1, text: data.text }];
+
+      // Race against a timeout so a corrupted / huge PDF can't stall forever
+      return Promise.race([
+        extractPdfPages(filePath, raw),
+        rejectAfterTimeout(EXTRACT_TIMEOUT_MS, filePath),
+      ]);
     }
 
     case 'pptx': {
@@ -194,6 +203,58 @@ async function extractPages(
     default:
       return [];
   }
+}
+
+/** Extract text from a PDF, page by page. */
+async function extractPdfPages(filePath: string, raw: Buffer): Promise<PageText[]> {
+  const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const uint8 = new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength);
+
+  let worker: any = null;
+  let doc: any = null;
+  try {
+    worker = new pdfjsLib.PDFWorker({ port: null });
+    doc = await pdfjsLib.getDocument({
+      data: uint8,
+      worker,
+      useSystemFonts: true,
+      isEvalSupported: false,
+    }).promise;
+
+    const pages: PageText[] = [];
+    for (let i = 1; i <= doc.numPages; i++) {
+      try {
+        const page = await doc.getPage(i);
+        const tc = await page.getTextContent();
+        const text = tc.items
+          .map((item: any) => (item?.str ?? ''))
+          .join(' ')
+          .trim();
+        if (text.length > 0) {
+          pages.push({ page: i, text });
+        }
+      } catch (pageErr) {
+        console.warn(`[indexer] Skipping page ${i} of ${filePath}:`, pageErr);
+      }
+      // Yield to event loop every 10 pages so the main process stays responsive
+      if (i % 10 === 0) await new Promise((r) => setTimeout(r, 0));
+    }
+
+    return pages;
+  } catch (err) {
+    console.error(`[indexer] PDF extraction failed for ${filePath}:`, err);
+    return [];
+  } finally {
+    try { doc?.destroy(); } catch { /* ignore */ }
+    try { worker?.destroy(); } catch { /* ignore */ }
+  }
+}
+
+/** Returns a promise that rejects after `ms` milliseconds — used with Promise.race. */
+function rejectAfterTimeout(ms: number, filePath: string): Promise<never> {
+  return new Promise((_resolve, reject) => {
+    setTimeout(() => reject(new Error(`[indexer] Timed out after ${ms}ms: ${filePath}`)), ms);
+  });
 }
 
 // ── Chunking utility ─────────────────────────────────────────────────────────

@@ -18,6 +18,7 @@ export const mainConfig: Configuration = {
     'better-sqlite3':      'commonjs better-sqlite3',
     'vectordb':            'commonjs vectordb',
     '@xenova/transformers':'commonjs @xenova/transformers',
+    'pdfjs-dist/legacy/build/pdf.mjs': 'commonjs pdfjs-dist/legacy/build/pdf.mjs',
   },
   module: {
     rules,

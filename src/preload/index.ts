@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
 import { VAULT_CHANNELS, WINDOW_CHANNELS, SEARCH_CHANNELS, ANNOTATION_CHANNELS, NOTES_CHANNELS } from '../shared/ipc/channels';
-import type { FileNode, IndexStatus, SpotlightResult, SearchResult, Annotation, NoteSummary, NoteDetail } from '../shared/types';
+import type { FileNode, IndexStatus, SearchResult, Annotation, NoteSummary, NoteDetail } from '../shared/types';
 import type { VaultIndexProgressPayload } from '../shared/ipc/contracts';
 
 const electronAPI = {
@@ -44,16 +44,13 @@ const electronAPI = {
   },
 
   // ── Search ───────────────────────────────────────────────────────────────
-  spotlightSearch: (query: string, vaultPath: string): Promise<SpotlightResult[]> =>
-    ipcRenderer.invoke(SEARCH_CHANNELS.SPOTLIGHT, query, vaultPath),
-
-  fullSearch: (
+  search: (
     query: string,
     vaultPath: string,
     subject?: string,
     fileType?: string,
   ): Promise<SearchResult[]> =>
-    ipcRenderer.invoke(SEARCH_CHANNELS.FULL, query, vaultPath, subject, fileType),
+    ipcRenderer.invoke(SEARCH_CHANNELS.QUERY, query, vaultPath, subject, fileType),
 
   // ── Annotations ─────────────────────────────────────────────────────────
   saveAnnotation: (vaultPath: string, annotation: Annotation): Promise<{ id: string }> =>

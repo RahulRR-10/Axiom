@@ -5,7 +5,6 @@ import type {
   NoteDetail,
   NoteSummary,
   SearchResult,
-  SpotlightResult,
 } from '../types';
 
 // ── vault:select ─────────────────────────────────────────────────────────────
@@ -35,18 +34,14 @@ export type VaultGetIndexStatusResponse = IndexStatus;
 // ── vault:indexProgress (push, main → renderer) ────────────────────────────
 export type VaultIndexProgressPayload = IndexStatus & { currentFile?: string };
 
-// ── search:spotlight ─────────────────────────────────────────────────────────
-export type SearchSpotlightRequest = { query: string; vaultPath: string };
-export type SearchSpotlightResponse = SpotlightResult[];
-
-// ── search:full ───────────────────────────────────────────────────────────────
-export type SearchFullRequest = {
+// ── search:query ─────────────────────────────────────────────────────────────
+export type SearchQueryRequest = {
   query: string;
   vaultPath: string;
   subject?: string;
   fileType?: string;
 };
-export type SearchFullResponse = SearchResult[];
+export type SearchQueryResponse = SearchResult[];
 
 // ── notes:create ─────────────────────────────────────────────────────────────
 export type NotesCreateRequest = {

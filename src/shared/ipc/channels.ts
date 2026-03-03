@@ -16,8 +16,7 @@ export const VAULT_CHANNELS = {
 } as const;
 
 export const SEARCH_CHANNELS = {
-  SPOTLIGHT: 'search:spotlight',
-  FULL: 'search:full',
+  QUERY: 'search:query',
 } as const;
 
 export const NOTES_CHANNELS = {

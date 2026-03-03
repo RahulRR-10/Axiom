@@ -1,4 +1,4 @@
-import type { Annotation, FileNode, IndexStatus, NoteDetail, NoteSummary, SearchResult, SpotlightResult } from '../shared/types';
+import type { Annotation, FileNode, IndexStatus, NoteDetail, NoteSummary, SearchResult } from '../shared/types';
 import type { VaultIndexProgressPayload } from '../shared/ipc/contracts';
 
 declare global {
@@ -16,8 +16,7 @@ declare global {
       onFileChanged: (callback: (payload: { vaultPath: string }) => void) => () => void;
 
       // ── Search ─────────────────────────────────────────────────────────
-      spotlightSearch: (query: string, vaultPath: string) => Promise<SpotlightResult[]>;
-      fullSearch: (
+      search: (
         query: string,
         vaultPath: string,
         subject?: string,

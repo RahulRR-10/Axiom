@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect, useRef } from 'react';
 
 import { Settings, Search } from 'lucide-react';
 import { AIPanel } from '../ai/AIPanel';
-import { SpotlightSearch } from '../search/SpotlightSearch';
+import { SearchPanel } from '../search/SearchPanel';
 import { VaultSidebar } from '../vault/VaultSidebar';
 import { Workspace } from '../workspace/Workspace';
 import { WindowControlsToolbar } from './WindowControlsToolbar';
@@ -192,8 +192,8 @@ export const AppLayout: React.FC = () => {
 
       </div>
 
-      {/* Spotlight search modal — vaultPath may be null before vault opened */}
-      <SpotlightSearch vaultPath={vaultPath} />
+      {/* Search panel modal — vaultPath may be null before vault opened */}
+      <SearchPanel vaultPath={vaultPath} />
     </div>
   );
 };

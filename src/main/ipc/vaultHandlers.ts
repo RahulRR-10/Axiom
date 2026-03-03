@@ -19,13 +19,13 @@ import { startWatching } from '../vault/vaultWatcher';
 
 export function registerVaultHandlers(): void {
   ipcMain.handle(VAULT_CHANNELS.SELECT, handleSelect);
-  ipcMain.handle(VAULT_CHANNELS.OPEN,           (_e, vaultPath: string) => handleOpen(vaultPath));
+  ipcMain.handle(VAULT_CHANNELS.OPEN, (_e, vaultPath: string) => handleOpen(vaultPath));
   ipcMain.handle(VAULT_CHANNELS.READ_DIRECTORY, (_e, dirPath: string) => handleReadDirectory(dirPath));
-  ipcMain.handle(VAULT_CHANNELS.READ_FILE,      (_e, filePath: string) => handleReadFile(filePath));
-  ipcMain.handle(VAULT_CHANNELS.WRITE_FILE,     (_e, filePath: string, data: Buffer) => handleWriteFile(filePath, data));
+  ipcMain.handle(VAULT_CHANNELS.READ_FILE, (_e, filePath: string) => handleReadFile(filePath));
+  ipcMain.handle(VAULT_CHANNELS.WRITE_FILE, (_e, filePath: string, data: Buffer) => handleWriteFile(filePath, data));
   ipcMain.handle(VAULT_CHANNELS.GET_INDEX_STATUS, (_e, vaultPath: string) => handleGetIndexStatus(vaultPath));
-  ipcMain.handle(VAULT_CHANNELS.GET_FILE_ID,    (_e, vaultPath: string, filePath: string) => {
-    const db  = getDb(vaultPath);
+  ipcMain.handle(VAULT_CHANNELS.GET_FILE_ID, (_e, vaultPath: string, filePath: string) => {
+    const db = getDb(vaultPath);
     const row = db.prepare('SELECT id FROM files WHERE path = ?').get(filePath) as { id: string } | undefined;
     return row?.id ?? null;
   });
@@ -56,19 +56,29 @@ async function handleOpen(vaultPath: string): Promise<VaultOpenResponse> {
   let failed = 0;
 
   void (async () => {
-    for (const filePath of allFiles) {
-      try {
-        await indexFile(filePath, vaultPath);
-      } catch (err) {
-        console.error('[vault:open] Failed to index:', filePath, err);
-        // Mark file as failed in DB
-        db.prepare("UPDATE files SET indexed_at = -1 WHERE path = ?").run(filePath);
-        failed++;
+    try {
+      for (const filePath of allFiles) {
+        try {
+          console.log(`[vault:open] Indexing ${indexed + 1}/${total}: ${path.basename(filePath)}`);
+          await indexFile(filePath, vaultPath);
+        } catch (err) {
+          console.error('[vault:open] Failed to index:', filePath, err);
+          // Mark file as failed in DB so the UI shows it as failed, not stuck
+          try {
+            db.prepare("UPDATE files SET indexed_at = -1 WHERE path = ?").run(filePath);
+          } catch { /* db write may also fail — don't let it crash the loop */ }
+          failed++;
+        }
+        indexed++;
+        broadcastProgress({ total, indexed, failed, inProgress: indexed < total }, vaultPath);
+        // Yield to event loop between files so the renderer stays responsive
+        await new Promise((r) => setTimeout(r, 0));
       }
-      indexed++;
-      broadcastProgress({ total, indexed, failed, inProgress: indexed < total }, vaultPath);
+    } catch (fatal) {
+      console.error('[vault:open] Fatal indexing error — aborting loop:', fatal);
+    } finally {
+      broadcastProgress({ total, indexed, failed, inProgress: false }, vaultPath);
     }
-    broadcastProgress({ total, indexed, failed, inProgress: false }, vaultPath);
   })();
 
   // 4. Return directory tree immediately (indexing runs in background)
@@ -93,9 +103,9 @@ function handleWriteFile(filePath: string, data: Buffer): void {
 
 function handleGetIndexStatus(vaultPath: string): VaultGetIndexStatusResponse {
   const db = getDb(vaultPath);
-  const total   = (db.prepare('SELECT COUNT(*) as n FROM files').get() as { n: number }).n;
+  const total = (db.prepare('SELECT COUNT(*) as n FROM files').get() as { n: number }).n;
   const indexed = (db.prepare("SELECT COUNT(*) as n FROM files WHERE indexed_at IS NOT NULL AND indexed_at != -1").get() as { n: number }).n;
-  const failed  = (db.prepare("SELECT COUNT(*) as n FROM files WHERE indexed_at = -1").get() as { n: number }).n;
+  const failed = (db.prepare("SELECT COUNT(*) as n FROM files WHERE indexed_at = -1").get() as { n: number }).n;
   return { total, indexed, failed, inProgress: false };
 }
 
@@ -120,18 +130,18 @@ function buildFileTree(rootPath: string): FileNode[] {
 
     if (entry.isDirectory()) {
       nodes.push({
-        name:     entry.name,
-        path:     fullPath,
-        type:     'folder',
+        name: entry.name,
+        path: fullPath,
+        type: 'folder',
         children: buildFileTree(fullPath),
       });
     } else if (entry.isFile()) {
       const ext = path.extname(entry.name).toLowerCase();
       if (!INDEXABLE_EXTENSIONS.has(ext)) continue;
       nodes.push({
-        name:     entry.name,
-        path:     fullPath,
-        type:     'file',
+        name: entry.name,
+        path: fullPath,
+        type: 'file',
         fileType: ext.slice(1),
       });
     }

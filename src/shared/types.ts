@@ -48,28 +48,21 @@ export type ChunkWithVector = Chunk & {
 
 // ── Search ───────────────────────────────────────────────────────────────────
 
+export type SearchResultCategory = 'page' | 'file' | 'note' | 'annotation';
+
 export type SearchResult = {
   id: string;
   file_id: string;
   file_name: string;
+  file_path: string;
   file_type: string;
   subject: string | null;
   page_or_slide: number | null;
   text: string;
   score: number;
   is_annotation: number;
+  category: SearchResultCategory;
   source: 'fts' | 'semantic' | 'note';
-};
-
-export type SpotlightResult = {
-  id: string;
-  file_id: string | null;
-  file_name: string;
-  file_type: string;
-  subject: string | null;
-  page_or_slide: number | null;
-  snippet: string;
-  type: 'chunk' | 'note';
 };
 
 // ── Notes ────────────────────────────────────────────────────────────────────

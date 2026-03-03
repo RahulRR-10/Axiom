@@ -33,9 +33,11 @@ const pdfCache = new Map<string, PDFDocumentProxy>();
 type PageMeta = { width: number; height: number };
 
 type Props = {
-  filePath:   string;
-  fileId?:    string;
-  vaultPath?: string | null;
+  filePath:     string;
+  fileId?:      string;
+  vaultPath?:   string | null;
+  /** If set, scroll to this page after the PDF loads */
+  initialPage?: number;
 };
 
 /* ─── Single page renderer ─────────────────────────────────────────────────── */
@@ -209,7 +211,7 @@ const PagePlaceholder = React.memo(function PagePlaceholder({
 /* ═══════════════════════════════════════════════════════════════════════════════
    PDFViewer — main component
 ═══════════════════════════════════════════════════════════════════════════════ */
-export const PDFViewer: React.FC<Props> = ({ filePath, fileId = '', vaultPath = null }) => {
+export const PDFViewer: React.FC<Props> = ({ filePath, fileId = '', vaultPath = null, initialPage }) => {
   const effectiveFileId = fileId || filePath;
 
   const [pdf,         setPdf]         = useState<PDFDocumentProxy | null>(null);
@@ -272,6 +274,14 @@ export const PDFViewer: React.FC<Props> = ({ filePath, fileId = '', vaultPath = 
       setLoading(false);
     });
   }, [filePath]);
+
+  /* ── Scroll to initialPage after load ───────────────────────────────────── */
+  useEffect(() => {
+    if (!initialPage || !pageMeta || !scrollRef.current || loading) return;
+    const pageHeight = pageMeta.height * zoom;
+    const target = (initialPage - 1) * (pageHeight + PAGE_GAP);
+    scrollRef.current.scrollTop = target;
+  }, [initialPage, pageMeta, loading, zoom]);
 
   /* ── Annotations ─────────────────────────────────────────────────────────── */
   const loadAnnotations = useCallback(() => {

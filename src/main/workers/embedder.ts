@@ -28,7 +28,8 @@ export async function initEmbedder(): Promise<void> {
   extractor = await (pipeline as unknown as PipelineType)(
     'feature-extraction',
     'Xenova/all-MiniLM-L6-v2',
-    { progress_callback: (p: { status: string; progress?: number }) => {
+    {
+      progress_callback: (p: { status: string; progress?: number }) => {
         if (p.status === 'progress') {
           process.stdout.write(`\r[embedder] Downloading model: ${(p.progress ?? 0).toFixed(1)}%`);
         } else if (p.status === 'done') {
@@ -48,11 +49,23 @@ export async function embed(text: string): Promise<number[]> {
 
 /** Embed many strings in batches of `batchSize` to prevent OOM */
 export async function embedBatch(texts: string[], batchSize = 8): Promise<number[][]> {
+  const ZERO_VEC = new Array(384).fill(0);
   const results: number[][] = [];
   for (let i = 0; i < texts.length; i += batchSize) {
     const batch = texts.slice(i, i + batchSize);
-    const vectors = await Promise.all(batch.map(embed));
+    const vectors = await Promise.all(
+      batch.map(async (t) => {
+        try {
+          return await embed(t);
+        } catch (err) {
+          console.warn('[embedder] Failed to embed chunk, using zero vector:', err);
+          return ZERO_VEC;
+        }
+      }),
+    );
     results.push(...vectors);
+    // Yield to event loop between batches
+    if (i + batchSize < texts.length) await new Promise((r) => setTimeout(r, 0));
   }
   return results;
 }
