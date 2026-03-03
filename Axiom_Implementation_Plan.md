@@ -434,63 +434,144 @@ npm run package -- --dry-run
 
 ---
 
-## Phase 4 — Workspace: Notes Editor
+## Phase 4 — Workspace: Notes Editor *(NOT STARTED)*
 
-### Step 4.1 — Notes Editor Core
+> **Status:** This is the next phase to implement. No `NotesEditor.tsx` exists yet.
+
+### Step 4.0 — Install Notes Dependencies
+
+**Prompt for Copilot:**
+> "Install the following dependencies for the Notes Editor:
+> - `@codemirror/state` `@codemirror/view` `@codemirror/lang-markdown` `@codemirror/language` `@codemirror/commands` `@codemirror/autocomplete`
+> - `@codemirror/theme-one-dark` (dark theme)
+> - `react-markdown` + `remark-gfm` (read mode rendering)
+> - `@lezer/markdown` (CodeMirror markdown parser)
+>
+> These are all dev/runtime dependencies for the renderer process, no native modules needed."
+
+---
+
+### Step 4.1 — Notes IPC Handlers
+
+**Prompt for Copilot:**
+> "Add notes CRUD IPC handlers to the existing codebase. These are needed before the UI can work.
+>
+> In `src/shared/ipc/channels.ts`, add a `NOTES_CHANNELS` object:
+> ```ts
+> export const NOTES_CHANNELS = {
+>   CREATE:  'notes:create',
+>   READ:    'notes:read',
+>   UPDATE:  'notes:update',
+>   LIST:    'notes:list',
+>   DELETE:  'notes:delete',
+> } as const;
+> ```
+>
+> In `src/main/ipc/notesHandlers.ts` (new file), implement:
+> - `notes:create(vaultPath, subject, title)` — creates a `.md` file on disk at `{vaultPath}/{subject}/{title}.md`, inserts a record into the `notes` SQLite table, returns `{ id, path }`
+> - `notes:read(vaultPath, noteId)` — fetches note record from SQLite, reads file content from disk, returns `{ id, title, content, subject, source_file_id, source_page }`
+> - `notes:update(vaultPath, noteId, content)` — writes content to the `.md` file on disk, updates `updated_at` in SQLite
+> - `notes:list(vaultPath)` — returns all `NoteSummary[]` from SQLite
+> - `notes:delete(vaultPath, noteId)` — deletes file from disk + SQLite record
+>
+> Register the handlers in `src/main/index.ts` alongside the existing vault/search/annotation handlers.
+> Add the corresponding methods to `src/preload/index.ts` electronAPI object.
+> Add typed contracts to `src/shared/ipc/contracts.ts`."
+
+---
+
+### Step 4.2 — Notes Editor Core
 
 **Prompt for Copilot:**
 > "Create `src/renderer/components/workspace/notes/NotesEditor.tsx` using CodeMirror 6.
 >
+> Props: `filePath: string`, `noteId: string`, `vaultPath: string`
+>
 > Setup:
 > - Use `@codemirror/lang-markdown` with full markdown extensions
-> - Dark theme using `@codemirror/theme-one-dark` or a custom dark theme matching the app (background `#141414`)
-> - Font: `JetBrains Mono` or `monospace`, 14px
+> - Dark theme using `@codemirror/theme-one-dark` customized to match app (background `#141414`, gutter `#1a1a1a`)
+> - Font: system monospace (`'JetBrains Mono', 'Fira Code', 'Consolas', monospace`), 14px
 >
-> Three view modes (toggle buttons in top-right corner):
+> Three view modes (toggle buttons in top-right corner of the editor area):
 > 1. **Edit mode**: Raw CodeMirror editor, always shows markdown syntax
-> 2. **Live Preview mode** (default): CodeMirror with `@codemirror/lang-markdown` mixed mode — renders markdown inline, only shows raw syntax on the line the cursor is on. Implement this by subscribing to cursor position and toggling decoration.
-> 3. **Read mode**: Hide the editor entirely, render content as HTML using `react-markdown` with `remark-gfm`. Not editable.
+> 2. **Live Preview mode** (default): CodeMirror with markdown decorations — renders inline formatting (bold, italic, links, headings) while editing. Only shows raw syntax on the line the cursor is on.
+> 3. **Read mode**: Hide CodeMirror, render content as HTML using `react-markdown` with `remark-gfm` (tables, strikethrough, task lists). Not editable.
 >
-> Keyboard shortcut: `Ctrl+E` toggles between Edit and Read modes.
+> Mode toggle: three small buttons (Edit | Live | Read) styled as a segmented control. Background `#252525`, active segment `#3a3a3a`, text `#d4d4d4`.
 >
-> Autosave: debounce content changes by 1000ms, then call `electronAPI.writeFile(notePath, content)` and update `updated_at` in SQLite."
+> Keyboard shortcut: `Ctrl+E` cycles Edit → Live → Read → Edit.
+>
+> Autosave: debounce content changes by 1000ms, then call `electronAPI.updateNote(vaultPath, noteId, content)`.
+>
+> Load note content on mount via `electronAPI.readNote(vaultPath, noteId)`."
 
 ---
 
-### Step 4.2 — Pinned Reference Strip
+### Step 4.3 — Workspace Integration for Notes
+
+**Prompt for Copilot:**
+> "Modify `src/renderer/components/workspace/Workspace.tsx` to handle `.md` files.
+>
+> Currently, `renderContent()` only handles `fileType === 'pdf'`. Add a case for `fileType === 'md'`:
+> ```tsx
+> if (activeFile.fileType === 'md') {
+>   return (
+>     <div className='flex-1 min-h-0 overflow-hidden'>
+>       <NotesEditor
+>         key={activeFile.filePath}
+>         filePath={activeFile.filePath}
+>         noteId={activeFile.fileId ?? ''}
+>         vaultPath={vaultPath ?? ''}
+>       />
+>     </div>
+>   );
+> }
+> ```
+>
+> Import NotesEditor at the top of the file."
+
+---
+
+### Step 4.4 — New Note Button in Vault Sidebar
+
+**Prompt for Copilot:**
+> "Modify `src/renderer/components/vault/VaultSidebar.tsx`:
+>
+> The '+ New Note' button already exists visually at the top of the sidebar. Wire it to actually create a note:
+> 1. On click: call `electronAPI.createNote(vaultPath, subject, 'Untitled Note')` where `subject` is the current expanded folder name (or empty if none)
+> 2. On success: dispatch an `openFile` event with the new note's path and `fileType: 'md'`
+> 3. Refresh the file tree after creation
+>
+> Also: ensure `.md` files in the file tree open in the NotesEditor when clicked (the `onFileClick` handler should set `fileType: 'md'` for markdown files)."
+
+---
+
+### Step 4.5 — Pinned Reference Strip
 
 **Prompt for Copilot:**
 > "Create `src/renderer/components/workspace/notes/PinnedReferenceStrip.tsx`.
 >
 > This is a slim bar (height 36px) pinned at the top of the notes editor content area (below the mode toggle buttons).
 >
+> Props: `sourceFileName: string | null`, `sourcePage: number | null`, `onNavigate: () => void`, `onDismiss: () => void`
+>
 > It shows: `📄 {fileName} — Page {pageNumber}` with an × dismiss button on the right.
 >
 > Behavior:
-> - It appears when a note has a `source_file_id` and `source_page` set
-> - Clicking the strip text dispatches an `openFileAtPage` event to the Workspace to open that PDF at that page
-> - Clicking × sets `source_page` to null (hides the strip)
+> - Visible only when both `sourceFileName` and `sourcePage` are non-null
+> - Clicking the strip text calls `onNavigate()` which dispatches an `openFile` event to open the source PDF at that page
+> - Clicking × calls `onDismiss()` to hide the strip
 >
 > Style: `background: #252525`, `border-bottom: 1px solid #333`, `font-size: 12px`, `color: #888`, clickable text turns `#ccc` on hover."
 
 ---
 
-### Step 4.3 — Notes List Panel (inside Vault Sidebar)
+### Step 4.6 — Exam Templates
 
 **Prompt for Copilot:**
-> "Extend `VaultSidebar.tsx` to show notes in the file tree. Notes (`.md` files) should appear under their subject folder. Clicking a note opens it in the Notes editor tab.
+> "Add a Templates dropdown button to the NotesEditor toolbar area (next to the mode toggle buttons).
 >
-> Add a '+ New Note' button at the top of the sidebar. Clicking it:
-> 1. Creates a new `.md` file in the vault's current subject folder with name `Untitled Note {timestamp}.md`
-> 2. Inserts a record into the `notes` SQLite table
-> 3. Opens the new note in the editor and focuses the title area"
-
----
-
-### Step 4.4 — Exam Templates
-
-**Prompt for Copilot:**
-> "Add a Templates dropdown button to the NotesEditor toolbar. When clicked, show a dropdown with these options:
+> When clicked, show a dropdown with these options:
 > - 2-mark definition
 > - 5-mark answer
 > - 10-mark answer
@@ -500,101 +581,56 @@ npm run package -- --dry-run
 > Clicking a template inserts the corresponding markdown template at the cursor position in CodeMirror. Templates:
 > - **2-mark**: `## [Term]\n**Definition:** \n\n**Example:** `
 > - **5-mark**: `## [Topic]\n\n**Key Points:**\n1. \n2. \n3. \n\n**Explanation:**\n\n**Example:**`
-> - **10-mark**: includes intro, 3 main points with sub-points, comparison, conclusion
-> - **Comparison table**: markdown table with columns Topic | A | B
-> - **Formula sheet**: fenced code block with latex comment header"
+> - **10-mark**: `## [Topic]\n\n### Introduction\n\n### Main Points\n\n#### 1. [Point]\n- Sub-point\n- Sub-point\n\n#### 2. [Point]\n- Sub-point\n- Sub-point\n\n#### 3. [Point]\n- Sub-point\n- Sub-point\n\n### Comparison\n| Aspect | A | B |\n|--------|---|---|\n| | | |\n\n### Conclusion\n`
+> - **Comparison table**: `| Topic | A | B |\n|-------|---|---|\n| | | |\n| | | |\n| | | |`
+> - **Formula sheet**: `` ```math\n% Formula Sheet\n% Add formulas below\n\n``` ``
+>
+> Use CodeMirror's `dispatch` and `replaceSelection` to insert at cursor."
+
+---
+
+### Step 4.7 — Wire "Save to Notes" from Floating Action Bar
+
+**Prompt for Copilot:**
+> "The FloatingActionBar in `src/renderer/components/workspace/FloatingActionBar.tsx` has a 'Save to Notes' button that dispatches a `saveToNotes` custom event, but nothing listens for it.
+>
+> Add a listener in `Workspace.tsx` or the `NotesEditor`:
+> 1. Listen for the `saveToNotes` event
+> 2. On event, show a small dropdown/modal asking: create new note or append to existing note
+> 3. If 'new note': call `electronAPI.createNote()` with the selected text as initial content, set `source_file_id` and `source_page` from the event detail
+> 4. If 'append to existing': call `electronAPI.readNote()` → append text with `\n\n---\n### Saved from PDF — Page {page}\n{text}\n---\n` → call `electronAPI.updateNote()`
+> 5. Open the note in the workspace after saving"
 
 **Debug checkpoint for Phase 4:**
-- [ ] New note creates a `.md` file on disk
+- [ ] Notes dependencies install without errors
+- [ ] `notes:create` IPC creates `.md` file on disk + SQLite record
+- [ ] Clicking '+ New Note' in sidebar creates and opens a note
 - [ ] Notes editor opens in Live Preview mode by default
-- [ ] `Ctrl+E` toggles between Edit and Read
-- [ ] Read mode renders markdown correctly (headings, tables, code blocks)
+- [ ] `Ctrl+E` cycles through Edit → Live → Read modes
+- [ ] Read mode renders markdown correctly (headings, tables, code blocks, task lists)
 - [ ] Autosave writes file to disk after 1 second of no typing
+- [ ] `.md` files in sidebar open in NotesEditor (not PDFViewer)
 - [ ] Pinned reference strip appears for notes with source links
 - [ ] Clicking reference strip opens the source PDF at the correct page
 - [ ] Templates insert correct markdown at cursor position
+- [ ] "Save to Notes" from FloatingActionBar creates note with source reference
 
 ---
 
-## Phase 5 — Search Engine
+## Phase 5 — Search Engine *(NOT STARTED)*
 
-### Step 5.1 — Spotlight Search (Ctrl+K)
-
-**Prompt for Copilot:**
-> "Create `src/renderer/components/search/SpotlightSearch.tsx`. This is a modal overlay triggered by `Ctrl+K`.
->
-> UI:
-> - Full-screen dark overlay (`rgba(0,0,0,0.7)`) with a centered search card
-> - Card: `width: 600px`, `background: #1e1e1e`, `border: 1px solid #3a3a3a`, `border-radius: 12px`, `box-shadow: 0 16px 48px rgba(0,0,0,0.8)`
-> - Input at top of card: large, no border, dark background, white text, auto-focused on open
-> - Results list below input, max 8 results, keyboard-navigable with arrow keys
-> - Each result shows: file type icon, file name, subject label, text snippet (max 80 chars)
-> - Press Enter or click a result to open it. Press Escape to close.
->
-> Search logic (via IPC `search:spotlight`):
-> - Query `chunks_fts` SQLite FTS5 with `MATCH ?` for keyword results
-> - Also search `notes` table title and content
-> - Debounce input by 150ms for responsiveness
-> - Return top 8 results ranked by BM25 score (`rank` column in FTS5)"
+> **Status:** Not yet implemented. Spotlight search, full hybrid search, and search handlers all need to be built.
 
 ---
 
-### Step 5.2 — Full Search Results
+## Phase 6 — AI Panel (Webview Integration) *(NOT STARTED)*
 
-**Prompt for Copilot:**
-> "Create `src/renderer/components/search/FullSearchResults.tsx` — this renders as the 'Search Results' tab in the Workspace.
->
-> UI:
-> - Filter bar at top: Subject dropdown, File Type dropdown (All / PDF / Notes / PPTX), Sort by (Relevance / Date)
-> - Results list: each result card shows file name, subject badge, page/slide number pill, highlighted text snippet (bold the matching terms), and a small score indicator
-> - Clicking a result: opens the file at that page in the PDF viewer (or opens the note), AND switches Workspace to that mode
-> - 'Back' button in top-left returns to search results without losing them
->
-> Search logic (via IPC `search:full`):
-> - Run SQLite FTS5 BM25 keyword search
-> - Run LanceDB cosine similarity semantic search (embed query first using the embedder)
-> - Merge results: score = (0.4 × BM25_normalized) + (0.6 × cosine_similarity)
-> - Boost score ×1.5 if result is from a note (user's own writing)
-> - Boost score ×1.3 if result is from an annotation (user marked it important)
-> - Return top 20 merged results"
-
----
-
-### Step 5.3 — IPC Search Handlers
-
-**Prompt for Copilot:**
-> "In `src/main/ipc/searchHandlers.ts`, implement:
->
-> `search:spotlight(query)`:
-> - Run: `SELECT chunks.*, files.name, files.type, files.subject FROM chunks_fts JOIN chunks ON chunks.rowid = chunks_fts.rowid JOIN files ON files.id = chunks.file_id WHERE chunks_fts MATCH ? ORDER BY rank LIMIT 8`
-> - Also run: `SELECT * FROM notes WHERE title LIKE ? OR content LIKE ? LIMIT 4`
-> - Merge and return
->
-> `search:full(query)`:
-> - FTS5 keyword search: same as above but LIMIT 50
-> - Semantic search: embed query → LanceDB search → top 30 results
-> - Merge by chunk ID, compute hybrid score, sort descending, return top 20
-> - Support filter params: subject, fileType
->
-> Include timing logs for each step (FTS5 ms, semantic ms, merge ms) to diagnose performance."
-
-**Debug checkpoint for Phase 5:**
-- [ ] `Ctrl+K` opens Spotlight, `Escape` closes it
-- [ ] Typing in Spotlight returns results within 150ms
-- [ ] Arrow keys navigate results, Enter opens correct file/page
-- [ ] Full search returns results from both PDFs and notes
-- [ ] Semantic search finds conceptually related content (test: search 'memory management' and verify 'heap allocation' results appear if indexed)
-- [ ] Score boosting: annotated text appears above non-annotated text for same query
-- [ ] Filters narrow results correctly
-
----
-
-## Phase 6 — AI Panel (Reliability-First Webview Integration)
+> **Status:** Not yet implemented. Only a placeholder component exists — no webviews.
 
 ### Step 6.1 — Webview Setup with Persistent Sessions
 
 **Prompt for Copilot:**
-> "Create `src/renderer/components/ai/AIPanel.tsx`. It must:
+> "Replace the placeholder in `src/renderer/components/ai/AIPanel.tsx` with actual webview integration:
 >
 > 1. Render a tab bar with three tabs: ChatGPT (green accent `#10a37f`), Claude (orange accent `#da7756`), Gemini (blue accent `#4285f4`). Active tab shows the color accent as a bottom border and slightly highlighted background.
 >
@@ -607,45 +643,45 @@ npm run package -- --dry-run
 >
 > 3. Only the active tab's webview is visible (`display: block`). Others are `display: none` but remain mounted (preserves session).
 >
-> 4. Set a standard Chrome user-agent on each webview via the `useragent` attribute to prevent detection/blocking:
+> 4. Set a standard Chrome user-agent on each webview via the `useragent` attribute:
 >    `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36`
 >
 > 5. Webviews must fill the full available height of the panel below the tab bar.
 >
-> 6. Add a 'Save to Notes' pill button (fixed position, top-right of panel): `background: #3a3a3a`, `border-radius: 20px`, `padding: 4px 12px`. It calls `window.getSelection()` on the active webview via `executeJavaScript` and dispatches `saveFromAI` event."
+> 6. Note: The webview CSP session tweaks are already in `src/main/index.ts` (`setupWebviewSessions()`), and `webviewTag: true` is already set in `BrowserWindow.webPreferences`."
 
 ---
 
-### Step 6.2 — Reliability Contract (Mandatory, non-negotiable)
+### Step 6.2 — Send to AI Flow
 
 **Prompt for Copilot:**
-> "Implement reliability-first behavior for AI webviews so the feature remains usable despite CSP/DOM changes:
+> "Implement the 'Send to AI' flow. The FloatingActionBar already dispatches a `sendToAI` custom event with `{ text, target: 'claude' | 'chatgpt' | 'gemini' }`.
 >
-> Required safeguards:
-> - Centralize selectors per provider with versioned strategy list
-> - Add provider health checks (`ready`, `degraded`, `offline`) shown in UI
-> - Add 3-stage send pipeline: DOM injection attempt → synthetic paste event → clipboard fallback
-> - Add timeout + retry with exponential backoff for each stage
-> - Emit structured telemetry logs for every failure path (provider, stage, error)
-> - Keep 'Send to AI' always functional via guaranteed clipboard fallback + explicit user guidance
->
-> Success criteria: user can always transfer selected text to the chosen AI even if direct DOM injection breaks."
+> In AIPanel:
+> 1. Listen for the `sendToAI` event
+> 2. Switch to the matching AI tab
+> 3. Attempt to inject text into the AI's input field via `webview.executeJavaScript()`
+> 4. Implement a 3-stage fallback pipeline:
+>    - Stage 1: DOM injection — find the target input/textarea and set its value
+>    - Stage 2: Synthetic paste event — dispatch clipboard paste event
+>    - Stage 3: Clipboard fallback — copy text to clipboard, show toast 'Text copied to clipboard — paste it into the AI chat'
+> 5. Keep centralized selector configs per provider for easy updates when AI sites change their DOM."
 
 ---
 
-### Step 6.3 — Save from AI Feature
+### Step 6.3 — Save from AI to Notes
 
 **Prompt for Copilot:**
-> "Implement the 'Save from AI to Notes' flow in `AIPanel.tsx`:
+> "Add a 'Save to Notes' pill button fixed at the top-right of the AI panel (above the active webview).
 >
-> When user clicks 'Save to Notes' pill button:
+> On click:
 > 1. Call `activeWebviewRef.executeJavaScript('window.getSelection().toString()')` to get selected AI text
 > 2. If no selection, show a tooltip 'Select text in the AI chat first'
-> 3. If selection found, show an inline dropdown below the button:
->    - Subject field: auto-filled with the current vault's active subject
->    - Note selector: dropdown of existing notes (fetched from SQLite) + 'Create new note' option
+> 3. If selection found, show an inline dropdown:
+>    - Subject field auto-filled with current vault's active subject
+>    - Note selector dropdown of existing notes (from SQLite) + 'Create new note' option
 >    - Confirm button
-> 4. On confirm: append to the selected note file:
+> 4. On confirm, append to selected note:
 >    ```markdown
 >    ---
 >    ### [Saved from AI] — {formatted date and time}
@@ -654,91 +690,61 @@ npm run package -- --dry-run
 >    ```
 > 5. Show a success toast: 'Saved to {note name}'"
 
----
-
-### Step 6.4 — Webview Security Configuration
-
-**Prompt for Copilot:**
-> "In `src/main/index.ts`, add a `session.webRequest.onHeadersReceived` handler for the webview partitions ('persist:chatgpt', 'persist:claude', 'persist:gemini'). Modify the Content-Security-Policy header to allow embedding. Also configure `webview` permissions in `BrowserWindow.webPreferences` — set `webviewTag: true`. Add a `will-navigate` event handler on each webview that logs the URL for debugging. Add a `did-fail-load` handler that shows a reload button overlay if a webview fails to load."
-
----
-
-### Step 6.5 — Deferred DOM Automation (Only after core stability)
-
-**Prompt for Copilot:**
-> "Defer provider-specific DOM automation until core vault/search/notes flows are stable.
->
-> Gate condition before enabling aggressive automation:
-> - Phase 2, 4, and 5 checkpoints are fully green
-> - No critical indexing/search errors for at least 3 consecutive manual test runs
->
-> Implementation rule:
-> - Ship automation behind a feature flag (`ENABLE_AI_DOM_AUTOMATION=false` by default)
-> - Keep reliability pipeline from Step 6.2 active regardless of automation flag"
-
 **Debug checkpoint for Phase 6:**
 - [ ] All three AI tabs load their respective websites
 - [ ] Switching tabs shows correct AI, session is preserved (no logout)
-- [ ] Highlight text in PDF → FloatingActionBar → 'Send to Claude' always transfers text (injection or fallback)
-- [ ] If injection fails, clipboard fallback works every time (verify by pasting manually)
-- [ ] Select AI response text → 'Save to Notes' → dropdown appears → select note → content appended to `.md` file on disk with correct timestamp format
+- [ ] Highlight PDF text → FloatingActionBar → 'Send to Claude' → text appears in Claude's input (or clipboard fallback works)
+- [ ] Select AI response text → 'Save to Notes' → content appended to `.md` file on disk
 - [ ] Console: no CSP errors blocking webview loads
-- [ ] Provider health state is visible and degrades gracefully without breaking user flow
 
 ---
 
-## Phase 7 — Full PDF Annotation Suite
+## Phase 7 — Annotation Completion *(NOT STARTED)*
 
-### Step 7.1 — Remaining Annotation Tools
+> **Status:** Not yet implemented. Annotation re-indexing pipeline and image stamp tool need to be built.
+
+### Step 7.1 — Annotation Re-indexing Pipeline
 
 **Prompt for Copilot:**
-> "Extend `AnnotationLayer.tsx` from Phase 3 to add the remaining tools:
+> "In `src/main/indexing/indexer.ts`, add `reindexAnnotations(fileId: string, page: number, vaultPath: string): Promise<void>`:
+> 1. Load all annotations for that file+page from the annotations SQLite table
+> 2. Collect all text content: highlight text, sticky note text, text box content
+> 3. Delete existing annotation chunks: `DELETE FROM chunks WHERE file_id = ? AND page_or_slide = ? AND is_annotation = 1`
+> 4. Insert new annotation chunks with `is_annotation = 1` flag
+> 5. Update FTS5 virtual table
+> 6. Re-generate embeddings for those chunks via `embedBatch`
+> 7. Upsert new vectors in LanceDB
 >
-> **Text Box tool:**
-> - Click on page → render an `<input>` or `<div contenteditable>` at click position
-> - On blur, convert to a rendered text annotation div
-> - Store: `{ type: 'textbox', page, x, y, text, fontSize: 14, color: '#ffffff' }`
->
-> **Freehand Draw tool:**
-> - On mousedown: start capturing SVG path points
-> - On mousemove: extend the SVG `<polyline>` in real time  
-> - On mouseup: save the path as `{ type: 'draw', page, points: [{x,y}], color, strokeWidth: 2 }`
-> - Render saved drawings as SVG polylines overlaid on the page
->
-> **Image Stamp tool:**
-> - Click on page → opens native file dialog to pick an image
-> - Render the image at click position, draggable and resizable via corner handles
-> - Store: `{ type: 'image', page, x, y, width, height, dataUrl }`
->
-> **Eraser tool:**
-> - On click/drag: detect which annotation's bounding box is under the cursor, delete it from the store and re-render
->
-> **Write-back to PDF:**
-> - After any annotation change, call `src/main/pdf/annotationWriter.ts`
-> - Use `pdf-lib` to embed highlights, text boxes, and sticky notes as real PDF annotations
-> - Freehand draws and image stamps: embed as page content stream elements
-> - After write-back, trigger incremental re-indexing of the modified page"
+> Call this silently after every annotation save — no loading indicator."
 
 ---
 
-### Step 7.2 — Annotation Re-indexing Pipeline
+### Step 7.2 — Image Stamp Tool
 
 **Prompt for Copilot:**
-> "In `src/main/indexing/indexer.ts`, add `reindexAnnotations(fileId: string, page: number, annotations: Annotation[]): Promise<void>`:
-> 1. Collect all text from annotations on the given page: highlight text, sticky note text, text box content
-> 2. Delete existing annotation chunks for that file+page from SQLite (WHERE `file_id = ? AND page_or_slide = ? AND is_annotation = 1`)
-> 3. Insert new annotation chunks with `is_annotation = 1` flag
-> 4. Re-generate embeddings for those chunks
-> 5. Upsert new vectors in LanceDB
-> This must run silently in the background after save — show no loading indicator."
+> "Extend `AnnotationLayer.tsx` to implement the image stamp tool:
+> - When `activeTool === 'image'` and user clicks on the page, open a native file dialog to pick an image
+> - Render the image at click position as an `<img>` element, draggable and resizable via corner handles
+> - Store as `{ type: 'image', page, x, y, width, height, dataUrl }` (convert image to base64 data URL)
+>
+> Add `ImageAnnotation` type to `src/shared/types.ts`:
+> ```ts
+> export type ImageAnnotation = AnnotationBase & {
+>   type: 'image';
+>   x: number;
+>   y: number;
+>   width: number;
+>   height: number;
+>   dataUrl: string;
+> };
+> ```
+>
+> Update the `Annotation` union type to include `ImageAnnotation`."
 
 **Debug checkpoint for Phase 7:**
-- [ ] Text Box: click on PDF page, type text, text persists after reopening PDF
-- [ ] Freehand Draw: draw on page, path saved and redraws on reload
-- [ ] Image Stamp: pick image, appears on page, survives app restart
-- [ ] Eraser: click on annotation, it disappears
-- [ ] Open the annotated PDF in external PDF reader (Preview/Acrobat) — highlights and sticky notes must be visible
-- [ ] After annotating, search for annotation text — it surfaces in search results
+- [ ] After annotating a PDF page, search for annotation text — it surfaces in search results with `is_annotation` boost
+- [ ] Image stamp: pick image → appears on page → survives page scroll and app restart
+- [ ] Image stamp is draggable and resizable
 
 ---
 
@@ -747,35 +753,49 @@ npm run package -- --dry-run
 ### Step 8.1 — Global Keyboard Shortcuts
 
 **Prompt for Copilot:**
-> "Register these keyboard shortcuts throughout the app:
+> "Register these keyboard shortcuts throughout the app using a `useKeyboardShortcut(key, callback)` hook in `src/renderer/hooks/useKeyboardShortcut.ts`:
 > - `Ctrl+K` — open Spotlight search (already done, verify global)
-> - `Ctrl+E` — toggle Notes editor between Edit and Read mode
+> - `Ctrl+E` — toggle Notes editor mode (handled in NotesEditor)
 > - `Ctrl+[` — collapse/expand Vault sidebar
 > - `Ctrl+]` — collapse/expand AI panel
 > - `Ctrl+N` — create new note in current subject
-> - `Ctrl+F` — focus the top search bar and run Full Search mode
-> - `Ctrl+W` — close current file in workspace (return to empty state)
-> - `Ctrl+1/2/3` — switch workspace to PDF/Notes/Search tab
-> Use a `useKeyboardShortcut(key, callback)` React hook in `src/renderer/hooks/useKeyboardShortcut.ts`. Register shortcuts at the App level so they work regardless of focus."
+> - `Ctrl+W` — close current file tab
+> - `Ctrl+1/2/3` — switch workspace tabs
+>
+> Register shortcuts at the AppLayout level so they work regardless of focus."
 
 ---
 
-### Step 8.2 — Loading States & Skeleton Screens
+### Step 8.2 — Full Search Results UI
+
+**Prompt for Copilot:**
+> "Create `src/renderer/components/search/FullSearchResults.tsx` — renders as a workspace view (opened via `Ctrl+F` or from Spotlight 'See all results' link).
+>
+> UI:
+> - Filter bar at top: Subject dropdown, File Type dropdown (All / PDF / Notes / PPTX), Sort by (Relevance / Date)
+> - Results list: each result card shows file name, subject badge, page/slide number pill, text snippet (bold matching terms), score indicator
+> - Clicking a result opens the file at that page in PDF viewer or the note in NotesEditor
+>
+> Uses `electronAPI.fullSearch()` which is already implemented."
+
+---
+
+### Step 8.3 — Loading States & Skeleton Screens
 
 **Prompt for Copilot:**
 > "Add loading states to every async operation:
-> - Vault opening: show a progress bar with 'Indexing files... {n}/{total}' text. Use IPC progress events pushed from main to renderer.
-> - PDF loading: show a page-shaped skeleton (gray placeholder rectangles) while PDF.js loads
-> - Search: show 3 skeleton result cards with shimmer animation while search runs
-> - AI webview first load: show a spinner overlay on the webview until `did-finish-load` fires
-> - Embedder initialization: show a one-time 'Setting up AI search...' banner at the bottom of the app (like VS Code's status bar)"
+> - Vault opening: show a progress bar with 'Indexing files... {n}/{total}' text (IPC progress events already exist via `onIndexProgress`)
+> - PDF loading: show a page-shaped skeleton with shimmer animation while PDF.js loads
+> - Search: show 3 skeleton result cards while searching
+> - AI webview first load: show a spinner overlay until `did-finish-load` fires
+> - Embedder initialization: show a one-time 'Setting up AI search...' banner in the status bar area"
 
 ---
 
-### Step 8.3 — Toast Notification System
+### Step 8.4 — Toast Notification System
 
 **Prompt for Copilot:**
-> "Create `src/renderer/components/ui/ToastProvider.tsx` using React context. Toasts appear in the bottom-right corner, stack vertically, auto-dismiss after 3 seconds, and can be dismissed manually.
+> "Create `src/renderer/components/ui/ToastProvider.tsx` using React context. Toasts appear in the bottom-right corner, stack vertically, auto-dismiss after 3 seconds, dismissible manually.
 >
 > Toast types: `success` (green left border), `error` (red left border), `info` (blue left border), `warning` (yellow left border).
 >
@@ -785,23 +805,23 @@ npm run package -- --dry-run
 
 ---
 
-### Step 8.4 — Performance Optimization
+### Step 8.5 — Performance Optimization
 
 **Prompt for Copilot:**
 > "Apply these performance improvements:
 >
-> 1. **Vault sidebar virtualization**: If vault has more than 100 files, use a virtual list (implement a simple one with `position: absolute` and calculated offsets).
+> 1. **Vault sidebar virtualization**: If vault has more than 100 files, use a virtual list (implement with `position: absolute` and calculated offsets).
 >
-> 2. **Embedding queue**: In `src/main/workers/embedder.ts`, implement a queue with concurrency limit of 1. If indexing is triggered while already indexing, queue the new file. Show overall queue progress in the status bar.
+> 2. **Embedding queue**: In `src/main/workers/embedder.ts`, implement a queue with concurrency limit of 1. If indexing is triggered while already indexing, queue the new file. Show overall queue progress via IPC.
 >
-> 3. **Memoization**: Wrap the VaultSidebar file tree with `React.memo`. Memoize the file list with `useMemo` so it only recomputes when the vault contents change."
+> 3. **Memoization**: Wrap the VaultSidebar file tree with `React.memo`. Memoize the file list with `useMemo` so it only recomputes when vault contents change."
 
 **Debug checkpoint for Phase 8:**
 - [ ] All keyboard shortcuts work from any focused element
+- [ ] Full search results view renders with filters
 - [ ] Vault with 50+ PDFs: indexing shows accurate progress bar
-- [ ] PDF with 100+ pages: scroll performance is smooth (60fps), only visible pages have canvases in DOM
+- [ ] PDF with 100+ pages: scroll performance is smooth (60fps)
 - [ ] Search results appear within 200ms for keyword queries
-- [ ] Semantic search results appear within 1 second
 - [ ] Toast appears after Save from AI, auto-dismisses
 
 ---
@@ -811,27 +831,28 @@ npm run package -- --dry-run
 ### Step 9.1 — Note to PDF Exporter
 
 **Prompt for Copilot:**
-> "Create `src/main/export/noteExporter.ts`. Export `exportNoteToPDF(noteId: string, outputPath: string): Promise<void>`:
+> "Create `src/main/export/noteExporter.ts`. Export `exportNoteToPDF(noteId: string, vaultPath: string, outputPath: string): Promise<void>`:
 >
 > 1. Fetch note content and metadata from SQLite
-> 2. Parse markdown to a structured AST using a markdown parser
+> 2. Parse markdown to structured AST
 > 3. Use `pdf-lib` to create a new PDF document with:
 >    - Page size: A4
 >    - Margins: 72pt (1 inch) all sides
->    - Header on every page: Subject name left, note title center, page number right (e.g. 'Page 1 of 4')
->    - Footer on every page: 'Generated by Axiom' left, date right
->    - Font: embed `Helvetica` for body, `Helvetica-Bold` for headings
+>    - Header: Subject name left, note title center, page number right
+>    - Footer: 'Generated by Axiom' left, date right
+>    - Font: embed Helvetica for body, Helvetica-Bold for headings
 >    - Heading hierarchy: H1 = 20pt bold, H2 = 16pt bold, H3 = 13pt bold, body = 11pt
->    - Code blocks: monospace font, light gray background rectangle behind text
+>    - Code blocks: monospace font, light gray background rectangle
 >    - Tables: rendered as bordered grids
->    - Consistent line spacing: 1.5× body text size
+>    - Line spacing: 1.5×
 > 4. Save to outputPath
 >
-> Add an 'Export as PDF' button to the NotesEditor toolbar. On click: open native save dialog, call `noteExporter`."
+> Add IPC handler `notes:exportToPDF(vaultPath, noteId)` — opens save dialog, calls exporter.
+> Add an 'Export as PDF' button to the NotesEditor toolbar."
 
 **Debug checkpoint:**
 - [ ] Export a note with headings, bullet lists, a table, and a code block
-- [ ] Open resulting PDF in external PDF reader — verify layout, fonts, page numbers
+- [ ] Open resulting PDF — verify layout, fonts, page numbers correct
 
 ---
 
@@ -839,7 +860,7 @@ npm run package -- --dry-run
 
 ### Step 10.1 — End-to-End Integration Test
 
-**Manual test script — run through this entire flow before calling the build complete:**
+**Manual test script — run through this entire flow:**
 
 ```
 1. VAULT SETUP
@@ -854,34 +875,35 @@ npm run package -- --dry-run
    [ ] Select text → FloatingActionBar appears
    [ ] Highlight selected text in yellow → highlight renders, persists on scroll
    [ ] Place a sticky note → note saves, visible on reload
-   [ ] Open PDF in external reader → verify highlights visible
+   [ ] Draw on page → path saved and redraws on reload
 
 3. NOTES WORKFLOW
    [ ] Create new note via '+ New Note' button
    [ ] Type markdown: # Heading, bullet list, **bold**, `code`, a table
    [ ] Live Preview renders inline while typing
    [ ] Ctrl+E → Read mode → full render
-   [ ] Ctrl+E again → back to Edit mode
+   [ ] Ctrl+E again → Edit mode
    [ ] Check file saved on disk (correct .md file content)
    [ ] Insert an exam template → correct markdown inserted
+   [ ] Select PDF text → Save to Notes → note created with source reference
 
 4. SEARCH WORKFLOW
    [ ] Ctrl+K → Spotlight → type a term from an indexed PDF → result appears
    [ ] Click result → PDF opens at correct page
-   [ ] Full Search → type a concept not verbatim in docs → semantic results appear
+   [ ] Full Search → type concept not verbatim in docs → semantic results appear
    [ ] Annotate a page, search for annotation text → annotated page appears boosted
 
 5. AI PANEL WORKFLOW
    [ ] All three AI tabs load (may need login on first use)
    [ ] Switching tabs preserves session
-   [ ] Highlight PDF text → Send to Claude → Claude tab activates, text injected
+   [ ] Highlight PDF text → Send to Claude → text injected or clipboard fallback
    [ ] Select Claude response → Save to Notes → content in correct note file
 
 6. EXPORT
-   [ ] Open a note → Export as PDF → save dialog → open resulting PDF → verify format
+   [ ] Open a note → Export as PDF → save dialog → verify format
 
 7. KEYBOARD SHORTCUTS
-   [ ] Ctrl+K, Ctrl+E, Ctrl+[, Ctrl+], Ctrl+N, Ctrl+F all work
+   [ ] Ctrl+K, Ctrl+E, Ctrl+[, Ctrl+], Ctrl+N, Ctrl+W all work
 ```
 
 ---
@@ -889,13 +911,13 @@ npm run package -- --dry-run
 ### Step 10.2 — Error Handling Audit
 
 **Prompt for Copilot:**
-> "Audit the entire codebase for unhandled errors. Add error boundaries to these components: PDFViewer, NotesEditor, AIPanel, VaultSidebar. Each ErrorBoundary should render a minimal error card with the error message and a 'Try Again' button that resets the component state.
+> "Add error boundaries to these components: PDFViewer, NotesEditor, AIPanel, VaultSidebar. Each ErrorBoundary should render a minimal error card with the error message and a 'Try Again' button.
 >
-> Also add these specific error handlers:
-> - `indexFile` failure: log error with file path, mark file as `indexed_at = -1` in SQLite (failed state), continue with next file
-> - Webview load failure: show 'Failed to load [AI name]. Check your internet connection.' overlay with retry button
-> - PDF parse failure: show 'Could not read this PDF. It may be encrypted or corrupted.' message in viewer
-> - LanceDB failure: fall back to SQLite FTS5-only search, show warning toast 'Semantic search unavailable'"
+> Also add specific error handlers:
+> - `indexFile` failure: log error, mark file as `indexed_at = -1`, continue with next file
+> - Webview load failure: show 'Failed to load [AI name].' overlay with retry button
+> - PDF parse failure: show 'Could not read this PDF.' message in viewer
+> - LanceDB failure: fall back to FTS5-only search, show warning toast"
 
 ---
 
@@ -903,12 +925,50 @@ npm run package -- --dry-run
 
 **Prompt for Copilot:**
 > "Configure `forge.config.ts` for distribution builds:
-> - macOS: `.dmg` and `.zip`, code-sign if certificates available, set app icon to `assets/icon.icns`
 > - Windows: `.exe` NSIS installer, set app icon to `assets/icon.ico`
-> - Linux: `.AppImage`
-> - All platforms: set `productName: 'Axiom'`, `appId: 'com.axiom.studyos'`
-> - Configure `electron-rebuild` to rebuild native modules (better-sqlite3, vectordb) for the Electron version during packaging
-> - Add a `postinstall` npm script that runs `electron-rebuild` automatically after `npm install`"
+> - Set `productName: 'Axiom'`, `appId: 'com.axiom.studyos'`
+> - Configure `electron-rebuild` to rebuild native modules (better-sqlite3) for the Electron version
+> - Add a `postinstall` npm script that runs `electron-rebuild` automatically"
+
+---
+
+## Appendix: Current Status Quick Reference
+
+| Phase | Component | Status |
+|-------|-----------|--------|
+| 1.1 | Main Window Config | ✅ Done |
+| 1.2 | Preload IPC Bridge | ✅ Done |
+| 1.3 | Three-Panel Layout | ✅ Done |
+| 1.4 | Top Bar (in title bar) | ✅ Done |
+| 2.1 | Database Schema | ✅ Done |
+| 2.2 | LanceDB Vector Store | ✅ Done |
+| 2.3 | Embeddings Worker | ✅ Done |
+| 2.4 | File Indexing Pipeline | ✅ Done |
+| 2.5 | Vault Watcher | ✅ Done |
+| 2.6 | Vault Sidebar | ✅ Done |
+| 2.7 | Typed IPC Contracts | ✅ Done |
+| 2.8 | IPC Vault Handlers | ✅ Done |
+| 3.1 | Workspace Tabs | ✅ Done |
+| 3.2 | PDF.js Renderer | ✅ Done |
+| 3.3 | PDF Toolbar | ✅ Done |
+| 3.4 | Floating Action Bar | ✅ Done |
+| 3.5 | Annotation Layer | ✅ Done |
+| **4.1** | **Notes IPC** | ❌ Not Started |
+| **4.2** | **Notes Editor (CodeMirror)** | ❌ Not Started |
+| **4.3** | **Workspace Notes Integration** | ❌ Not Started |
+| **4.4** | **New Note Button** | ❌ Not Started |
+| **4.5** | **Pinned Reference Strip** | ❌ Not Started |
+| **4.6** | **Exam Templates** | ❌ Not Started |
+| **4.7** | **Save to Notes Flow** | ❌ Not Started |
+| **5.1** | **Spotlight Search** | ❌ Not Started |
+| **5.2** | **Full Search Results UI** | ❌ Not Started |
+| **5.3** | **IPC Search Handlers** | ❌ Not Started |
+| **6.1** | **AI Webviews** | ❌ Not Started |
+| **6.2** | **Send to AI Flow** | ❌ Not Started |
+| **6.3** | **Save from AI** | ❌ Not Started |
+| **7.1** | **Annotation Re-indexing** | ❌ Not Started |
+| **7.2** | **Image Stamp Tool** | ❌ Not Started |
+| **8–10** | **Polish / Export / Testing** | ❌ Not Started |
 
 ---
 
@@ -929,4 +989,5 @@ npm run package -- --dry-run
 
 ---
 
-*This plan covers all four roadmap months from the Axiom spec. Implement phases in order — each phase builds on the last. Never start a new phase until all debug checkpoints in the current phase pass.*
+*This plan covers all phases of the Axiom spec. Implement phases in order — each phase builds on the last. Never start a new phase until all debug checkpoints in the current phase pass.*
+
