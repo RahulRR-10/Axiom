@@ -38,6 +38,8 @@ type Props = {
   vaultPath?:   string | null;
   /** If set, scroll to this page after the PDF loads */
   initialPage?: number;
+  /** Increment to force re-scroll to the same page */
+  scrollNonce?: number;
 };
 
 /* ─── Single page renderer ─────────────────────────────────────────────────── */
@@ -211,7 +213,7 @@ const PagePlaceholder = React.memo(function PagePlaceholder({
 /* ═══════════════════════════════════════════════════════════════════════════════
    PDFViewer — main component
 ═══════════════════════════════════════════════════════════════════════════════ */
-export const PDFViewer: React.FC<Props> = ({ filePath, fileId = '', vaultPath = null, initialPage }) => {
+export const PDFViewer: React.FC<Props> = ({ filePath, fileId = '', vaultPath = null, initialPage, scrollNonce }) => {
   const effectiveFileId = fileId || filePath;
 
   const [pdf,         setPdf]         = useState<PDFDocumentProxy | null>(null);
@@ -281,7 +283,8 @@ export const PDFViewer: React.FC<Props> = ({ filePath, fileId = '', vaultPath = 
     const pageHeight = pageMeta.height * zoom;
     const target = (initialPage - 1) * (pageHeight + PAGE_GAP);
     scrollRef.current.scrollTop = target;
-  }, [initialPage, pageMeta, loading, zoom]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialPage, scrollNonce, pageMeta, loading]);
 
   /* ── Annotations ─────────────────────────────────────────────────────────── */
   const loadAnnotations = useCallback(() => {

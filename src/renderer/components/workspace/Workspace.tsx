@@ -9,6 +9,8 @@ type OpenFile = {
   fileId: string | null;
   fileType: string;
   name: string;
+  initialPage?: number;
+  scrollNonce?: number;  // increment to force re-scroll to same page
 };
 
 type WorkspaceProps = {
@@ -24,12 +26,18 @@ export const Workspace: React.FC<WorkspaceProps> = ({ vaultPath }) => {
   // ── Listen for openFile events from VaultSidebar ─────────────────────────
   useEffect(() => {
     const handler = async (e: Event) => {
-      const { filePath, fileType } = (e as CustomEvent<{ filePath: string; fileType: string }>).detail;
+      const { filePath, fileType, page } = (e as CustomEvent<{ filePath: string; fileType: string; page?: number }>).detail;
 
-      // Check if already open
+      // Check if already open — switch to it and navigate to the page
       const existingIdx = openFiles.findIndex(f => f.filePath === filePath);
       if (existingIdx >= 0) {
         setActiveIdx(existingIdx);
+        if (page) {
+          // Update initialPage + nonce so PDFViewer re-scrolls (even to same page)
+          setOpenFiles(prev => prev.map((f, i) =>
+            i === existingIdx ? { ...f, initialPage: page, scrollNonce: Date.now() } : f,
+          ));
+        }
         return;
       }
 
@@ -42,7 +50,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ vaultPath }) => {
       }
 
       const name = filePath.split(/[\\/]/).pop() ?? filePath;
-      const newFile: OpenFile = { filePath, fileId, fileType, name };
+      const newFile: OpenFile = { filePath, fileId, fileType, name, initialPage: page };
 
       setOpenFiles(prev => [...prev, newFile]);
       setActiveIdx(openFiles.length); // will be the new last index
@@ -87,6 +95,8 @@ export const Workspace: React.FC<WorkspaceProps> = ({ vaultPath }) => {
             filePath={activeFile.filePath}
             fileId={activeFile.fileId ?? ''}
             vaultPath={vaultPath}
+            initialPage={activeFile.initialPage}
+            scrollNonce={activeFile.scrollNonce}
           />
         </div>
       );
