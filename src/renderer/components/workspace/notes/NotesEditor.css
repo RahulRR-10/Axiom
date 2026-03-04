@@ -110,6 +110,12 @@
     overflow: auto;
 }
 
+.notes-editor-area .cm-editor .cm-content {
+    max-width: 750px;
+    margin: 0 auto;
+    padding: 40px 24px 80px;
+}
+
 .notes-editor-area .cm-editor.cm-focused {
     outline: none;
 }
@@ -141,7 +147,9 @@
 .notes-read-view {
     height: 100%;
     overflow-y: auto;
-    padding: 24px 32px;
+    max-width: 750px;
+    margin: 0 auto;
+    padding: 40px 24px 80px;
     color: #d4d4d4;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     font-size: 15px;

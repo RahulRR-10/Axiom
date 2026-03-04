@@ -187,6 +187,7 @@ export const NotesEditor: React.FC<NotesEditorProps> = ({ filePath, noteId, vaul
         EditorView.theme({
             '&': { height: '100%', background: '#141414' },
             '.cm-scroller': { overflow: 'auto', fontFamily: "'JetBrains Mono', 'Fira Code', 'Consolas', monospace", fontSize: '14px' },
+            '.cm-content': { maxWidth: '750px', margin: '0 auto', padding: '40px 24px 80px' },
             '.cm-gutters': { background: '#1a1a1a', borderRight: '1px solid #2a2a2a', color: '#4a4a4a' },
             '.cm-activeLineGutter': { background: '#222' },
             '.cm-activeLine': { background: 'rgba(255,255,255,0.03)' },
