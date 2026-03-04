@@ -110,7 +110,32 @@ export function registerNotesHandlers(): void {
         NOTES_CHANNELS.READ,
         async (_event, vaultPath: string, noteId: string) => {
             const db = getDb(vaultPath);
-            const row = db.prepare('SELECT * FROM notes WHERE id = ?').get(noteId) as NoteRow | undefined;
+            let row = db.prepare('SELECT * FROM notes WHERE id = ?').get(noteId) as NoteRow | undefined;
+
+            // noteId might be a files.id (from the indexer) — resolve via file_path
+            if (!row) {
+                const fileRow = db.prepare('SELECT path FROM files WHERE id = ?').get(noteId) as { path: string } | undefined;
+                if (fileRow) {
+                    row = db.prepare('SELECT * FROM notes WHERE file_path = ?').get(fileRow.path) as NoteRow | undefined;
+
+                    // Note record doesn't exist yet — create it on the fly
+                    if (!row) {
+                        const content = fs.existsSync(fileRow.path)
+                            ? fs.readFileSync(fileRow.path, 'utf-8')
+                            : '';
+                        const title = path.basename(fileRow.path, '.md');
+                        const subject = path.relative(vaultPath, path.dirname(fileRow.path)).split(path.sep)[0] || null;
+                        const now = Math.floor(Date.now() / 1000);
+                        const newId = noteId; // reuse the files.id so the caller stays consistent
+                        db.prepare(`
+                            INSERT OR IGNORE INTO notes (id, title, content, file_path, subject, source_file_id, source_page, created_at, updated_at)
+                            VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?)
+                        `).run(newId, title, content, fileRow.path, subject, now, now);
+                        row = db.prepare('SELECT * FROM notes WHERE id = ?').get(newId) as NoteRow;
+                    }
+                }
+            }
+
             if (!row) throw new Error(`Note ${noteId} not found`);
 
             // Read content from disk if file_path exists

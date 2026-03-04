@@ -1,8 +1,8 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import { X } from 'lucide-react';
+import React, { useEffect, useState, useCallback } from "react";
+import { X } from "lucide-react";
 
-import { PDFViewer } from './pdf/PDFViewer';
-import { NotesEditor } from './notes/NotesEditor';
+import { PDFViewer } from "./pdf/PDFViewer";
+import { NotesEditor } from "./notes/NotesEditor";
 
 type OpenFile = {
   filePath: string;
@@ -10,7 +10,7 @@ type OpenFile = {
   fileType: string;
   name: string;
   initialPage?: number;
-  scrollNonce?: number;  // increment to force re-scroll to same page
+  scrollNonce?: number; // increment to force re-scroll to same page
 };
 
 type WorkspaceProps = {
@@ -21,22 +21,28 @@ export const Workspace: React.FC<WorkspaceProps> = ({ vaultPath }) => {
   const [openFiles, setOpenFiles] = useState<OpenFile[]>([]);
   const [activeIdx, setActiveIdx] = useState(-1);
 
-  const activeFile = activeIdx >= 0 ? openFiles[activeIdx] ?? null : null;
+  const activeFile = activeIdx >= 0 ? (openFiles[activeIdx] ?? null) : null;
 
   // ── Listen for openFile events from VaultSidebar ─────────────────────────
   useEffect(() => {
     const handler = async (e: Event) => {
-      const { filePath, fileType, page } = (e as CustomEvent<{ filePath: string; fileType: string; page?: number }>).detail;
+      const { filePath, fileType, page } = (
+        e as CustomEvent<{ filePath: string; fileType: string; page?: number }>
+      ).detail;
 
       // Check if already open — switch to it and navigate to the page
-      const existingIdx = openFiles.findIndex(f => f.filePath === filePath);
+      const existingIdx = openFiles.findIndex((f) => f.filePath === filePath);
       if (existingIdx >= 0) {
         setActiveIdx(existingIdx);
         if (page) {
           // Update initialPage + nonce so PDFViewer re-scrolls (even to same page)
-          setOpenFiles(prev => prev.map((f, i) =>
-            i === existingIdx ? { ...f, initialPage: page, scrollNonce: Date.now() } : f,
-          ));
+          setOpenFiles((prev) =>
+            prev.map((f, i) =>
+              i === existingIdx
+                ? { ...f, initialPage: page, scrollNonce: Date.now() }
+                : f,
+            ),
+          );
         }
         return;
       }
@@ -46,34 +52,46 @@ export const Workspace: React.FC<WorkspaceProps> = ({ vaultPath }) => {
       if (vaultPath) {
         try {
           fileId = await window.electronAPI.getFileId(vaultPath, filePath);
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
       }
 
       const name = filePath.split(/[\\/]/).pop() ?? filePath;
-      const newFile: OpenFile = { filePath, fileId, fileType, name, initialPage: page };
+      const newFile: OpenFile = {
+        filePath,
+        fileId,
+        fileType,
+        name,
+        initialPage: page,
+      };
 
-      setOpenFiles(prev => [...prev, newFile]);
+      setOpenFiles((prev) => [...prev, newFile]);
       setActiveIdx(openFiles.length); // will be the new last index
     };
 
-    window.addEventListener('openFile', handler as EventListener);
-    return () => window.removeEventListener('openFile', handler as EventListener);
+    window.addEventListener("openFile", handler as EventListener);
+    return () =>
+      window.removeEventListener("openFile", handler as EventListener);
   }, [vaultPath, openFiles]);
 
   // ── Close a tab ──────────────────────────────────────────────────────────
-  const closeTab = useCallback((idx: number, e?: React.MouseEvent) => {
-    e?.stopPropagation();
-    setOpenFiles(prev => {
-      const next = [...prev];
-      next.splice(idx, 1);
-      return next;
-    });
-    setActiveIdx(prev => {
-      if (idx < prev) return prev - 1;
-      if (idx === prev) return Math.min(prev, openFiles.length - 2);
-      return prev;
-    });
-  }, [openFiles.length]);
+  const closeTab = useCallback(
+    (idx: number, e?: React.MouseEvent) => {
+      e?.stopPropagation();
+      setOpenFiles((prev) => {
+        const next = [...prev];
+        next.splice(idx, 1);
+        return next;
+      });
+      setActiveIdx((prev) => {
+        if (idx < prev) return prev - 1;
+        if (idx === prev) return Math.min(prev, openFiles.length - 2);
+        return prev;
+      });
+    },
+    [openFiles.length],
+  );
 
   // ── Render content based on active file ──────────────────────────────────
   const renderContent = () => {
@@ -87,13 +105,13 @@ export const Workspace: React.FC<WorkspaceProps> = ({ vaultPath }) => {
       );
     }
 
-    if (activeFile.fileType === 'pdf') {
+    if (activeFile.fileType === "pdf") {
       return (
         <div className="flex-1 min-h-0 overflow-hidden">
           <PDFViewer
             key={activeFile.filePath}
             filePath={activeFile.filePath}
-            fileId={activeFile.fileId ?? ''}
+            fileId={activeFile.fileId ?? ""}
             vaultPath={vaultPath}
             initialPage={activeFile.initialPage}
             scrollNonce={activeFile.scrollNonce}
@@ -102,14 +120,14 @@ export const Workspace: React.FC<WorkspaceProps> = ({ vaultPath }) => {
       );
     }
 
-    if (activeFile.fileType === 'md') {
+    if (activeFile.fileType === "md") {
       return (
         <div className="flex-1 min-h-0 overflow-hidden">
           <NotesEditor
             key={activeFile.filePath}
             filePath={activeFile.filePath}
-            noteId={activeFile.fileId ?? ''}
-            vaultPath={vaultPath ?? ''}
+            noteId={activeFile.fileId ?? ""}
+            vaultPath={vaultPath ?? ""}
           />
         </div>
       );
@@ -127,21 +145,20 @@ export const Workspace: React.FC<WorkspaceProps> = ({ vaultPath }) => {
 
   // ── Tab color based on file type ────────────────────────────────────────
   const tabColor = (ft: string) => {
-    if (ft === 'pdf') return 'bg-red-500';
-    if (ft === 'md') return 'bg-blue-400';
-    return 'bg-gray-400';
+    if (ft === "pdf") return "bg-red-500";
+    if (ft === "md") return "bg-blue-400";
+    return "bg-gray-400";
   };
 
   return (
     <section className="h-full w-full flex flex-col overflow-hidden">
-
       {/* ── Tab bar ── */}
       {openFiles.length > 0 && (
         <div
           style={{
-            height: '36px',
-            background: '#181818',
-            borderBottom: '1px solid #2a2a2a',
+            height: "36px",
+            background: "#181818",
+            borderBottom: "1px solid #2a2a2a",
             flexShrink: 0,
           }}
           className="flex items-stretch overflow-x-auto"
@@ -151,14 +168,17 @@ export const Workspace: React.FC<WorkspaceProps> = ({ vaultPath }) => {
               key={f.filePath}
               type="button"
               onClick={() => setActiveIdx(i)}
-              className={`group flex items-center gap-1.5 px-3 text-xs border-r border-[#2a2a2a] whitespace-nowrap transition-colors ${i === activeIdx
-                  ? 'bg-[#1e1e1e] text-[#e4e4e4]'
-                  : 'text-[#6e6e6e] hover:bg-[#222] hover:text-[#aaa]'
-                }`}
-              style={{ maxWidth: '200px' }}
+              className={`group flex items-center gap-1.5 px-3 text-xs border-r border-[#2a2a2a] whitespace-nowrap transition-colors ${
+                i === activeIdx
+                  ? "bg-[#1e1e1e] text-[#e4e4e4]"
+                  : "text-[#6e6e6e] hover:bg-[#222] hover:text-[#aaa]"
+              }`}
+              style={{ maxWidth: "200px" }}
             >
               {/* File type indicator */}
-              <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${tabColor(f.fileType)}`} />
+              <span
+                className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${tabColor(f.fileType)}`}
+              />
 
               {/* File name — truncated */}
               <span className="truncate">{f.name}</span>

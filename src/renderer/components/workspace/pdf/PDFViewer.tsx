@@ -4,27 +4,31 @@ import React, {
   useMemo,
   useRef,
   useState,
-} from 'react';
-import type { PDFDocumentProxy } from 'pdfjs-dist';
-import { PDFDocument, rgb } from 'pdf-lib';
-import type { Annotation, HighlightAnnotation, DrawAnnotation } from '../../../../shared/types';
-import type { PDFTool } from './PDFToolbar';
-import { PDFToolbar } from './PDFToolbar';
-import { FloatingActionBar } from '../FloatingActionBar';
-import { AnnotationLayer } from './AnnotationLayer';
+} from "react";
+import type { PDFDocumentProxy } from "pdfjs-dist";
+import { PDFDocument, rgb } from "pdf-lib";
+import type {
+  Annotation,
+  HighlightAnnotation,
+  DrawAnnotation,
+} from "../../../../shared/types";
+import type { PDFTool } from "./PDFToolbar";
+import { PDFToolbar } from "./PDFToolbar";
+import { FloatingActionBar } from "../FloatingActionBar";
+import { AnnotationLayer } from "./AnnotationLayer";
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-require('../../../styles/pdf-text-layer.css');
+require("../../../styles/pdf-text-layer.css");
 
 /* ─── pdf.js setup ─────────────────────────────────────────────────────────── */
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const pdfjsLib = require('pdfjs-dist') as typeof import('pdfjs-dist');
+const pdfjsLib = require("pdfjs-dist") as typeof import("pdfjs-dist");
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-  'pdf.worker.min.mjs',
+  "pdf.worker.min.mjs",
   window.location.href,
 ).href;
 
-const PAGE_GAP    = 16;
-const BUFFER_PX   = 1200; // render pages within this many pixels of the viewport
+const PAGE_GAP = 16;
+const BUFFER_PX = 1200; // render pages within this many pixels of the viewport
 
 /* ─── PDF document cache ───────────────────────────────────────────────────── */
 const pdfCache = new Map<string, PDFDocumentProxy>();
@@ -33,9 +37,9 @@ const pdfCache = new Map<string, PDFDocumentProxy>();
 type PageMeta = { width: number; height: number };
 
 type Props = {
-  filePath:     string;
-  fileId?:      string;
-  vaultPath?:   string | null;
+  filePath: string;
+  fileId?: string;
+  vaultPath?: string | null;
   /** If set, scroll to this page after the PDF loads */
   initialPage?: number;
   /** Increment to force re-scroll to the same page */
@@ -59,114 +63,174 @@ const PDFPage = React.memo(function PDFPage({
   textColor: propTextColor,
   zoom: propZoom,
 }: {
-  pdf:               PDFDocumentProxy;
-  pageNum:           number;
-  scale:             number;
-  cssWidth:          number;
-  cssHeight:         number;
-  activeTool:        PDFTool;
-  highlightColor:    string;
-  fileId:            string;
-  vaultPath:         string;
-  annotations:       Annotation[];
+  pdf: PDFDocumentProxy;
+  pageNum: number;
+  scale: number;
+  cssWidth: number;
+  cssHeight: number;
+  activeTool: PDFTool;
+  highlightColor: string;
+  fileId: string;
+  vaultPath: string;
+  annotations: Annotation[];
   onAnnotationSaved: () => void;
-  fontSize:          number;
-  textColor:         string;
-  zoom:              number;
+  fontSize: number;
+  textColor: string;
+  zoom: number;
 }) {
-  const canvasRef    = useRef<HTMLCanvasElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const textLayerRef = useRef<HTMLDivElement>(null);
-  const wrapRef      = useRef<HTMLDivElement>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
 
   /* Render canvas + text layer */
   useEffect(() => {
-    const canvas       = canvasRef.current;
+    const canvas = canvasRef.current;
     const textLayerDiv = textLayerRef.current;
     if (!canvas || !textLayerDiv) return;
 
     let cancelled = false;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let renderTask: any = null;
 
     (async () => {
       const page = await pdf.getPage(pageNum);
-      if (cancelled) return;
+      if (cancelled) {
+        page.cleanup();
+        return;
+      }
 
-      const dpr            = window.devicePixelRatio || 1;
-      const cssViewport    = page.getViewport({ scale });
+      const dpr = window.devicePixelRatio || 1;
+      const cssViewport = page.getViewport({ scale });
       const canvasViewport = page.getViewport({ scale: scale * dpr });
 
-      canvas.width          = Math.floor(canvasViewport.width);
-      canvas.height         = Math.floor(canvasViewport.height);
-      canvas.style.width    = `${cssWidth}px`;
-      canvas.style.height   = `${cssHeight}px`;
+      canvas.width = Math.floor(canvasViewport.width);
+      canvas.height = Math.floor(canvasViewport.height);
+      canvas.style.width = `${cssWidth}px`;
+      canvas.style.height = `${cssHeight}px`;
 
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
+      const ctx = canvas.getContext("2d");
+      if (!ctx || cancelled) {
+        page.cleanup();
+        return;
+      }
 
       // Reset transform & clear before rendering to avoid stale/mirrored content
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      await page.render({ canvas, canvasContext: ctx, viewport: canvasViewport }).promise;
-      if (cancelled) return;
+      const task = page.render({
+        canvas,
+        canvasContext: ctx,
+        viewport: canvasViewport,
+      });
+      renderTask = task;
+      try {
+        await task.promise;
+      } catch (err: any) {
+        // RenderingCancelledException is expected — not a real error
+        if (err?.name !== "RenderingCancelledException") console.error(err);
+        page.cleanup();
+        return;
+      }
+      if (cancelled) {
+        page.cleanup();
+        return;
+      }
 
-      textLayerDiv.innerHTML = '';
-      textLayerDiv.style.setProperty('--scale-factor', `${scale}`);
-      textLayerDiv.style.setProperty('--total-scale-factor', `${scale}`);
-      textLayerDiv.style.setProperty('--scale-round-x', `${1 / (scale * dpr)}px`);
-      textLayerDiv.style.setProperty('--scale-round-y', `${1 / (scale * dpr)}px`);
+      textLayerDiv.innerHTML = "";
+      textLayerDiv.style.setProperty("--scale-factor", `${scale}`);
+      textLayerDiv.style.setProperty("--total-scale-factor", `${scale}`);
+      textLayerDiv.style.setProperty(
+        "--scale-round-x",
+        `${1 / (scale * dpr)}px`,
+      );
+      textLayerDiv.style.setProperty(
+        "--scale-round-y",
+        `${1 / (scale * dpr)}px`,
+      );
 
       const textContent = await page.getTextContent({
         includeMarkedContent: true,
         disableNormalization: true,
       });
-      if (cancelled) return;
+      if (cancelled) {
+        page.cleanup();
+        return;
+      }
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const tl = new (pdfjsLib as any).TextLayer({
         textContentSource: textContent,
-        container:         textLayerDiv,
-        viewport:          cssViewport,
+        container: textLayerDiv,
+        viewport: cssViewport,
       });
       await tl.render();
-      if (cancelled) return;
+      if (cancelled) {
+        page.cleanup();
+        return;
+      }
 
       // Force Chromium to register hit-test regions
       const parent = textLayerDiv.parentNode;
-      const next   = textLayerDiv.nextSibling;
+      const next = textLayerDiv.nextSibling;
       if (parent) {
         parent.removeChild(textLayerDiv);
         void (parent as HTMLElement).offsetHeight;
         parent.insertBefore(textLayerDiv, next);
         void textLayerDiv.offsetHeight;
       }
+
+      page.cleanup();
     })().catch(console.error);
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      // Cancel the in-flight pdf.js render task so it doesn't write to
+      // the canvas after this component unmounts or re-renders
+      try {
+        (renderTask as any)?.cancel();
+      } catch {
+        /* ignore */
+      }
+    };
   }, [pdf, pageNum, scale, cssWidth, cssHeight]);
 
   return (
     <div
       ref={wrapRef}
       style={{
-        position:     'relative',
-        width:        cssWidth,
-        height:       cssHeight,
-        flexShrink:   0,
+        position: "relative",
+        width: cssWidth,
+        height: cssHeight,
+        flexShrink: 0,
         marginBottom: PAGE_GAP,
-        boxShadow:    '0 2px 8px rgba(0,0,0,0.5)',
-        background:   '#ffffff',
-        cursor:       activeTool === 'sticky'    ? 'crosshair'
-                    : activeTool === 'draw'      ? 'crosshair'
-                    : activeTool === 'image'     ? 'crosshair'
-                    : activeTool === 'eraser'    ? 'crosshair'
-                    : activeTool === 'highlight' ? 'text'
-                    : activeTool === 'textbox'   ? 'crosshair'
-                    : 'default',
+        boxShadow: "0 2px 8px rgba(0,0,0,0.5)",
+        background: "#ffffff",
+        cursor:
+          activeTool === "sticky"
+            ? "crosshair"
+            : activeTool === "draw"
+              ? "crosshair"
+              : activeTool === "image"
+                ? "crosshair"
+                : activeTool === "eraser"
+                  ? "crosshair"
+                  : activeTool === "highlight"
+                    ? "text"
+                    : activeTool === "textbox"
+                      ? "crosshair"
+                      : "default",
       }}
     >
       <canvas
         ref={canvasRef}
-        style={{ display: 'block', position: 'absolute', top: 0, left: 0, pointerEvents: 'none' }}
+        style={{
+          display: "block",
+          position: "absolute",
+          top: 0,
+          left: 0,
+          pointerEvents: "none",
+        }}
       />
       <div ref={textLayerRef} className="textLayer" />
       <AnnotationLayer
@@ -178,7 +242,7 @@ const PDFPage = React.memo(function PDFPage({
         cssWidth={cssWidth}
         cssHeight={cssHeight}
         wrapperRef={wrapRef}
-        annotations={annotations.filter(a => a.page === pageNum)}
+        annotations={annotations.filter((a) => a.page === pageNum)}
         onAnnotationSaved={onAnnotationSaved}
         fontSize={propFontSize}
         textColor={propTextColor}
@@ -193,17 +257,17 @@ const PagePlaceholder = React.memo(function PagePlaceholder({
   cssWidth,
   cssHeight,
 }: {
-  cssWidth:  number;
+  cssWidth: number;
   cssHeight: number;
 }) {
   return (
     <div
       style={{
-        width:        cssWidth,
-        height:       cssHeight,
-        flexShrink:   0,
+        width: cssWidth,
+        height: cssHeight,
+        flexShrink: 0,
         marginBottom: PAGE_GAP,
-        background:   '#1e1e1e',
+        background: "#1e1e1e",
         borderRadius: 2,
       }}
     />
@@ -213,26 +277,32 @@ const PagePlaceholder = React.memo(function PagePlaceholder({
 /* ═══════════════════════════════════════════════════════════════════════════════
    PDFViewer — main component
 ═══════════════════════════════════════════════════════════════════════════════ */
-export const PDFViewer: React.FC<Props> = ({ filePath, fileId = '', vaultPath = null, initialPage, scrollNonce }) => {
+export const PDFViewer: React.FC<Props> = ({
+  filePath,
+  fileId = "",
+  vaultPath = null,
+  initialPage,
+  scrollNonce,
+}) => {
   const effectiveFileId = fileId || filePath;
 
-  const [pdf,         setPdf]         = useState<PDFDocumentProxy | null>(null);
-  const [numPages,    setNumPages]    = useState(0);
-  const [pageMeta,    setPageMeta]    = useState<PageMeta | null>(null); // uniform page size
+  const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
+  const [numPages, setNumPages] = useState(0);
+  const [pageMeta, setPageMeta] = useState<PageMeta | null>(null); // uniform page size
   const [currentPage, setCurrentPage] = useState(1);
-  const [zoom,        setZoom]        = useState(1.0);
-  const [activeTool,  setActiveTool]  = useState<PDFTool>('none');
-  const [hlColor,     setHlColor]     = useState('#fde68a');
-  const [fontSize,    setFontSize]    = useState(14);
-  const [textColor,   setTextColor]   = useState('#ffffff');
+  const [zoom, setZoom] = useState(1.0);
+  const [activeTool, setActiveTool] = useState<PDFTool>("none");
+  const [hlColor, setHlColor] = useState("#fde68a");
+  const [fontSize, setFontSize] = useState(14);
+  const [textColor, setTextColor] = useState("#ffffff");
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
-  const [error,       setError]       = useState<string | null>(null);
-  const [loading,     setLoading]     = useState(true);
-  const [saving,      setSaving]      = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [visibleRange, setVisibleRange] = useState<[number, number]>([1, 3]);
 
   const containerRef = useRef<HTMLDivElement>(null);
-  const scrollRef    = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const visiblePages = useRef(new Set<number>());
   const baseScaleRef = useRef(1);
 
@@ -261,17 +331,20 @@ export const PDFViewer: React.FC<Props> = ({ filePath, fileId = '', vaultPath = 
       setPdf(doc);
 
       // Use page 1 dimensions for all pages (fast — avoids N sequential getPage calls)
-      const page1      = await doc.getPage(1);
-      const vp1        = page1.getViewport({ scale: 1 });
+      const page1 = await doc.getPage(1);
+      const vp1 = page1.getViewport({ scale: 1 });
       const containerW = scrollRef.current?.clientWidth ?? 800;
-      const baseScale  = (containerW - 32) / vp1.width;
+      const baseScale = (containerW - 32) / vp1.width;
       baseScaleRef.current = baseScale;
 
       const vp = page1.getViewport({ scale: baseScale });
-      setPageMeta({ width: Math.floor(vp.width), height: Math.floor(vp.height) });
+      setPageMeta({
+        width: Math.floor(vp.width),
+        height: Math.floor(vp.height),
+      });
       setLoading(false);
-    })().catch(err => {
-      console.error('[PDFViewer] load error', err);
+    })().catch((err) => {
+      console.error("[PDFViewer] load error", err);
       setError(String(err));
       setLoading(false);
     });
@@ -283,15 +356,20 @@ export const PDFViewer: React.FC<Props> = ({ filePath, fileId = '', vaultPath = 
     const pageHeight = pageMeta.height * zoom;
     const target = (initialPage - 1) * (pageHeight + PAGE_GAP);
     scrollRef.current.scrollTop = target;
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialPage, scrollNonce, pageMeta, loading]);
 
   /* ── Annotations ─────────────────────────────────────────────────────────── */
   const loadAnnotations = useCallback(() => {
     if (!vaultPath) return;
-    window.electronAPI.loadAnnotations(vaultPath, effectiveFileId).then(setAnnotations).catch(console.error);
+    window.electronAPI
+      .loadAnnotations(vaultPath, effectiveFileId)
+      .then(setAnnotations)
+      .catch(console.error);
   }, [effectiveFileId, vaultPath]);
-  useEffect(() => { loadAnnotations(); }, [loadAnnotations]);
+  useEffect(() => {
+    loadAnnotations();
+  }, [loadAnnotations]);
 
   /* ── Save PDF ────────────────────────────────────────────────────────────── */
   const savePdf = useCallback(async () => {
@@ -299,8 +377,8 @@ export const PDFViewer: React.FC<Props> = ({ filePath, fileId = '', vaultPath = 
     setSaving(true);
     try {
       const fileBytes = await window.electronAPI.readFile(filePath);
-      const pdfDoc    = await PDFDocument.load(fileBytes);
-      const pages     = pdfDoc.getPages();
+      const pdfDoc = await PDFDocument.load(fileBytes);
+      const pages = pdfDoc.getPages();
 
       for (const ann of annotations) {
         const pageIdx = ann.page - 1;
@@ -308,31 +386,36 @@ export const PDFViewer: React.FC<Props> = ({ filePath, fileId = '', vaultPath = 
         const pdfPage = pages[pageIdx];
         const { width: pw, height: ph } = pdfPage.getSize();
 
-        if (ann.type === 'highlight') {
+        if (ann.type === "highlight") {
           const hl = ann as HighlightAnnotation;
-          const hex = hl.color.replace('#', '');
+          const hex = hl.color.replace("#", "");
           const cr = parseInt(hex.substring(0, 2), 16) / 255;
           const cg = parseInt(hex.substring(2, 4), 16) / 255;
           const cb = parseInt(hex.substring(4, 6), 16) / 255;
           for (const r of hl.rects) {
             pdfPage.drawRectangle({
-              x: r.x * pw, y: (1 - r.y) * ph - r.h * ph,
-              width: r.w * pw, height: r.h * ph,
-              color: rgb(cr, cg, cb), opacity: 0.35,
+              x: r.x * pw,
+              y: (1 - r.y) * ph - r.h * ph,
+              width: r.w * pw,
+              height: r.h * ph,
+              color: rgb(cr, cg, cb),
+              opacity: 0.35,
             });
           }
-        } else if (ann.type === 'draw') {
+        } else if (ann.type === "draw") {
           const dr = ann as DrawAnnotation;
-          const hex = dr.color.replace('#', '');
+          const hex = dr.color.replace("#", "");
           const cr = parseInt(hex.substring(0, 2), 16) / 255;
           const cg = parseInt(hex.substring(2, 4), 16) / 255;
           const cb = parseInt(hex.substring(4, 6), 16) / 255;
           for (let i = 0; i < dr.points.length - 1; i++) {
-            const p1 = dr.points[i], p2 = dr.points[i + 1];
+            const p1 = dr.points[i],
+              p2 = dr.points[i + 1];
             pdfPage.drawLine({
               start: { x: p1.x * pw, y: (1 - p1.y) * ph },
-              end:   { x: p2.x * pw, y: (1 - p2.y) * ph },
-              thickness: dr.strokeWidth, color: rgb(cr, cg, cb),
+              end: { x: p2.x * pw, y: (1 - p2.y) * ph },
+              thickness: dr.strokeWidth,
+              color: rgb(cr, cg, cb),
             });
           }
         }
@@ -343,7 +426,7 @@ export const PDFViewer: React.FC<Props> = ({ filePath, fileId = '', vaultPath = 
       pdfCache.delete(filePath);
       await window.electronAPI.writeFile(filePath, new Uint8Array(savedBytes));
     } catch (err) {
-      console.error('[PDFViewer] Save failed', err);
+      console.error("[PDFViewer] Save failed", err);
     } finally {
       setSaving(false);
     }
@@ -352,15 +435,15 @@ export const PDFViewer: React.FC<Props> = ({ filePath, fileId = '', vaultPath = 
   /* ── Escape to deactivate tool ───────────────────────────────────────────── */
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setActiveTool('none');
+      if (e.key === "Escape") setActiveTool("none");
     };
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
   }, []);
 
   /* ── Scroll-based virtualization + page tracking ──────────────────────────── */
-  const prevZoomRef     = useRef(zoom);
-  const currentPageRef  = useRef(currentPage);
+  const prevZoomRef = useRef(zoom);
+  const currentPageRef = useRef(currentPage);
   currentPageRef.current = currentPage;
 
   useEffect(() => {
@@ -376,32 +459,41 @@ export const PDFViewer: React.FC<Props> = ({ filePath, fileId = '', vaultPath = 
     }
 
     const computeRange = () => {
-      const scrollTop    = el.scrollTop;
-      const viewportH    = el.clientHeight;
-      const pageH        = Math.floor(pageMeta.height * zoom) + PAGE_GAP;
+      const scrollTop = el.scrollTop;
+      const viewportH = el.clientHeight;
+      const pageH = Math.floor(pageMeta.height * zoom) + PAGE_GAP;
       if (pageH <= 0) return;
 
       // Current page = which page is at the center of the viewport
-      const centerY      = scrollTop + viewportH / 2;
-      const centerPage   = Math.max(1, Math.min(numPages, Math.ceil(centerY / pageH)));
+      const centerY = scrollTop + viewportH / 2;
+      const centerPage = Math.max(
+        1,
+        Math.min(numPages, Math.ceil(centerY / pageH)),
+      );
       setCurrentPage(centerPage);
 
-      const firstVisible = Math.max(1, Math.floor((scrollTop - BUFFER_PX) / pageH) + 1);
-      const lastVisible  = Math.min(numPages, Math.ceil((scrollTop + viewportH + BUFFER_PX) / pageH));
+      const firstVisible = Math.max(
+        1,
+        Math.floor((scrollTop - BUFFER_PX) / pageH) + 1,
+      );
+      const lastVisible = Math.min(
+        numPages,
+        Math.ceil((scrollTop + viewportH + BUFFER_PX) / pageH),
+      );
       setVisibleRange([firstVisible, lastVisible]);
     };
 
     computeRange();
-    el.addEventListener('scroll', computeRange, { passive: true });
-    return () => el.removeEventListener('scroll', computeRange);
+    el.addEventListener("scroll", computeRange, { passive: true });
+    return () => el.removeEventListener("scroll", computeRange);
   }, [pageMeta, zoom, numPages]);
 
   /* ── Build page list with virtualization ──────────────────────────────────── */
   const pageList = useMemo(() => {
     if (!pdf || !pageMeta) return null;
     const scale = baseScaleRef.current * zoom;
-    const cssW  = Math.floor(pageMeta.width  * zoom);
-    const cssH  = Math.floor(pageMeta.height * zoom);
+    const cssW = Math.floor(pageMeta.width * zoom);
+    const cssH = Math.floor(pageMeta.height * zoom);
     const [lo, hi] = visibleRange;
 
     return Array.from({ length: numPages }, (_, i) => {
@@ -409,7 +501,13 @@ export const PDFViewer: React.FC<Props> = ({ filePath, fileId = '', vaultPath = 
 
       // Only render pages near the viewport; placeholders for the rest
       if (pageNum < lo || pageNum > hi) {
-        return <PagePlaceholder key={`ph-${pageNum}`} cssWidth={cssW} cssHeight={cssH} />;
+        return (
+          <PagePlaceholder
+            key={`ph-${pageNum}`}
+            cssWidth={cssW}
+            cssHeight={cssH}
+          />
+        );
       }
 
       return (
@@ -423,7 +521,7 @@ export const PDFViewer: React.FC<Props> = ({ filePath, fileId = '', vaultPath = 
           activeTool={activeTool}
           highlightColor={hlColor}
           fileId={effectiveFileId}
-          vaultPath={vaultPath ?? ''}
+          vaultPath={vaultPath ?? ""}
           annotations={annotations}
           onAnnotationSaved={loadAnnotations}
           fontSize={fontSize}
@@ -432,13 +530,33 @@ export const PDFViewer: React.FC<Props> = ({ filePath, fileId = '', vaultPath = 
         />
       );
     });
-  }, [pdf, pageMeta, zoom, numPages, visibleRange, filePath, activeTool, hlColor, effectiveFileId, vaultPath, annotations, loadAnnotations]);
+  }, [
+    pdf,
+    pageMeta,
+    zoom,
+    numPages,
+    visibleRange,
+    filePath,
+    activeTool,
+    hlColor,
+    effectiveFileId,
+    vaultPath,
+    annotations,
+    loadAnnotations,
+  ]);
 
   /* ── Render ──────────────────────────────────────────────────────────────── */
   return (
     <div
       ref={containerRef}
-      style={{ height: '100%', width: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#141414' }}
+      style={{
+        height: "100%",
+        width: "100%",
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        background: "#141414",
+      }}
     >
       <PDFToolbar
         activeTool={activeTool}
@@ -459,23 +577,40 @@ export const PDFViewer: React.FC<Props> = ({ filePath, fileId = '', vaultPath = 
 
       <div
         ref={scrollRef}
-        style={{ flex: 1, overflowY: 'auto', overflowX: 'auto', background: '#141414', position: 'relative' }}
+        style={{
+          flex: 1,
+          overflowY: "auto",
+          overflowX: "auto",
+          background: "#141414",
+          position: "relative",
+        }}
       >
         {loading && (
           <div className="flex items-center justify-center h-full">
-            <div className="text-[#6e6e6e] text-sm animate-pulse">Loading PDF…</div>
+            <div className="text-[#6e6e6e] text-sm animate-pulse">
+              Loading PDF…
+            </div>
           </div>
         )}
         {error && (
           <div className="flex items-center justify-center h-full">
             <div className="text-red-400 text-sm max-w-xs text-center">
-              Failed to load PDF:<br />
+              Failed to load PDF:
+              <br />
               <span className="text-[#8a8a8a] text-xs">{error}</span>
             </div>
           </div>
         )}
         {!loading && !error && (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '16px', minHeight: '100%' }}>
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              padding: "16px",
+              minHeight: "100%",
+            }}
+          >
             {pageList}
           </div>
         )}
@@ -485,7 +620,7 @@ export const PDFViewer: React.FC<Props> = ({ filePath, fileId = '', vaultPath = 
             currentPage={currentPage}
             filePath={filePath}
             fileId={effectiveFileId}
-            vaultPath={vaultPath ?? ''}
+            vaultPath={vaultPath ?? ""}
             onAnnotationSaved={loadAnnotations}
           />
         )}

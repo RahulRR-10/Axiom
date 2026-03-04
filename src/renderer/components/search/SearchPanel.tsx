@@ -1,7 +1,22 @@
-import { FileText, StickyNote, Search, Send, Star, Pen, ChevronDown, X } from 'lucide-react';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  FileText,
+  StickyNote,
+  Search,
+  Send,
+  Star,
+  Pen,
+  ChevronDown,
+  X,
+} from "lucide-react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
-import type { SearchResult } from '../../../shared/types';
+import type { SearchResult } from "../../../shared/types";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -11,22 +26,54 @@ type SearchPanelProps = {
 
 type FilterState = {
   fileType: string; // 'all' | 'pdf' | 'md' | 'pptx' | 'txt'
-  subject: string;  // 'all' | subject name
-  sort: 'relevance' | 'date';
+  subject: string; // 'all' | subject name
+  sort: "relevance" | "date";
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 const FILE_TYPE_ICONS: Record<string, React.ReactNode> = {
-  pdf:  <FileText size={14} className="shrink-0 mt-0.5" style={{ color: '#f87171' }} />,
-  md:   <StickyNote size={14} className="shrink-0 mt-0.5" style={{ color: '#60a5fa' }} />,
-  pptx: <FileText size={14} className="shrink-0 mt-0.5" style={{ color: '#fb923c' }} />,
-  txt:  <FileText size={14} className="shrink-0 mt-0.5" style={{ color: '#9ca3af' }} />,
+  pdf: (
+    <FileText
+      size={14}
+      className="shrink-0 mt-0.5"
+      style={{ color: "#f87171" }}
+    />
+  ),
+  md: (
+    <StickyNote
+      size={14}
+      className="shrink-0 mt-0.5"
+      style={{ color: "#60a5fa" }}
+    />
+  ),
+  pptx: (
+    <FileText
+      size={14}
+      className="shrink-0 mt-0.5"
+      style={{ color: "#fb923c" }}
+    />
+  ),
+  txt: (
+    <FileText
+      size={14}
+      className="shrink-0 mt-0.5"
+      style={{ color: "#9ca3af" }}
+    />
+  ),
 };
 
 const SUBJECT_COLORS = [
-  '#818cf8', '#fb923c', '#34d399', '#f472b6', '#a78bfa',
-  '#fbbf24', '#2dd4bf', '#f87171', '#38bdf8', '#a3e635',
+  "#818cf8",
+  "#fb923c",
+  "#34d399",
+  "#f472b6",
+  "#a78bfa",
+  "#fbbf24",
+  "#2dd4bf",
+  "#f87171",
+  "#38bdf8",
+  "#a3e635",
 ];
 
 function getSubjectColor(subject: string): string {
@@ -41,29 +88,33 @@ function boldMatchedTerms(text: string, query: string): React.ReactNode {
   if (!query.trim()) return text;
   const terms = query.trim().split(/\s+/).filter(Boolean);
   const pattern = new RegExp(
-    `(${terms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`,
-    'gi',
+    `(${terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})`,
+    "gi",
   );
   const parts = text.split(pattern);
   return parts.map((part, i) =>
-    pattern.test(part)
-      ? <strong key={i} className="text-[#e4e4e4]">{part}</strong>
-      : part,
+    pattern.test(part) ? (
+      <strong key={i} className="text-[#e4e4e4]">
+        {part}
+      </strong>
+    ) : (
+      part
+    ),
   );
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
 
 export const SearchPanel: React.FC<SearchPanelProps> = ({ vaultPath }) => {
-  const [open, setOpen]           = useState(false);
-  const [query, setQuery]         = useState('');
-  const [results, setResults]     = useState<SearchResult[]>([]);
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<SearchResult[]>([]);
   const [isSearching, setSearching] = useState(false);
-  const [cursor, setCursor]       = useState(0);
-  const [filters, setFilters]     = useState<FilterState>({
-    fileType: 'all',
-    subject: 'all',
-    sort: 'relevance',
+  const [cursor, setCursor] = useState(0);
+  const [filters, setFilters] = useState<FilterState>({
+    fileType: "all",
+    subject: "all",
+    sort: "relevance",
   });
 
   const inputRef = useRef<HTMLInputElement>(null);
@@ -74,13 +125,13 @@ export const SearchPanel: React.FC<SearchPanelProps> = ({ vaultPath }) => {
   useEffect(() => {
     const onOpen = (): void => {
       setOpen(true);
-      setQuery('');
+      setQuery("");
       setResults([]);
       setCursor(0);
-      setFilters({ fileType: 'all', subject: 'all', sort: 'relevance' });
+      setFilters({ fileType: "all", subject: "all", sort: "relevance" });
     };
-    window.addEventListener('spotlight:open', onOpen);
-    return () => window.removeEventListener('spotlight:open', onOpen);
+    window.addEventListener("spotlight:open", onOpen);
+    return () => window.removeEventListener("spotlight:open", onOpen);
   }, []);
 
   useEffect(() => {
@@ -105,7 +156,7 @@ export const SearchPanel: React.FC<SearchPanelProps> = ({ vaultPath }) => {
           setSearching(false);
         })
         .catch((err) => {
-          console.error('[search]', err);
+          console.error("[search]", err);
           setSearching(false);
         });
     }, 200);
@@ -114,57 +165,67 @@ export const SearchPanel: React.FC<SearchPanelProps> = ({ vaultPath }) => {
   // ── Derived data ──────────────────────────────────────────────────────
   const subjects = useMemo(() => {
     const set = new Set<string>();
-    for (const r of results) { if (r.subject) set.add(r.subject); }
+    for (const r of results) {
+      if (r.subject) set.add(r.subject);
+    }
     return Array.from(set).sort();
   }, [results]);
 
   const filtered = useMemo(() => {
     let out = results;
-    if (filters.fileType !== 'all') out = out.filter(r => r.file_type === filters.fileType);
-    if (filters.subject !== 'all') out = out.filter(r => r.subject === filters.subject);
+    if (filters.fileType !== "all")
+      out = out.filter((r) => r.file_type === filters.fileType);
+    if (filters.subject !== "all")
+      out = out.filter((r) => r.subject === filters.subject);
     return out;
   }, [results, filters]);
 
   // ── Actions ───────────────────────────────────────────────────────────
   const close = useCallback(() => {
     setOpen(false);
-    setQuery('');
+    setQuery("");
     setResults([]);
   }, []);
 
-  const openResult = useCallback((result: SearchResult) => {
-    if (result.file_id) {
-      window.dispatchEvent(
-        new CustomEvent('openFile', {
-          detail: {
-            filePath: result.file_path,
-            fileId: result.file_id,
-            fileType: result.file_type,
-            page: result.page_or_slide,
-          },
-        }),
-      );
-    }
-    close();
-  }, [close]);
+  const openResult = useCallback(
+    (result: SearchResult) => {
+      if (result.file_id) {
+        window.dispatchEvent(
+          new CustomEvent("openFile", {
+            detail: {
+              filePath: result.file_path,
+              fileId: result.file_id,
+              fileType: result.file_type,
+              page: result.page_or_slide,
+            },
+          }),
+        );
+      }
+      close();
+    },
+    [close],
+  );
 
   const sendToAi = useCallback((text: string) => {
     window.dispatchEvent(
-      new CustomEvent('sendToAI', { detail: { text, target: 'claude' } }),
+      new CustomEvent("sendToAI", { detail: { text, target: "claude" } }),
     );
   }, []);
 
   // ── Keyboard navigation ──────────────────────────────────────────────
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
-      if (e.key === 'Escape') { close(); return; }
-      if (e.key === 'ArrowDown') {
+      if (e.key === "Escape") {
+        close();
+        return;
+      }
+      if (e.key === "ArrowDown") {
         e.preventDefault();
         setCursor((c) => Math.min(c + 1, filtered.length - 1));
-      } else if (e.key === 'ArrowUp') {
+      } else if (e.key === "ArrowUp") {
         e.preventDefault();
         setCursor((c) => Math.max(c - 1, 0));
-      } else if (e.key === 'Enter' && filtered[cursor]) {
+      } else if (e.key === "Enter" && filtered[cursor]) {
         openResult(filtered[cursor]);
       }
     },
@@ -175,26 +236,28 @@ export const SearchPanel: React.FC<SearchPanelProps> = ({ vaultPath }) => {
   useEffect(() => {
     if (!resultsRef.current) return;
     const active = resultsRef.current.querySelector('[data-active="true"]');
-    active?.scrollIntoView({ block: 'nearest' });
+    active?.scrollIntoView({ block: "nearest" });
   }, [cursor]);
 
   if (!open) return null;
 
-  const hasFilters = filters.fileType !== 'all' || filters.subject !== 'all';
+  const hasFilters = filters.fileType !== "all" || filters.subject !== "all";
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-start justify-center pt-[10vh]"
-      style={{ background: 'rgba(0,0,0,0.7)' }}
-      onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}
+      style={{ background: "rgba(0,0,0,0.7)" }}
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) close();
+      }}
     >
       <div
         className="w-[660px] rounded-xl overflow-hidden flex flex-col"
         style={{
-          background: '#1e1e1e',
-          border: '1px solid #3a3a3a',
-          boxShadow: '0 16px 48px rgba(0,0,0,0.8)',
-          maxHeight: '70vh',
+          background: "#1e1e1e",
+          border: "1px solid #3a3a3a",
+          boxShadow: "0 16px 48px rgba(0,0,0,0.8)",
+          maxHeight: "70vh",
         }}
       >
         {/* ── Search input ── */}
@@ -205,21 +268,28 @@ export const SearchPanel: React.FC<SearchPanelProps> = ({ vaultPath }) => {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onKeyDown}
-            placeholder={vaultPath ? 'Search your vault…' : 'Open a vault first'}
+            placeholder={
+              vaultPath ? "Search your vault…" : "Open a vault first"
+            }
             disabled={!vaultPath}
             className="flex-1 bg-transparent text-[#d4d4d4] text-sm outline-none placeholder-[#4a4a4a]"
           />
           {query && (
             <button
               type="button"
-              onClick={() => { setQuery(''); inputRef.current?.focus(); }}
+              onClick={() => {
+                setQuery("");
+                inputRef.current?.focus();
+              }}
               className="text-[#5a5a5a] hover:text-[#aaa]"
               aria-label="Clear search"
             >
               <X size={14} />
             </button>
           )}
-          <kbd className="text-[10px] text-[#5a5a5a] border border-[#3a3a3a] rounded px-1 shrink-0">Esc</kbd>
+          <kbd className="text-[10px] text-[#5a5a5a] border border-[#3a3a3a] rounded px-1 shrink-0">
+            Esc
+          </kbd>
         </div>
 
         {/* ── Filters bar (only when results exist) ── */}
@@ -229,7 +299,9 @@ export const SearchPanel: React.FC<SearchPanelProps> = ({ vaultPath }) => {
             <div className="relative">
               <select
                 value={filters.fileType}
-                onChange={(e) => setFilters(f => ({ ...f, fileType: e.target.value }))}
+                onChange={(e) =>
+                  setFilters((f) => ({ ...f, fileType: e.target.value }))
+                }
                 className="appearance-none bg-[#252525] border border-[#333] rounded-md px-2.5 py-1 pr-6 text-[11px] text-[#bbb] outline-none cursor-pointer hover:border-[#444]"
               >
                 <option value="all">All Types</option>
@@ -238,7 +310,10 @@ export const SearchPanel: React.FC<SearchPanelProps> = ({ vaultPath }) => {
                 <option value="pptx">Slides</option>
                 <option value="txt">Text</option>
               </select>
-              <ChevronDown size={10} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[#666] pointer-events-none" />
+              <ChevronDown
+                size={10}
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[#666] pointer-events-none"
+              />
             </div>
 
             {/* Subject */}
@@ -246,13 +321,22 @@ export const SearchPanel: React.FC<SearchPanelProps> = ({ vaultPath }) => {
               <div className="relative">
                 <select
                   value={filters.subject}
-                  onChange={(e) => setFilters(f => ({ ...f, subject: e.target.value }))}
+                  onChange={(e) =>
+                    setFilters((f) => ({ ...f, subject: e.target.value }))
+                  }
                   className="appearance-none bg-[#252525] border border-[#333] rounded-md px-2.5 py-1 pr-6 text-[11px] text-[#bbb] outline-none cursor-pointer hover:border-[#444]"
                 >
                   <option value="all">All Subjects</option>
-                  {subjects.map(s => <option key={s} value={s}>{s}</option>)}
+                  {subjects.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
                 </select>
-                <ChevronDown size={10} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[#666] pointer-events-none" />
+                <ChevronDown
+                  size={10}
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[#666] pointer-events-none"
+                />
               </div>
             )}
 
@@ -260,7 +344,13 @@ export const SearchPanel: React.FC<SearchPanelProps> = ({ vaultPath }) => {
             {hasFilters && (
               <button
                 type="button"
-                onClick={() => setFilters({ fileType: 'all', subject: 'all', sort: 'relevance' })}
+                onClick={() =>
+                  setFilters({
+                    fileType: "all",
+                    subject: "all",
+                    sort: "relevance",
+                  })
+                }
                 className="text-[10px] text-[#6a6a6a] hover:text-[#aaa]"
               >
                 Clear filters
@@ -269,7 +359,7 @@ export const SearchPanel: React.FC<SearchPanelProps> = ({ vaultPath }) => {
 
             {/* Result count */}
             <span className="ml-auto text-[10px] text-[#5a5a5a]">
-              {filtered.length} result{filtered.length !== 1 ? 's' : ''}
+              {filtered.length} result{filtered.length !== 1 ? "s" : ""}
             </span>
           </div>
         )}
@@ -294,13 +384,16 @@ export const SearchPanel: React.FC<SearchPanelProps> = ({ vaultPath }) => {
           {!isSearching && filtered.length > 0 && (
             <ul className="py-1">
               {filtered.map((r, idx) => (
-                <li key={r.id + idx} data-active={idx === cursor ? 'true' : undefined}>
+                <li
+                  key={r.id + idx}
+                  data-active={idx === cursor ? "true" : undefined}
+                >
                   <button
                     type="button"
                     onClick={() => openResult(r)}
                     onMouseEnter={() => setCursor(idx)}
                     className={`w-full flex items-start gap-3 px-4 py-3 text-left transition-colors group ${
-                      idx === cursor ? 'bg-[#2a2a2a]' : 'hover:bg-[#232323]'
+                      idx === cursor ? "bg-[#2a2a2a]" : "hover:bg-[#232323]"
                     }`}
                   >
                     {/* Icon */}
@@ -350,8 +443,10 @@ export const SearchPanel: React.FC<SearchPanelProps> = ({ vaultPath }) => {
                         )}
 
                         {/* Note badge */}
-                        {r.category === 'note' && (
-                          <span className="text-[10px] text-[#60a5fa] shrink-0">Note</span>
+                        {r.category === "note" && (
+                          <span className="text-[10px] text-[#60a5fa] shrink-0">
+                            Note
+                          </span>
                         )}
                       </div>
 
@@ -364,7 +459,10 @@ export const SearchPanel: React.FC<SearchPanelProps> = ({ vaultPath }) => {
                     {/* Send to AI */}
                     <button
                       type="button"
-                      onClick={(e) => { e.stopPropagation(); sendToAi(r.text); }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        sendToAi(r.text);
+                      }}
                       className="shrink-0 flex items-center gap-1 px-2 py-1 rounded-md text-[10px] text-[#6a6a6a]
                                  bg-[#252525] border border-[#333] hover:bg-[#2a2a2a] hover:text-[#aaa]
                                  opacity-0 group-hover:opacity-100 transition-opacity mt-0.5"
