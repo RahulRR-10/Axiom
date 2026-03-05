@@ -6,6 +6,7 @@ import chokidar, { type FSWatcher } from 'chokidar';
 import { getDb } from '../database/schema';
 import { indexFile, purgeFile } from '../indexing/indexer';
 import { VAULT_CHANNELS } from '../../shared/ipc/channels';
+import type { VaultIndexProgressPayload } from '../../shared/ipc/contracts';
 
 const WATCHED_GLOB = '**/*.{pdf,pptx,md,txt}';
 const DEBOUNCE_MS  = 500;
@@ -51,20 +52,26 @@ export function stopWatching(): void {
 // ── Event handlers ────────────────────────────────────────────────────────────
 
 async function handleAdd(filePath: string, vaultPath: string): Promise<void> {
+  console.log('[watcher] New file detected:', filePath);
   try {
     await indexFile(filePath, vaultPath);
+    console.log('[watcher] Indexed new file:', filePath);
   } catch (err) {
     console.error('[watcher] Failed to index new file:', filePath, err);
   }
+  broadcastIndexStatus(vaultPath);
   broadcastFileChanged(vaultPath);
 }
 
 async function handleChange(filePath: string, vaultPath: string): Promise<void> {
+  console.log('[watcher] File changed:', filePath);
   try {
     await indexFile(filePath, vaultPath);
+    console.log('[watcher] Re-indexed changed file:', filePath);
   } catch (err) {
     console.error('[watcher] Failed to re-index changed file:', filePath, err);
   }
+  broadcastIndexStatus(vaultPath);
   broadcastFileChanged(vaultPath);
 }
 
@@ -81,6 +88,21 @@ async function handleUnlink(filePath: string, vaultPath: string): Promise<void> 
     }
   } catch (err) {
     console.error('[watcher] Failed to purge deleted file:', filePath, err);
+  }
+}
+
+function broadcastIndexStatus(vaultPath: string): void {
+  try {
+    const db = getDb(vaultPath);
+    const total = (db.prepare('SELECT COUNT(*) as n FROM files').get() as { n: number }).n;
+    const indexed = (db.prepare("SELECT COUNT(*) as n FROM files WHERE indexed_at IS NOT NULL AND indexed_at != -1").get() as { n: number }).n;
+    const failed = (db.prepare("SELECT COUNT(*) as n FROM files WHERE indexed_at = -1").get() as { n: number }).n;
+    const payload: VaultIndexProgressPayload = { total, indexed, failed, inProgress: false };
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.send(VAULT_CHANNELS.INDEX_PROGRESS, payload);
+    }
+  } catch (err) {
+    console.error('[watcher] Failed to broadcast index status:', err);
   }
 }
 

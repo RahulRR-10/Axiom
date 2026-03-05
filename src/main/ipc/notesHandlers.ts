@@ -8,6 +8,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { NOTES_CHANNELS } from '../../shared/ipc/channels';
 import type { NoteDetail, NoteSummary } from '../../shared/types';
 import { getDb } from '../database/schema';
+import { indexFile } from '../indexing/indexer';
 import { broadcastFileChanged } from '../vault/vaultWatcher';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -304,9 +305,14 @@ export function registerNotesHandlers(): void {
                 });
                 fs.writeFileSync(pdfPath, pdfData);
 
-                // Broadcast immediately so the vault sidebar picks up the new
-                // file via a filesystem refresh. The watcher will index it in
-                // the background.
+                // Index the exported PDF explicitly so it's searchable
+                // immediately instead of waiting for the watcher.
+                try {
+                    await indexFile(pdfPath, vaultPath);
+                } catch (err) {
+                    console.error('[exportPdf] Failed to index exported PDF:', err);
+                }
+
                 broadcastFileChanged(vaultPath);
 
                 return pdfPath;
