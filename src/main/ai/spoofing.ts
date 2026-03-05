@@ -77,15 +77,21 @@ export function setupAISessions(): void {
     if (contents.getType() === 'webview') {
       contents.setUserAgent(CHROME_UA);
 
-      // ── Intercept in-page Google auth navigation ─────────────────────────
-      // Gemini navigates to accounts.google.com in-page. Google's server-side
-      // detection still blocks it.  We intercept and open auth in a popup
-      // BrowserWindow (like Claude does) which works reliably.
+      // ── Intercept in-page auth navigation ───────────────────────────────
+      // Some AI sites navigate to their auth provider in-page, which gets
+      // blocked by server-side detection.  We intercept and open auth in a
+      // popup BrowserWindow (same approach that works for Claude).
       contents.on('will-navigate', (event, url) => {
-        if (url.includes('accounts.google.com')) {
+        const isAuthURL =
+          url.includes('accounts.google.com') ||
+          url.includes('auth0.openai.com') ||
+          url.includes('auth.openai.com') ||
+          url.includes('login.live.com');
+
+        if (isAuthURL) {
           event.preventDefault();
 
-          const partition = getPartitionForContents(contents) || 'persist:gemini';
+          const partition = getPartitionForContents(contents) || 'persist:chatgpt';
 
           const authWin = new BrowserWindow({
             width: 500,
@@ -106,6 +112,7 @@ export function setupAISessions(): void {
             const isBack =
               navUrl.includes('gemini.google.com') ||
               navUrl.includes('chatgpt.com') ||
+              navUrl.includes('chat.openai.com') ||
               navUrl.includes('claude.ai');
             if (isBack) {
               // Auth done — reload the webview so it picks up the new cookies
