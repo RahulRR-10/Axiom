@@ -81,6 +81,8 @@ export function setupAISessions(): void {
       // Some AI sites navigate to their auth provider in-page, which gets
       // blocked by server-side detection.  We intercept and open auth in a
       // popup BrowserWindow (same approach that works for Claude).
+      let authPopupOpen = false; // Guard: prevent multiple popups
+
       contents.on('will-navigate', (event, url) => {
         const isAuthURL =
           url.includes('accounts.google.com') ||
@@ -88,8 +90,9 @@ export function setupAISessions(): void {
           url.includes('auth.openai.com') ||
           url.includes('login.live.com');
 
-        if (isAuthURL) {
+        if (isAuthURL && !authPopupOpen) {
           event.preventDefault();
+          authPopupOpen = true;
 
           const partition = getPartitionForContents(contents) || 'persist:chatgpt';
 
@@ -107,22 +110,36 @@ export function setupAISessions(): void {
           authWin.webContents.setUserAgent(CHROME_UA);
           authWin.loadURL(url);
 
-          // Auto-close the popup when auth redirects back to an AI site.
-          // Use did-navigate (not will-navigate) because HTTP 302 redirect
-          // chains (which ChatGPT uses) don't fire will-navigate.
-          const checkAndClose = (_ev: unknown, navUrl: string): void => {
-            const isBack =
-              navUrl.includes('gemini.google.com') ||
-              navUrl.includes('chatgpt.com') ||
-              navUrl.includes('chat.openai.com') ||
-              navUrl.includes('claude.ai');
-            if (isBack) {
-              authWin.close();
-              contents.reload();
-            }
+          // Helper: check if a URL's HOSTNAME belongs to an AI site.
+          // IMPORTANT: Must check hostname only, NOT the full URL string,
+          // because auth URLs contain AI site in query params, e.g.
+          // accounts.google.com/signin?continue=https://gemini.google.com/
+          const AI_HOSTNAMES = [
+            'gemini.google.com',
+            'chatgpt.com',
+            'chat.openai.com',
+            'claude.ai',
+          ];
+          const isAISiteURL = (u: string): boolean => {
+            try {
+              const hostname = new URL(u).hostname;
+              return AI_HOSTNAMES.some(h => hostname === h || hostname.endsWith('.' + h));
+            } catch { return false; }
           };
-          authWin.webContents.on('will-navigate', checkAndClose as never);
-          authWin.webContents.on('did-navigate', checkAndClose as never);
+
+          // Auto-close when the popup actually lands on an AI site page
+          // (auth complete → final redirect back to the service)
+          authWin.webContents.on('did-navigate', (_ev, navUrl) => {
+            if (isAISiteURL(navUrl)) {
+              authWin.close();
+            }
+          });
+
+          // When popup closes (for any reason), reload webview + reset guard
+          authWin.on('closed', () => {
+            authPopupOpen = false;
+            try { contents.reload(); } catch { /* webview may be destroyed */ }
+          });
         }
       });
     }
