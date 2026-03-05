@@ -107,19 +107,22 @@ export function setupAISessions(): void {
           authWin.webContents.setUserAgent(CHROME_UA);
           authWin.loadURL(url);
 
-          // Auto-close the popup when auth redirects back to an AI site
-          authWin.webContents.on('will-navigate', (_ev, navUrl) => {
+          // Auto-close the popup when auth redirects back to an AI site.
+          // Use did-navigate (not will-navigate) because HTTP 302 redirect
+          // chains (which ChatGPT uses) don't fire will-navigate.
+          const checkAndClose = (_ev: unknown, navUrl: string): void => {
             const isBack =
               navUrl.includes('gemini.google.com') ||
               navUrl.includes('chatgpt.com') ||
               navUrl.includes('chat.openai.com') ||
               navUrl.includes('claude.ai');
             if (isBack) {
-              // Auth done — reload the webview so it picks up the new cookies
               authWin.close();
               contents.reload();
             }
-          });
+          };
+          authWin.webContents.on('will-navigate', checkAndClose as never);
+          authWin.webContents.on('did-navigate', checkAndClose as never);
         }
       });
     }
