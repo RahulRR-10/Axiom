@@ -89,7 +89,8 @@ const electronAPI = {
 
   renameNote: (vaultPath: string, noteId: string, newTitle: string): Promise<NoteSummary> =>
     ipcRenderer.invoke(NOTES_CHANNELS.RENAME, vaultPath, noteId, newTitle),
-
+  exportNotePdf: (html: string, mdFilePath: string, vaultPath: string): Promise<string> =>
+    ipcRenderer.invoke(NOTES_CHANNELS.EXPORT_PDF, html, mdFilePath, vaultPath),
   // ── Misc ─────────────────────────────────────────────────────────────────
   openExternal: (url: string): void => {
     void ipcRenderer.invoke('shell:openExternal', url);

@@ -36,6 +36,7 @@ declare global {
       deleteNote: (vaultPath: string, noteId: string) => Promise<{ ok: boolean }>;
       moveNote: (vaultPath: string, noteId: string, newDirectory: string) => Promise<NoteSummary>;
       renameNote: (vaultPath: string, noteId: string, newTitle: string) => Promise<NoteSummary>;
+      exportNotePdf: (html: string, mdFilePath: string, vaultPath: string) => Promise<string>;
 
       // ── Misc ───────────────────────────────────────────────────────────
       openExternal: (url: string) => void;

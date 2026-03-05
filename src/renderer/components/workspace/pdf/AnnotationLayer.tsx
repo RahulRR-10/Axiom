@@ -443,24 +443,17 @@ export const AnnotationLayer: React.FC<Props> = ({
           }}
           onClick={e => e.stopPropagation()}
         >
-          <input
+          <textarea
             autoFocus
-            type="text"
+            rows={1}
             value={textboxEdit.content}
             onChange={e => setTextboxEdit(prev => prev ? { ...prev, content: e.target.value } : prev)}
             onKeyDown={e => {
-              if (e.key === 'Enter' && textboxEdit.content.trim()) {
-                const ann: TextboxAnnotation = {
-                  id: uuidv4(), file_id: fileId, page, type: 'textbox',
-                  x: textboxEdit.x, y: textboxEdit.y,
-                  content: textboxEdit.content, color: textColorRef.current, fontSize: fontSizeRef.current,
-                };
-                window.electronAPI.saveAnnotation(vaultPath, ann)
-                  .then(() => { setTextboxEdit(null); onAnnotationSaved(); })
-                  .catch(console.error);
-              } else if (e.key === 'Escape') {
+              if (e.key === 'Escape') {
+                e.preventDefault();
                 setTextboxEdit(null);
               }
+              // Allow Enter as a newline — do not commit on Enter
             }}
             onBlur={() => {
               if (textboxEdit.content.trim()) {
@@ -487,6 +480,8 @@ export const AnnotationLayer: React.FC<Props> = ({
               padding: '4px 8px',
               outline: 'none',
               minWidth: '150px',
+              resize: 'both',
+              overflow: 'auto',
             }}
           />
         </div>

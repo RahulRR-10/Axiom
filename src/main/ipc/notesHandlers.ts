@@ -1,12 +1,14 @@
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 
-import { ipcMain } from 'electron';
+import { BrowserWindow, ipcMain } from 'electron';
 import { v4 as uuidv4 } from 'uuid';
 
 import { NOTES_CHANNELS } from '../../shared/ipc/channels';
 import type { NoteDetail, NoteSummary } from '../../shared/types';
 import { getDb } from '../database/schema';
+import { broadcastFileChanged } from '../vault/vaultWatcher';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -157,8 +159,28 @@ export function registerNotesHandlers(): void {
         NOTES_CHANNELS.UPDATE,
         async (_event, vaultPath: string, noteId: string, content: string) => {
             const db = getDb(vaultPath);
-            const row = db.prepare('SELECT * FROM notes WHERE id = ?').get(noteId) as NoteRow | undefined;
-            if (!row) throw new Error(`Note ${noteId} not found`);
+            let row = db.prepare('SELECT * FROM notes WHERE id = ?').get(noteId) as NoteRow | undefined;
+
+            // Note record may not exist yet if readNote threw during initial load.
+            // Try to find via the files table so we can still write to disk.
+            if (!row) {
+                const fileRow = db.prepare('SELECT path FROM files WHERE id = ?').get(noteId) as { path: string } | undefined;
+                if (fileRow?.path) {
+                    assertInsideVault(vaultPath, fileRow.path);
+                    assertMd(fileRow.path);
+                    fs.mkdirSync(path.dirname(fileRow.path), { recursive: true });
+                    fs.writeFileSync(fileRow.path, content, 'utf-8');
+                    // Lazily create the notes record so future saves use it
+                    const now = Math.floor(Date.now() / 1000);
+                    const title = path.basename(fileRow.path, '.md');
+                    db.prepare(`
+                        INSERT OR IGNORE INTO notes (id, title, content, file_path, subject, source_file_id, source_page, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, ?)
+                    `).run(noteId, title, content, fileRow.path, now, now);
+                    return;
+                }
+                throw new Error(`Note ${noteId} not found`);
+            }
 
             // Write to disk
             if (row.file_path) {
@@ -252,6 +274,46 @@ export function registerNotesHandlers(): void {
 
             const updated = db.prepare('SELECT * FROM notes WHERE id = ?').get(noteId) as NoteRow;
             return rowToSummary(updated);
+        },
+    );
+
+    // ── notes:exportPdf ──────────────────────────────────────────────────────────
+    ipcMain.handle(
+        NOTES_CHANNELS.EXPORT_PDF,
+        async (_event, html: string, mdFilePath: string, vaultPath: string): Promise<string> => {
+            const pdfPath = mdFilePath.replace(/\.md$/i, '.pdf');
+
+            // Write the full HTML document to a temp file so the hidden window
+            // can load it via a file:// URL (avoids data: URL size limits).
+            const tmpFile = path.join(os.tmpdir(), `axiom-pdf-${uuidv4()}.html`);
+            fs.writeFileSync(tmpFile, html, 'utf-8');
+
+            const win = new BrowserWindow({
+                show: false,
+                width: 1050,
+                height: 1400,
+                webPreferences: { nodeIntegration: false, contextIsolation: true },
+            });
+
+            try {
+                await win.loadFile(tmpFile);
+                const pdfData = await win.webContents.printToPDF({
+                    printBackground: true,
+                    pageSize: 'A4',
+                    margins: { top: 1, bottom: 1, left: 1, right: 1 },
+                });
+                fs.writeFileSync(pdfPath, pdfData);
+
+                // Broadcast immediately so the vault sidebar picks up the new
+                // file via a filesystem refresh. The watcher will index it in
+                // the background.
+                broadcastFileChanged(vaultPath);
+
+                return pdfPath;
+            } finally {
+                win.destroy();
+                try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
+            }
         },
     );
 }

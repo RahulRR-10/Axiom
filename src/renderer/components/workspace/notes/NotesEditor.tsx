@@ -93,10 +93,12 @@ const TOOLBAR_ACTIONS: ToolbarAction[] = [
 
 export const NotesEditor: React.FC<NotesEditorProps> = ({ filePath, noteId, vaultPath }) => {
     const editorRef = useRef<HTMLDivElement>(null);
+    const readViewRef = useRef<HTMLDivElement>(null);
     const viewRef = useRef<EditorView | null>(null);
     const [mode, setMode] = useState<ViewMode>('write');
     const [content, setContent] = useState('');
     const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+    const [pdfStatus, setPdfStatus] = useState<'idle' | 'exporting' | 'done' | 'error'>('idle');
     const [loaded, setLoaded] = useState(false);
     const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const contentRef = useRef(content);
@@ -258,7 +260,91 @@ export const NotesEditor: React.FC<NotesEditorProps> = ({ filePath, noteId, vaul
         view.focus();
     }, []);
 
-    // ── Render ──────────────────────────────────────────────────────────────
+    // ── PDF export ──────────────────────────────────────────────────────────
+    const handleExportPdf = useCallback(async () => {
+        setPdfStatus('exporting');
+
+        // Give React a paint to ensure the hidden read view is up to date
+        await new Promise<void>((resolve) => setTimeout(resolve, 80));
+
+        const bodyHtml = readViewRef.current?.innerHTML ?? '';
+
+        // Collect all stylesheets active in this renderer (includes KaTeX CSS etc.)
+        // Only extract KaTeX CSS — we need it for math rendering but we must
+        // NOT include the app's dark-mode/overflow/height styles or the PDF
+        // will show only one page with gray text.
+        const katexCSS = Array.from(document.styleSheets)
+            .flatMap((sheet) => {
+                try {
+                    return Array.from(sheet.cssRules).map((r) => r.cssText);
+                } catch {
+                    return [];
+                }
+            })
+            .filter((rule) => rule.includes('.katex') || rule.trimStart().startsWith('@font-face'))
+            .join('\n');
+
+        const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+/* ── KaTeX (math rendering) ── */
+${katexCSS}
+/* ── Document / typography ── */
+@page { size: A4; margin: 2cm; }
+html, body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif !important;
+  font-size: 15px !important;
+  line-height: 1.7 !important;
+  color: #1a1a1a !important;
+  background: #ffffff !important;
+  max-width: 760px;
+  margin: 0 auto !important;
+  padding: 0 !important;
+  height: auto !important;
+  overflow: visible !important;
+}
+* { box-sizing: border-box; }
+h1,h2,h3,h4,h5,h6 { margin-top: 1.4em !important; margin-bottom: 0.5em !important; font-weight: 600 !important; color: #111111 !important; }
+h1 { font-size: 2em !important; border-bottom: 1px solid #ddd; padding-bottom: 0.3em; }
+h2 { font-size: 1.5em !important; border-bottom: 1px solid #eee; padding-bottom: 0.2em; }
+h3 { font-size: 1.25em !important; }
+h4,h5,h6 { font-size: 1em !important; }
+p { margin: 0.8em 0 !important; color: #1a1a1a !important; }
+a { color: #0366d6 !important; }
+code { background: #f0f0f0 !important; padding: 0.15em 0.35em !important; border-radius: 3px; font-size: 0.88em !important; color: #1a1a1a !important; }
+pre { background: #f6f8fa !important; border: 1px solid #ddd !important; border-radius: 6px; padding: 1em !important; overflow-x: auto; page-break-inside: avoid; }
+pre code { background: none !important; padding: 0 !important; font-size: 0.85em !important; }
+blockquote { border-left: 4px solid #dfe2e5 !important; padding-left: 1em !important; margin-left: 0 !important; color: #6a737d !important; }
+table { border-collapse: collapse !important; width: 100% !important; margin: 1em 0 !important; page-break-inside: avoid; }
+th, td { border: 1px solid #dfe2e5 !important; padding: 0.5em 0.75em !important; color: #1a1a1a !important; }
+th { background: #f6f8fa !important; font-weight: 600 !important; }
+tr:nth-child(even) td { background: #fafafa !important; }
+img { max-width: 100% !important; }
+input[type="checkbox"] { margin-right: 0.4em; }
+hr { border: none !important; border-top: 1px solid #ddd !important; margin: 1.5em 0 !important; }
+ul, ol { padding-left: 1.5em !important; margin: 0.5em 0 !important; }
+li { margin: 0.2em 0 !important; color: #1a1a1a !important; }
+.task-list-item { list-style: none !important; margin-left: -1.5em !important; }
+</style>
+</head>
+<body>
+<div>${bodyHtml}</div>
+</body>
+</html>`;
+
+        try {
+            await window.electronAPI.exportNotePdf(html, filePath, vaultPath);
+            setPdfStatus('done');
+            setTimeout(() => setPdfStatus('idle'), 3000);
+        } catch (err) {
+            console.error('[NotesEditor] PDF export failed:', err);
+            setPdfStatus('error');
+            setTimeout(() => setPdfStatus('idle'), 3000);
+        }
+    }, [filePath]);
 
     if (!loaded) {
         return (
@@ -301,29 +387,41 @@ export const NotesEditor: React.FC<NotesEditorProps> = ({ filePath, noteId, vaul
                     {saveStatus === 'saving' ? '● Saving…' : saveStatus === 'saved' ? '✓ Saved' : ''}
                 </span>
 
-                {/* Mode toggle */}
-                <div className="notes-mode-toggle">
+                {/* Mode toggle + PDF export */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <div className="notes-mode-toggle">
+                        <button
+                            type="button"
+                            className={`notes-mode-btn ${mode === 'write' ? 'active' : ''}`}
+                            onClick={() => setMode('write')}
+                        >
+                            Write
+                        </button>
+                        <button
+                            type="button"
+                            className={`notes-mode-btn ${mode === 'read' ? 'active' : ''}`}
+                            onClick={() => setMode('read')}
+                        >
+                            Read
+                        </button>
+                    </div>
                     <button
                         type="button"
-                        className={`notes-mode-btn ${mode === 'write' ? 'active' : ''}`}
-                        onClick={() => setMode('write')}
+                        className="notes-mode-btn"
+                        title="Export to PDF (saved next to file)"
+                        disabled={pdfStatus === 'exporting'}
+                        onClick={() => { void handleExportPdf(); }}
+                        style={{ minWidth: '56px' }}
                     >
-                        Write
-                    </button>
-                    <button
-                        type="button"
-                        className={`notes-mode-btn ${mode === 'read' ? 'active' : ''}`}
-                        onClick={() => setMode('read')}
-                    >
-                        Read
+                        {pdfStatus === 'exporting' ? '⏳ PDF' : pdfStatus === 'done' ? '✓ PDF' : pdfStatus === 'error' ? '✗ PDF' : '↓ PDF'}
                     </button>
                 </div>
             </div>
 
             {/* ── Editor / Read view ── */}
-            <div className="notes-editor-area">
+            <div className={`notes-editor-area${mode === 'read' ? ' read-mode' : ''}`}>
                 {mode === 'read' ? (
-                    <div className="notes-read-view">
+                    <div className="notes-read-view" ref={readViewRef}>
                         <ReactMarkdown
                             remarkPlugins={[remarkGfm, remarkMath]}
                             rehypePlugins={[rehypeKatex, rehypeRaw]}
@@ -332,7 +430,23 @@ export const NotesEditor: React.FC<NotesEditorProps> = ({ filePath, noteId, vaul
                         </ReactMarkdown>
                     </div>
                 ) : (
-                    <div ref={editorRef} style={{ height: '100%' }} />
+                    // Keep a hidden read view mounted so PDF export can capture it
+                    // even when triggered from write mode.
+                    <>
+                        <div ref={editorRef} style={{ height: '100%' }} />
+                        <div
+                            className="notes-read-view"
+                            ref={readViewRef}
+                            style={{ display: 'none', position: 'absolute', pointerEvents: 'none' }}
+                        >
+                            <ReactMarkdown
+                                remarkPlugins={[remarkGfm, remarkMath]}
+                                rehypePlugins={[rehypeKatex, rehypeRaw]}
+                            >
+                                {content}
+                            </ReactMarkdown>
+                        </div>
+                    </>
                 )}
             </div>
         </div>

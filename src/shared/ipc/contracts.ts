@@ -77,6 +77,10 @@ export type NotesMoveResponse = NoteSummary;
 export type NotesRenameRequest = { vaultPath: string; noteId: string; newTitle: string };
 export type NotesRenameResponse = NoteSummary;
 
+// ── notes:exportPdf ──────────────────────────────────────────────────────────
+export type NotesExportPdfRequest = { html: string; mdFilePath: string };
+export type NotesExportPdfResponse = string; // absolute path of the written PDF
+
 // ── annotation:save ──────────────────────────────────────────────────────────
 export type AnnotationSaveRequest = { vaultPath: string; annotation: Annotation };
 export type AnnotationSaveResponse = void;

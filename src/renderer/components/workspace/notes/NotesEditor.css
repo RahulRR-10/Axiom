@@ -98,6 +98,12 @@
     min-height: 0;
     overflow: hidden;
     position: relative;
+    background: #141414;
+}
+
+/* Read mode: scrollbar lives on the area wrapper, not inside the padded content */
+.notes-editor-area.read-mode {
+    overflow-y: auto;
 }
 
 .notes-editor-area .cm-editor {
@@ -113,7 +119,7 @@
 .notes-editor-area .cm-editor .cm-content {
     max-width: 750px;
     margin: 0 auto;
-    padding: 40px 24px 80px;
+    padding: 30px 18px 60px;
 }
 
 .notes-editor-area .cm-editor.cm-focused {
@@ -145,11 +151,9 @@
 /* ── Read mode ────────────────────────────────────────────────────────────── */
 
 .notes-read-view {
-    height: 100%;
-    overflow-y: auto;
     max-width: 750px;
     margin: 0 auto;
-    padding: 40px 24px 80px;
+    padding: 30px 18px 60px;
     color: #d4d4d4;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     font-size: 15px;

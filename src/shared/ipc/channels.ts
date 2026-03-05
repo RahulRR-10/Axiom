@@ -27,6 +27,7 @@ export const NOTES_CHANNELS = {
   DELETE: 'notes:delete',
   MOVE: 'notes:move',
   RENAME: 'notes:rename',
+  EXPORT_PDF: 'notes:exportPdf',
 } as const;
 
 export const ANNOTATION_CHANNELS = {

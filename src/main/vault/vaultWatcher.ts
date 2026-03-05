@@ -53,19 +53,19 @@ export function stopWatching(): void {
 async function handleAdd(filePath: string, vaultPath: string): Promise<void> {
   try {
     await indexFile(filePath, vaultPath);
-    broadcastFileChanged(vaultPath);
   } catch (err) {
     console.error('[watcher] Failed to index new file:', filePath, err);
   }
+  broadcastFileChanged(vaultPath);
 }
 
 async function handleChange(filePath: string, vaultPath: string): Promise<void> {
   try {
     await indexFile(filePath, vaultPath);
-    broadcastFileChanged(vaultPath);
   } catch (err) {
     console.error('[watcher] Failed to re-index changed file:', filePath, err);
   }
+  broadcastFileChanged(vaultPath);
 }
 
 async function handleUnlink(filePath: string, vaultPath: string): Promise<void> {
@@ -84,7 +84,7 @@ async function handleUnlink(filePath: string, vaultPath: string): Promise<void> 
   }
 }
 
-function broadcastFileChanged(vaultPath: string): void {
+export function broadcastFileChanged(vaultPath: string): void {
   for (const win of BrowserWindow.getAllWindows()) {
     win.webContents.send(VAULT_CHANNELS.FILE_CHANGED, { vaultPath });
   }
