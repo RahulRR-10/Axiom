@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from "react";
 
 // ── AI service definitions ───────────────────────────────────────────────────
 
@@ -12,32 +12,32 @@ type AIService = {
 
 const AI_SERVICES: AIService[] = [
   {
-    id: 'chatgpt',
-    label: 'ChatGPT',
-    url: 'https://chatgpt.com',
-    partition: 'persist:chatgpt',
-    icon: '⬡',
+    id: "chatgpt",
+    label: "ChatGPT",
+    url: "https://chatgpt.com",
+    partition: "persist:chatgpt",
+    icon: "⬡",
   },
   {
-    id: 'gemini',
-    label: 'Gemini',
-    url: 'https://gemini.google.com',
-    partition: 'persist:gemini',
-    icon: '◈',
+    id: "gemini",
+    label: "Gemini",
+    url: "https://gemini.google.com",
+    partition: "persist:gemini",
+    icon: "◈",
   },
   {
-    id: 'claude',
-    label: 'Claude',
-    url: 'https://claude.ai',
-    partition: 'persist:claude',
-    icon: '◉',
+    id: "claude",
+    label: "Claude",
+    url: "https://claude.ai",
+    partition: "persist:claude",
+    icon: "◉",
   },
 ];
 
 // ── Component ────────────────────────────────────────────────────────────────
 
 export const AIPanel: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<string>('chatgpt');
+  const [activeTab, setActiveTab] = useState<string>("chatgpt");
   const [preloadURL, setPreloadURL] = useState<string | null>(null);
   const webviewRefs = useRef<Record<string, Electron.WebviewTag | null>>({});
 
@@ -72,8 +72,8 @@ export const AIPanel: React.FC = () => {
               text-xs font-medium transition-colors
               ${
                 activeTab === svc.id
-                  ? 'text-[#e0e0e0] border-b-2 border-[#4a9eff] bg-[#1e1e1e]'
-                  : 'text-[#6a6a6a] hover:text-[#9a9a9a] hover:bg-[#222]'
+                  ? "text-[#e0e0e0] border-b-2 border-[#4a9eff] bg-[#1e1e1e]"
+                  : "text-[#6a6a6a] hover:text-[#9a9a9a] hover:bg-[#222]"
               }
             `}
           >
@@ -89,7 +89,7 @@ export const AIPanel: React.FC = () => {
           <webview
             key={svc.id}
             ref={(el) => {
-              webviewRefs.current[svc.id] = el;
+              webviewRefs.current[svc.id] = el as unknown as Electron.WebviewTag | null;
             }}
             src={svc.url}
             partition={svc.partition}
@@ -98,13 +98,13 @@ export const AIPanel: React.FC = () => {
             // window.chrome, plugins, WebGL, etc.) run in the PAGE context, not
             // an isolated one.  Without this, Google sees the real Electron values.
             webpreferences="contextIsolation=no"
-            allowpopups={'true' as unknown as boolean}
+            allowpopups={"true" as unknown as boolean}
             style={{
-              position: 'absolute',
+              position: "absolute",
               inset: 0,
-              width: '100%',
-              height: '100%',
-              display: activeTab === svc.id ? 'flex' : 'none',
+              width: "100%",
+              height: "100%",
+              display: activeTab === svc.id ? "flex" : "none",
             }}
           />
         ))}
