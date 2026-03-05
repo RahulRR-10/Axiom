@@ -40,6 +40,9 @@ declare global {
       // ── Misc ───────────────────────────────────────────────────────────
       openExternal: (url: string) => void;
 
+      // ── AI panel ─────────────────────────────────────────────────────────
+      getAIPreloadPath: () => Promise<string>;
+
       // ── Window controls ────────────────────────────────────────────────
       minimizeWindow: () => Promise<void>;
       toggleMaximizeWindow: () => Promise<void>;

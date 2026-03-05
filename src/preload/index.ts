@@ -95,6 +95,10 @@ const electronAPI = {
     void ipcRenderer.invoke('shell:openExternal', url);
   },
 
+  // ── AI panel ─────────────────────────────────────────────────────────────
+  getAIPreloadPath: (): Promise<string> =>
+    ipcRenderer.invoke('ai:getPreloadPath'),
+
   // ── Window controls ──────────────────────────────────────────────────────
   minimizeWindow: (): Promise<void> =>
     ipcRenderer.invoke(WINDOW_CHANNELS.MINIMIZE),

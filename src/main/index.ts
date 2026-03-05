@@ -1,9 +1,10 @@
-import { app, BrowserWindow, ipcMain, session } from 'electron';
+import { app, BrowserWindow, ipcMain } from 'electron';
 
 import { registerVaultHandlers } from './ipc/vaultHandlers';
 import { registerSearchHandlers } from './ipc/searchHandlers';
 import { registerAnnotationHandlers } from './ipc/annotationHandlers';
 import { registerNotesHandlers } from './ipc/notesHandlers';
+import { setupAISessions, writeWebviewPreload } from './ai/spoofing';
 
 declare const MAIN_WINDOW_WEBPACK_ENTRY: string;
 declare const MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY: string;
@@ -93,7 +94,12 @@ app.whenReady().then(() => {
   registerSearchHandlers();
   registerAnnotationHandlers();
   registerNotesHandlers();
-  setupWebviewSessions();
+
+  // AI webview spoofing — rewrite headers + write fingerprint preload to disk
+  setupAISessions();
+  const aiPreloadURL = writeWebviewPreload();
+  ipcMain.handle('ai:getPreloadPath', () => aiPreloadURL);
+
   createWindow();
 });
 
@@ -109,16 +115,4 @@ app.on('activate', () => {
   }
 });
 
-// ── Webview session CSP tweaks (Phase 6) ─────────────────────────────────────
-function setupWebviewSessions(): void {
-  const partitions = ['persist:chatgpt', 'persist:claude', 'persist:gemini'];
-  for (const partition of partitions) {
-    session.fromPartition(partition).webRequest.onHeadersReceived((details, callback) => {
-      const headers = { ...details.responseHeaders };
-      // Remove X-Frame-Options so the page can be embedded in a webview
-      delete headers['x-frame-options'];
-      delete headers['X-Frame-Options'];
-      callback({ responseHeaders: headers });
-    });
-  }
-}
+

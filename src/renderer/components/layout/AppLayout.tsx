@@ -1,61 +1,108 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from "react";
 
-import { Settings, Search } from 'lucide-react';
-import { AIPanel } from '../ai/AIPanel';
-import { SearchPanel } from '../search/SearchPanel';
-import { VaultSidebar } from '../vault/VaultSidebar';
-import { Workspace } from '../workspace/Workspace';
-import { WindowControlsToolbar } from './WindowControlsToolbar';
+import { Settings, Search } from "lucide-react";
+import { AIPanel } from "../ai/AIPanel";
+import { SearchPanel } from "../search/SearchPanel";
+import { VaultSidebar } from "../vault/VaultSidebar";
+import { Workspace } from "../workspace/Workspace";
+import { WindowControlsToolbar } from "./WindowControlsToolbar";
+
+const AI_MIN_WIDTH = 200;
+const AI_MAX_WIDTH = 700;
 
 export const AppLayout: React.FC = () => {
   const [vaultCollapsed, setVaultCollapsed] = useState<boolean>(false);
-  const [aiCollapsed, setAiCollapsed]       = useState<boolean>(false);
-  const [vaultPath, setVaultPath]           = useState<string | null>(null);
+  const [aiCollapsed, setAiCollapsed] = useState<boolean>(false);
+  const [vaultPath, setVaultPath] = useState<string | null>(null);
+  const [aiWidth, setAiWidth] = useState<number>(340);
+  const [isResizingAI, setIsResizingAI] = useState<boolean>(false);
+  const isDraggingAI = useRef<boolean>(false);
+  const dragStartX = useRef<number>(0);
+  const dragStartW = useRef<number>(340);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
 
+  const onAIResizeMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      isDraggingAI.current = true;
+      setIsResizingAI(true);
+      dragStartX.current = e.clientX;
+      dragStartW.current = aiWidth;
+
+      const onMouseMove = (ev: MouseEvent): void => {
+        if (!isDraggingAI.current) return;
+        const delta = dragStartX.current - ev.clientX;
+        const newW = Math.min(
+          AI_MAX_WIDTH,
+          Math.max(AI_MIN_WIDTH, dragStartW.current + delta),
+        );
+        setAiWidth(newW);
+      };
+
+      const onMouseUp = (): void => {
+        isDraggingAI.current = false;
+        setIsResizingAI(false);
+        window.removeEventListener("mousemove", onMouseMove);
+        window.removeEventListener("mouseup", onMouseUp);
+      };
+
+      window.addEventListener("mousemove", onMouseMove);
+      window.addEventListener("mouseup", onMouseUp);
+    },
+    [aiWidth],
+  );
+
   const handleOpenNewVault = useCallback(() => {
-    window.dispatchEvent(new CustomEvent('triggerOpenVault'));
+    window.dispatchEvent(new CustomEvent("triggerOpenVault"));
   }, []);
 
   /* ── Ctrl+K → focus search ── */
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
         searchInputRef.current?.focus();
-        window.dispatchEvent(new CustomEvent('spotlight:open'));
+        window.dispatchEvent(new CustomEvent("spotlight:open"));
       }
     };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
-  const noDragStyle = { WebkitAppRegion: 'no-drag' } as React.CSSProperties;
+  const noDragStyle = { WebkitAppRegion: "no-drag" } as React.CSSProperties;
 
   return (
     <div className="h-screen w-screen overflow-hidden flex flex-col bg-[#141414] text-[#d4d4d4]">
-
       {/* ── Global title bar ── search, Axiom, settings, window controls */}
       <header
-        style={{
-          background: '#1a1a1a',
-          borderBottom: '1px solid #2a2a2a',
-          WebkitAppRegion: 'drag',
-        } as React.CSSProperties}
+        style={
+          {
+            background: "#1a1a1a",
+            borderBottom: "1px solid #2a2a2a",
+            WebkitAppRegion: "drag",
+          } as React.CSSProperties
+        }
         className="h-10 shrink-0 w-full flex items-center px-4"
       >
         {/* Left: Axiom branding */}
-        <div className="text-xs text-[#8a8a8a] shrink-0 mr-4 select-none">Axiom</div>
+        <div className="text-xs text-[#8a8a8a] shrink-0 mr-4 select-none">
+          Axiom
+        </div>
 
         {/* Center: Search bar */}
         <div className="flex-1 flex justify-center" style={noDragStyle}>
           <div className="relative w-full max-w-[400px]">
-            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#5a5a5a] pointer-events-none" />
+            <Search
+              size={14}
+              className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#5a5a5a] pointer-events-none"
+            />
             <input
               ref={searchInputRef}
               placeholder="Search your vault... (Ctrl+K)"
-              onClick={() => window.dispatchEvent(new CustomEvent('spotlight:open'))}
+              onClick={() =>
+                window.dispatchEvent(new CustomEvent("spotlight:open"))
+              }
               readOnly
               className="w-full rounded-md bg-[#141414] border border-[#2a2a2a] pl-8 pr-3 py-1.5 text-sm text-[#d4d4d4] outline-none focus:border-[#3a3a3a] cursor-pointer"
             />
@@ -76,15 +123,18 @@ export const AppLayout: React.FC = () => {
       </header>
 
       {/* ── Three-panel row ── fills remaining height */}
-      <div className="flex flex-1 min-h-0 overflow-hidden">
-
+      <div className="flex flex-1 min-h-0 overflow-hidden" style={{ position: 'relative' }}>
+        {/* Drag overlay — blocks webviews/iframes from swallowing mouse events */}
+        {isResizingAI && (
+          <div style={{ position: 'absolute', inset: 0, zIndex: 9999, cursor: 'col-resize' }} />
+        )}
         {/* Vault sidebar */}
         <section
           style={{
-            width: vaultCollapsed ? '36px' : '240px',
-            transition: 'width 200ms ease-in-out',
-            background: '#1e1e1e',
-            borderRight: '1px solid #2a2a2a',
+            width: vaultCollapsed ? "36px" : "240px",
+            transition: "width 200ms ease-in-out",
+            background: "#1e1e1e",
+            borderRight: "1px solid #2a2a2a",
           }}
           className="h-full overflow-hidden shrink-0 flex flex-col"
         >
@@ -111,7 +161,16 @@ export const AppLayout: React.FC = () => {
                   aria-label="Open vault folder"
                   title="Open / switch vault"
                 >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
                     <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
                     <line x1="12" y1="10" x2="12" y2="16" />
                     <line x1="9" y1="13" x2="15" y2="13" />
@@ -131,7 +190,7 @@ export const AppLayout: React.FC = () => {
           {/* Sidebar content — always mounted, hidden when collapsed */}
           <div
             className="flex-1 overflow-hidden"
-            style={{ display: vaultCollapsed ? 'none' : 'block' }}
+            style={{ display: vaultCollapsed ? "none" : "block" }}
           >
             <VaultSidebar onVaultOpen={setVaultPath} />
           </div>
@@ -140,8 +199,8 @@ export const AppLayout: React.FC = () => {
         {/* Workspace */}
         <main
           style={{
-            background: '#141414',
-            borderRight: '1px solid #2a2a2a',
+            background: "#141414",
+            borderRight: "1px solid #2a2a2a",
           }}
           className="h-full overflow-hidden flex-1 min-w-0"
         >
@@ -151,12 +210,29 @@ export const AppLayout: React.FC = () => {
         {/* AI panel */}
         <section
           style={{
-            width: aiCollapsed ? '36px' : '340px',
-            transition: 'width 200ms ease-in-out',
-            background: '#1e1e1e',
+            width: aiCollapsed ? "36px" : `${aiWidth}px`,
+            transition: isResizingAI ? "none" : "width 200ms ease-in-out",
+            background: "#1e1e1e",
+            position: "relative",
           }}
           className="h-full overflow-hidden shrink-0 flex flex-col"
         >
+          {/* Resize handle */}
+          {!aiCollapsed && (
+            <div
+              onMouseDown={onAIResizeMouseDown}
+              style={{
+                position: "absolute",
+                left: 0,
+                top: 0,
+                bottom: 0,
+                width: "4px",
+                cursor: "col-resize",
+                zIndex: 10,
+              }}
+              className="hover:bg-[#4a9eff]/40"
+            />
+          )}
           {aiCollapsed ? (
             <div className="h-full w-full flex flex-col">
               <div className="h-10 border-b border-[#2a2a2a] flex items-center justify-center">
@@ -189,7 +265,6 @@ export const AppLayout: React.FC = () => {
             </div>
           )}
         </section>
-
       </div>
 
       {/* Search panel modal — vaultPath may be null before vault opened */}
