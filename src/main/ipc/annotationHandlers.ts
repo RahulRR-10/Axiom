@@ -1,3 +1,5 @@
+import * as path from 'path';
+
 import { BrowserWindow, ipcMain } from 'electron';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -34,9 +36,12 @@ export function registerAnnotationHandlers(): void {
       );
 
       // Broadcast to other windows so other viewers refresh
+      // Resolve file_id → filePath so the sync key is always a normalized path
+      const fileRow = db.prepare('SELECT path FROM files WHERE id = ?').get(annotation.file_id) as { path: string } | undefined;
+      const syncPath = fileRow ? path.normalize(fileRow.path).toLowerCase() : annotation.file_id;
       for (const win of BrowserWindow.getAllWindows()) {
         if (win.webContents.id !== event.sender.id) {
-          win.webContents.send('annotations:saved', annotation.file_id);
+          win.webContents.send('annotations:saved', syncPath);
         }
       }
 

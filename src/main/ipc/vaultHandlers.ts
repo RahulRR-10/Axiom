@@ -103,10 +103,10 @@ function handleWriteFile(filePath: string, data: Buffer, senderId?: number): voi
   for (const win of BrowserWindow.getAllWindows()) {
     if (senderId != null && win.webContents.id === senderId) continue;
     if (filePath.endsWith('.md')) {
-      win.webContents.send('notes:saved', '', filePath);
+      win.webContents.send('notes:saved', path.normalize(filePath).toLowerCase());
     }
     if (filePath.endsWith('.pdf')) {
-      win.webContents.send('pdf:fileChanged', filePath);
+      win.webContents.send('pdf:fileChanged', path.normalize(filePath).toLowerCase());
     }
   }
 }

@@ -78,8 +78,8 @@ const electronAPI = {
   readNote: (vaultPath: string, noteId: string): Promise<NoteDetail> =>
     ipcRenderer.invoke(NOTES_CHANNELS.READ, vaultPath, noteId),
 
-  updateNote: (vaultPath: string, noteId: string, content: string): Promise<void> =>
-    ipcRenderer.invoke(NOTES_CHANNELS.UPDATE, vaultPath, noteId, content),
+  updateNote: (vaultPath: string, noteId: string, content: string, lastLoadedAt?: number): Promise<{ ok: true } | { ok: false; reason: string }> =>
+    ipcRenderer.invoke(NOTES_CHANNELS.UPDATE, vaultPath, noteId, content, lastLoadedAt),
 
   listNotes: (vaultPath: string): Promise<NoteSummary[]> =>
     ipcRenderer.invoke(NOTES_CHANNELS.LIST, vaultPath),
@@ -130,17 +130,17 @@ const electronAPI = {
   broadcastAnnotationsSaved: (fileId: string): void =>
     ipcRenderer.send('annotations:broadcastSaved', fileId),
 
-  onAnnotationsSaved: (callback: (fileId: string) => void): (() => void) => {
-    const listener = (_: unknown, fileId: string): void => callback(fileId);
+  onAnnotationsSaved: (callback: (savedPath: string) => void): (() => void) => {
+    const listener = (_: unknown, savedPath: string): void => callback(savedPath);
     ipcRenderer.on('annotations:saved', listener);
     return () => ipcRenderer.removeListener('annotations:saved', listener);
   },
 
-  broadcastNoteSaved: (noteId: string, filePath: string): void =>
-    ipcRenderer.send('notes:broadcastSaved', noteId, filePath),
+  broadcastNoteSaved: (filePath: string): void =>
+    ipcRenderer.send('notes:broadcastSaved', filePath),
 
-  onNoteSaved: (callback: (noteId: string, filePath: string) => void): (() => void) => {
-    const listener = (_: unknown, noteId: string, filePath: string): void => callback(noteId, filePath);
+  onNoteSaved: (callback: (savedPath: string) => void): (() => void) => {
+    const listener = (_: unknown, savedPath: string): void => callback(savedPath);
     ipcRenderer.on('notes:saved', listener);
     return () => ipcRenderer.removeListener('notes:saved', listener);
   },

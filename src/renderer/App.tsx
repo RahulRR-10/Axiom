@@ -143,7 +143,7 @@ const SingleFileWindow: React.FC<{ filePath: string; fileType: string; vaultPath
   // Cross-window sync: close this child window when the same md file is saved elsewhere
   useEffect(() => {
     if (fileType !== 'md') return;
-    const unsub = window.electronAPI.onNoteSaved((_noteId, savedPath) => {
+    const unsub = window.electronAPI.onNoteSaved((savedPath) => {
       if (normalizePath(savedPath) === normalizePath(filePath)) {
         window.electronAPI.closeWindow();
       }
@@ -157,11 +157,11 @@ const SingleFileWindow: React.FC<{ filePath: string; fileType: string; vaultPath
     const unsub1 = window.electronAPI.onPdfFileChanged((changedPath) => {
       if (normalizePath(changedPath) === normalizePath(filePath)) setPdfNonce(Date.now());
     });
-    const unsub2 = window.electronAPI.onAnnotationsSaved((savedFileId) => {
-      if (savedFileId === fileId) setPdfNonce(Date.now());
+    const unsub2 = window.electronAPI.onAnnotationsSaved((savedPath) => {
+      if (normalizePath(savedPath) === normalizePath(filePath)) setPdfNonce(Date.now());
     });
     return () => { unsub1(); unsub2(); };
-  }, [filePath, fileType, fileId]);
+  }, [filePath, fileType]);
 
   const renderContent = () => {
     if (fileType === 'pdf') {

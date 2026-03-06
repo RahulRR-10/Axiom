@@ -386,20 +386,24 @@ export const PDFViewer: React.FC<Props> = ({
 
   /* ── Listen for annotation saves from other windows ───────────────────────── */
   useEffect(() => {
-    const unsub = window.electronAPI.onAnnotationsSaved((savedFileId) => {
-      if (savedFileId === effectiveFileId) {
+    const normalizedLocal = filePath.replace(/\\/g, '/').toLowerCase();
+    const unsub = window.electronAPI.onAnnotationsSaved((savedPath) => {
+      const normalizedSaved = savedPath.replace(/\\/g, '/').toLowerCase();
+      if (normalizedSaved === normalizedLocal) {
         pdfCache.delete(filePath);
         loadAnnotations();
         setPdfLoadNonce(n => n + 1);
       }
     });
     return unsub;
-  }, [effectiveFileId, filePath, loadAnnotations]);
+  }, [filePath, loadAnnotations]);
 
   /* ── Listen for PDF file changes from other windows ──────────────────────── */
   useEffect(() => {
+    const normalizedLocal = filePath.replace(/\\/g, '/').toLowerCase();
     const unsub = window.electronAPI.onPdfFileChanged((changedPath) => {
-      if (changedPath !== filePath) return;
+      const normalizedChanged = changedPath.replace(/\\/g, '/').toLowerCase();
+      if (normalizedChanged !== normalizedLocal) return;
       pdfCache.delete(filePath);
       setPdfLoadNonce(n => n + 1);
       loadAnnotations();

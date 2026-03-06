@@ -32,7 +32,7 @@ declare global {
       // ── Notes ──────────────────────────────────────────────────────────
       createNote: (vaultPath: string, targetDirectory: string, title: string, sourceFileId?: string, sourcePage?: number) => Promise<NoteSummary>;
       readNote: (vaultPath: string, noteId: string) => Promise<NoteDetail>;
-      updateNote: (vaultPath: string, noteId: string, content: string) => Promise<void>;
+      updateNote: (vaultPath: string, noteId: string, content: string, lastLoadedAt?: number) => Promise<{ ok: true } | { ok: false; reason: string }>;
       listNotes: (vaultPath: string) => Promise<NoteSummary[]>;
       deleteNote: (vaultPath: string, noteId: string) => Promise<{ ok: boolean }>;
       moveNote: (vaultPath: string, noteId: string, newDirectory: string) => Promise<NoteSummary>;
@@ -49,9 +49,9 @@ declare global {
       selectFolder: (defaultPath: string) => Promise<string | null>;
       openNewWindow: (filePath: string, fileType: string, vaultPath?: string) => Promise<void>;
       broadcastAnnotationsSaved: (fileId: string) => void;
-      onAnnotationsSaved: (callback: (fileId: string) => void) => () => void;
-      broadcastNoteSaved: (noteId: string, filePath: string) => void;
-      onNoteSaved: (callback: (noteId: string, filePath: string) => void) => () => void;
+      onAnnotationsSaved: (callback: (savedPath: string) => void) => () => void;
+      broadcastNoteSaved: (filePath: string) => void;
+      onNoteSaved: (callback: (savedPath: string) => void) => () => void;
       onPdfFileChanged: (callback: (filePath: string) => void) => () => void;
       createFolder: (folderPath: string) => Promise<void>;
       saveImage: (dirPath: string, fileName: string, data: Uint8Array) => Promise<string>;

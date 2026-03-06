@@ -365,7 +365,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ vaultPath }) => {
 
   // ── Cross-window sync: close md tab when saved elsewhere ───────────────
   useEffect(() => {
-    const unsub = window.electronAPI.onNoteSaved((_savedNoteId, savedFilePath) => {
+    const unsub = window.electronAPI.onNoteSaved((savedFilePath) => {
       const normalizedSaved = normalizePath(savedFilePath);
       setOpenFiles((prev) => {
         const file = prev.find((f) => normalizePath(f.filePath) === normalizedSaved && f.fileType === 'md');
@@ -401,19 +401,20 @@ export const Workspace: React.FC<WorkspaceProps> = ({ vaultPath }) => {
 
   // ── Cross-window sync: refresh pdf tab when annotations saved elsewhere ──
   useEffect(() => {
-    const unsub = window.electronAPI.onAnnotationsSaved((savedFileId) => {
+    const unsub = window.electronAPI.onAnnotationsSaved((savedPath) => {
+      const normalizedSaved = normalizePath(savedPath);
       setOpenFiles((prev) => {
-        const file = prev.find((f) => f.fileType === 'pdf' && f.fileId === savedFileId);
+        const file = prev.find((f) => f.fileType === 'pdf' && normalizePath(f.filePath) === normalizedSaved);
         if (!file) return prev;
         return prev.map((f) =>
-          f.fileType === 'pdf' && f.fileId === savedFileId
+          f.fileType === 'pdf' && normalizePath(f.filePath) === normalizedSaved
             ? { ...f, scrollNonce: Date.now() }
             : f,
         );
       });
     });
     return unsub;
-  }, []);
+  }, [normalizePath]);
 
   const handleDragStart = useCallback(
     (e: React.DragEvent, type: "tab" | "group", id: string) => {

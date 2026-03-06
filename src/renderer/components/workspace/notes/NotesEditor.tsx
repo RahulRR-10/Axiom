@@ -277,8 +277,10 @@ export const NotesEditor: React.FC<NotesEditorProps> = ({ filePath, noteId, vaul
     const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
     const [pdfStatus, setPdfStatus] = useState<'idle' | 'exporting' | 'done' | 'error'>('idle');
     const [loaded, setLoaded] = useState(false);
+    const [conflict, setConflict] = useState<{ pendingContent: string } | null>(null);
     const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const contentRef = useRef(content);
+    const lastLoadedAtRef = useRef<number>(Math.floor(Date.now() / 1000));
 
     const fileDir = useMemo(() => getFileDir(filePath), [filePath]);
     const noteName = useMemo(() => getNoteName(filePath), [filePath]);
@@ -299,6 +301,7 @@ export const NotesEditor: React.FC<NotesEditorProps> = ({ filePath, noteId, vaul
                 const note = await window.electronAPI.readNote(vaultPath, noteId);
                 if (!cancelled) {
                     setContent(note.content);
+                    lastLoadedAtRef.current = Math.floor(Date.now() / 1000);
                     setLoaded(true);
                 }
             } catch (err) {
@@ -309,6 +312,7 @@ export const NotesEditor: React.FC<NotesEditorProps> = ({ filePath, noteId, vaul
                     const text = new TextDecoder().decode(buf);
                     if (!cancelled) {
                         setContent(text);
+                        lastLoadedAtRef.current = Math.floor(Date.now() / 1000);
                         setLoaded(true);
                     }
                 } catch (err2) {
@@ -326,17 +330,26 @@ export const NotesEditor: React.FC<NotesEditorProps> = ({ filePath, noteId, vaul
     }, [filePath, noteId, vaultPath]);
 
     // ── Autosave ────────────────────────────────────────────────────────────
-    const triggerSave = useCallback((newContent: string) => {
+    const triggerSave = useCallback((newContent: string, forceOverwrite = false) => {
         if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
 
         saveTimerRef.current = setTimeout(async () => {
             setSaveStatus('saving');
             try {
                 if (noteId) {
-                    await window.electronAPI.updateNote(vaultPath, noteId, newContent);
+                    const loadedAt = forceOverwrite ? undefined : lastLoadedAtRef.current;
+                    const result = await window.electronAPI.updateNote(vaultPath, noteId, newContent, loadedAt);
+                    if (result && !result.ok && 'reason' in result && result.reason === 'conflict') {
+                        setConflict({ pendingContent: newContent });
+                        setSaveStatus('idle');
+                        return;
+                    }
+                    // Successful save — update lastLoadedAt so future saves use the new baseline
+                    lastLoadedAtRef.current = Math.floor(Date.now() / 1000);
                 } else {
                     const encoder = new TextEncoder();
                     await window.electronAPI.writeFile(filePath, encoder.encode(newContent));
+                    lastLoadedAtRef.current = Math.floor(Date.now() / 1000);
                 }
                 setSaveStatus('saved');
                 setTimeout(() => setSaveStatus('idle'), 2000);
@@ -344,8 +357,47 @@ export const NotesEditor: React.FC<NotesEditorProps> = ({ filePath, noteId, vaul
                 console.error('[NotesEditor] Save failed:', err);
                 setSaveStatus('idle');
             }
-        }, 1000);
+        }, forceOverwrite ? 0 : 1000);
     }, [noteId, vaultPath, filePath]);
+
+    // ── Conflict resolution handlers ────────────────────────────────────────
+    const handleConflictOverwrite = useCallback(() => {
+        if (!conflict) return;
+        setConflict(null);
+        triggerSave(conflict.pendingContent, true);
+    }, [conflict, triggerSave]);
+
+    const handleConflictDiscard = useCallback(async () => {
+        setConflict(null);
+        try {
+            const note = await window.electronAPI.readNote(vaultPath, noteId);
+            setContent(note.content);
+            lastLoadedAtRef.current = Math.floor(Date.now() / 1000);
+            // Update CodeMirror if in write mode
+            const view = viewRef.current;
+            if (view) {
+                view.dispatch({
+                    changes: { from: 0, to: view.state.doc.length, insert: note.content },
+                });
+            }
+        } catch {
+            // Fallback: read from disk
+            try {
+                const buf = await window.electronAPI.readFile(filePath);
+                const text = new TextDecoder().decode(buf);
+                setContent(text);
+                lastLoadedAtRef.current = Math.floor(Date.now() / 1000);
+                const view = viewRef.current;
+                if (view) {
+                    view.dispatch({
+                        changes: { from: 0, to: view.state.doc.length, insert: text },
+                    });
+                }
+            } catch (err2) {
+                console.error('[NotesEditor] Failed to reload after conflict:', err2);
+            }
+        }
+    }, [vaultPath, noteId, filePath]);
 
     // ── Image paste/drop handler ────────────────────────────────────────────
     const insertImageIntoEditor = useCallback(async (imageData: ArrayBuffer, ext: string) => {
@@ -759,6 +811,53 @@ li { margin: 0.2em 0 !important; color: #1a1a1a !important; }
                     </>
                 )}
             </div>
+
+            {/* ── Conflict modal ── */}
+            {conflict && (
+                <div style={{
+                    position: 'absolute', inset: 0, display: 'flex',
+                    alignItems: 'center', justifyContent: 'center',
+                    background: 'rgba(0,0,0,0.6)', zIndex: 1000,
+                }}>
+                    <div style={{
+                        background: '#1e1e1e', border: '1px solid #333',
+                        borderRadius: 8, padding: '24px 28px', maxWidth: 420,
+                        display: 'flex', flexDirection: 'column', gap: 12,
+                    }}>
+                        <h3 style={{ margin: 0, fontSize: 15, color: '#e0e0e0' }}>
+                            Save Conflict
+                        </h3>
+                        <p style={{ margin: 0, fontSize: 13, color: '#999', lineHeight: 1.5 }}>
+                            This file was modified by another window since you loaded it.
+                            Your changes may overwrite those edits.
+                        </p>
+                        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
+                            <button
+                                type="button"
+                                onClick={() => { void handleConflictDiscard(); }}
+                                style={{
+                                    padding: '6px 14px', fontSize: 13, borderRadius: 5,
+                                    border: '1px solid #444', background: '#2a2a2a',
+                                    color: '#ccc', cursor: 'pointer',
+                                }}
+                            >
+                                Discard my changes &amp; reload
+                            </button>
+                            <button
+                                type="button"
+                                onClick={handleConflictOverwrite}
+                                style={{
+                                    padding: '6px 14px', fontSize: 13, borderRadius: 5,
+                                    border: 'none', background: '#c53030',
+                                    color: '#fff', cursor: 'pointer',
+                                }}
+                            >
+                                Overwrite
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

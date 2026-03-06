@@ -158,7 +158,7 @@ export function registerNotesHandlers(): void {
     // ── notes:update ──────────────────────────────────────────────────────────
     ipcMain.handle(
         NOTES_CHANNELS.UPDATE,
-        async (event, vaultPath: string, noteId: string, content: string) => {
+        async (event, vaultPath: string, noteId: string, content: string, lastLoadedAt?: number) => {
             const db = getDb(vaultPath);
             let row = db.prepare('SELECT * FROM notes WHERE id = ?').get(noteId) as NoteRow | undefined;
 
@@ -169,6 +169,16 @@ export function registerNotesHandlers(): void {
                 if (fileRow?.path) {
                     assertInsideVault(vaultPath, fileRow.path);
                     assertMd(fileRow.path);
+
+                    // Conflict check: if lastLoadedAt is provided, verify mtime hasn't changed
+                    if (lastLoadedAt != null && fs.existsSync(fileRow.path)) {
+                        const stat = fs.statSync(fileRow.path);
+                        const mtimeSec = Math.floor(stat.mtimeMs / 1000);
+                        if (mtimeSec > lastLoadedAt) {
+                            return { ok: false as const, reason: 'conflict' };
+                        }
+                    }
+
                     fs.mkdirSync(path.dirname(fileRow.path), { recursive: true });
                     fs.writeFileSync(fileRow.path, content, 'utf-8');
                     // Lazily create the notes record so future saves use it
@@ -179,14 +189,24 @@ export function registerNotesHandlers(): void {
                         VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, ?)
                     `).run(noteId, title, content, fileRow.path, now, now);
                     // Broadcast to other windows so other editors refresh
+                    const normalizedPath = path.normalize(fileRow.path).toLowerCase();
                     for (const win of BrowserWindow.getAllWindows()) {
                         if (win.webContents.id !== event.sender.id) {
-                            win.webContents.send('notes:saved', noteId, fileRow.path);
+                            win.webContents.send('notes:saved', normalizedPath);
                         }
                     }
-                    return;
+                    return { ok: true as const };
                 }
                 throw new Error(`Note ${noteId} not found`);
+            }
+
+            // Conflict check: if lastLoadedAt is provided, verify mtime hasn't changed
+            if (lastLoadedAt != null && row.file_path && fs.existsSync(row.file_path)) {
+                const stat = fs.statSync(row.file_path);
+                const mtimeSec = Math.floor(stat.mtimeMs / 1000);
+                if (mtimeSec > lastLoadedAt) {
+                    return { ok: false as const, reason: 'conflict' };
+                }
             }
 
             // Write to disk
@@ -202,12 +222,14 @@ export function registerNotesHandlers(): void {
                 .run(content, now, noteId);
 
             // Broadcast to other windows so other editors refresh
-            const filePath = row.file_path ?? '';
+            const normalizedBroadcastPath = path.normalize(row.file_path ?? '').toLowerCase();
             for (const win of BrowserWindow.getAllWindows()) {
                 if (win.webContents.id !== event.sender.id) {
-                    win.webContents.send('notes:saved', noteId, filePath);
+                    win.webContents.send('notes:saved', normalizedBroadcastPath);
                 }
             }
+
+            return { ok: true as const };
         },
     );
 
