@@ -84,16 +84,19 @@ export const AppLayout: React.FC = () => {
             WebkitAppRegion: "drag",
           } as React.CSSProperties
         }
-        className="h-10 shrink-0 w-full flex items-center px-4"
+        className="h-10 shrink-0 w-full flex items-center px-4 relative"
       >
         {/* Left: Axiom branding */}
         <div className="text-xs text-[#8a8a8a] shrink-0 mr-4 select-none">
           Axiom
         </div>
 
-        {/* Center: Search bar */}
-        <div className="flex-1 flex justify-center" style={noDragStyle}>
-          <div className="relative w-full max-w-[400px]">
+        {/* Center: Search bar — absolute so it's perfectly centered */}
+        <div
+          className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-[400px] px-4"
+          style={noDragStyle}
+        >
+          <div className="relative">
             <Search
               size={14}
               className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#5a5a5a] pointer-events-none"
@@ -109,6 +112,9 @@ export const AppLayout: React.FC = () => {
             />
           </div>
         </div>
+
+        {/* Spacer to push right section */}
+        <div className="flex-1" />
 
         {/* Right: Settings + window controls */}
         <div className="flex items-center shrink-0 ml-4" style={noDragStyle}>

@@ -529,7 +529,16 @@ export const AnnotationLayer: React.FC<Props> = ({
             autoFocus
             rows={1}
             value={textboxEdit.content}
-            onChange={e => setTextboxEdit(prev => prev ? { ...prev, content: e.target.value } : prev)}
+            onChange={e => {
+              setTextboxEdit(prev => prev ? { ...prev, content: e.target.value } : prev);
+              // Auto-resize up to 5 lines
+              const ta = e.target;
+              ta.style.height = 'auto';
+              const lineH = parseFloat(getComputedStyle(ta).lineHeight) || (propFontSize * 1.4);
+              const maxH = lineH * 5;
+              ta.style.height = `${Math.min(ta.scrollHeight, maxH)}px`;
+              ta.style.overflowY = ta.scrollHeight > maxH ? 'auto' : 'hidden';
+            }}
             onKeyDown={e => {
               if (e.key === 'Escape') {
                 e.preventDefault();
@@ -561,8 +570,9 @@ export const AnnotationLayer: React.FC<Props> = ({
               padding: '4px 8px',
               outline: 'none',
               minWidth: '150px',
-              resize: 'both',
-              overflow: 'auto',
+              resize: 'horizontal',
+              overflowY: 'hidden',
+              lineHeight: '1.4',
             }}
           />
         </div>

@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import { X } from "lucide-react";
 
 import { PDFViewer } from "./pdf/PDFViewer";
@@ -117,6 +117,53 @@ export const Workspace: React.FC<WorkspaceProps> = ({ vaultPath }) => {
     [openFiles, dirtyFiles],
   );
 
+  // ── Tab drag-and-drop reordering ──────────────────────────────────────────
+  const dragIdx = useRef<number | null>(null);
+  const [dropTarget, setDropTarget] = useState<number | null>(null);
+
+  const handleDragStart = useCallback((e: React.DragEvent, idx: number) => {
+    dragIdx.current = idx;
+    e.dataTransfer.effectAllowed = 'move';
+    // Transparent drag image so we rely on the visual indicator
+    const el = e.currentTarget as HTMLElement;
+    e.dataTransfer.setDragImage(el, el.offsetWidth / 2, el.offsetHeight / 2);
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent, idx: number) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDropTarget(idx);
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent, targetIdx: number) => {
+    e.preventDefault();
+    const fromIdx = dragIdx.current;
+    if (fromIdx === null || fromIdx === targetIdx) {
+      dragIdx.current = null;
+      setDropTarget(null);
+      return;
+    }
+    setOpenFiles(prev => {
+      const next = [...prev];
+      const [moved] = next.splice(fromIdx, 1);
+      next.splice(targetIdx, 0, moved);
+      return next;
+    });
+    setActiveIdx(prev => {
+      if (prev === fromIdx) return targetIdx;
+      if (fromIdx < prev && targetIdx >= prev) return prev - 1;
+      if (fromIdx > prev && targetIdx <= prev) return prev + 1;
+      return prev;
+    });
+    dragIdx.current = null;
+    setDropTarget(null);
+  }, []);
+
+  const handleDragEnd = useCallback(() => {
+    dragIdx.current = null;
+    setDropTarget(null);
+  }, []);
+
   // ── Render content based on active file ──────────────────────────────────
   const renderContent = () => {
     if (!activeFile) {
@@ -191,13 +238,23 @@ export const Workspace: React.FC<WorkspaceProps> = ({ vaultPath }) => {
             <button
               key={f.filePath}
               type="button"
+              draggable
               onClick={() => setActiveIdx(i)}
-              className={`group flex items-center gap-1.5 px-3 text-xs border-r border-[#2a2a2a] whitespace-nowrap transition-colors ${
+              onDragStart={(e) => handleDragStart(e, i)}
+              onDragOver={(e) => handleDragOver(e, i)}
+              onDrop={(e) => handleDrop(e, i)}
+              onDragEnd={handleDragEnd}
+              className={`group flex items-center gap-1.5 px-3 text-xs border-r border-[#2a2a2a] whitespace-nowrap transition-all ${
                 i === activeIdx
                   ? "bg-[#1e1e1e] text-[#e4e4e4]"
                   : "text-[#6e6e6e] hover:bg-[#222] hover:text-[#aaa]"
               }`}
-              style={{ maxWidth: "200px" }}
+              style={{
+                maxWidth: "200px",
+                cursor: 'grab',
+                borderLeft: dropTarget === i ? '2px solid #6366f1' : '2px solid transparent',
+                opacity: dragIdx.current === i ? 0.5 : 1,
+              }}
             >
               {/* File type indicator */}
               <span
