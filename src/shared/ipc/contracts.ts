@@ -88,13 +88,3 @@ export type AnnotationSaveResponse = void;
 // ── annotation:load ──────────────────────────────────────────────────────────
 export type AnnotationLoadRequest = { vaultPath: string; fileId: string };
 export type AnnotationLoadResponse = Annotation[];
-
-// ── ai:vault-inject ──────────────────────────────────────────────────────────
-export type VaultInjectRequest = {
-  provider: 'chatgpt' | 'claude' | 'gemini';
-  prompt: string;
-};
-export type VaultInjectResponse = {
-  success: boolean;
-  error?: string;
-};

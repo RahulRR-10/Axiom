@@ -89,6 +89,28 @@ const TOOLBAR_ACTIONS: ToolbarAction[] = [
     },
 ];
 
+// ── Math delimiter preprocessor ───────────────────────────────────────────────
+// Converts common LaTeX-style math delimiters to the $$/$ syntax that
+// remark-math recognises, so users can write \[...\], \(...\), or a
+// standalone [ ... ] block and have it render correctly in read mode.
+
+function preprocessMathDelimiters(text: string): string {
+    // \[ ... \] → $$ ... $$ (LaTeX display math)
+    let result = text.replace(/\\\[([\s\S]*?)\\\]/g, (_, math) => `$$${math}$$`);
+    // \( ... \) → $ ... $ (LaTeX inline math)
+    result = result.replace(/\\\(([\s\S]*?)\\\)/g, (_, math) => `$${math}$`);
+    // Standalone bare brackets on their own lines:
+    //   [
+    //   S \div R = T(X)
+    //   ]
+    // → $$\nS \div R = T(X)\n$$
+    result = result.replace(
+        /^[ \t]*\[[ \t]*$([\s\S]*?)^[ \t]*\][ \t]*$/gm,
+        (_, math) => `$$\n${math.trim()}\n$$`,
+    );
+    return result;
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export const NotesEditor: React.FC<NotesEditorProps> = ({ filePath, noteId, vaultPath }) => {
@@ -105,6 +127,10 @@ export const NotesEditor: React.FC<NotesEditorProps> = ({ filePath, noteId, vaul
 
     // Keep contentRef in sync
     useEffect(() => { contentRef.current = content; }, [content]);
+
+    // Pre-process content for the read view: normalise math delimiters so that
+    // \[...\], \(...\), and standalone [ ... ] blocks all render via KaTeX.
+    const processedContent = useMemo(() => preprocessMathDelimiters(content), [content]);
 
     // ── Load note on mount ──────────────────────────────────────────────────
     useEffect(() => {
@@ -426,7 +452,7 @@ li { margin: 0.2em 0 !important; color: #1a1a1a !important; }
                             remarkPlugins={[remarkGfm, remarkMath]}
                             rehypePlugins={[rehypeKatex, rehypeRaw]}
                         >
-                            {content}
+                            {processedContent}
                         </ReactMarkdown>
                     </div>
                 ) : (
@@ -443,7 +469,7 @@ li { margin: 0.2em 0 !important; color: #1a1a1a !important; }
                                 remarkPlugins={[remarkGfm, remarkMath]}
                                 rehypePlugins={[rehypeKatex, rehypeRaw]}
                             >
-                                {content}
+                                {processedContent}
                             </ReactMarkdown>
                         </div>
                     </>
