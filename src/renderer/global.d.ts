@@ -44,6 +44,8 @@ declare global {
 
       // ── AI panel ─────────────────────────────────────────────────────────
       getAIPreloadPath: () => Promise<string>;
+      registerWebview: (provider: string, webContentsId: number) => void;
+      vaultInject: (provider: string, prompt: string) => Promise<{ success: boolean; error?: string }>;
 
       // ── Window controls ────────────────────────────────────────────────
       minimizeWindow: () => Promise<void>;

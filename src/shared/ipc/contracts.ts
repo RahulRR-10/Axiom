@@ -81,6 +81,10 @@ export type NotesRenameResponse = NoteSummary;
 export type NotesExportPdfRequest = { html: string; mdFilePath: string };
 export type NotesExportPdfResponse = string; // absolute path of the written PDF
 
+// ── ai:vault-inject ─────────────────────────────────────────────────────────
+export type VaultInjectRequest = { provider: string; prompt: string };
+export type VaultInjectResponse = { success: boolean; error?: string };
+
 // ── annotation:save ──────────────────────────────────────────────────────────
 export type AnnotationSaveRequest = { vaultPath: string; annotation: Annotation };
 export type AnnotationSaveResponse = void;
