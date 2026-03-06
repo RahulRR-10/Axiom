@@ -299,8 +299,12 @@ export const PDFViewer: React.FC<Props> = ({
   const [fontSize, setFontSize] = useState(14);
   const [textColor, setTextColor] = useState("#1a1a1a");
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
-  const [pendingAnnotations, setPendingAnnotations] = useState<Annotation[]>([]);
-  const [deletedAnnotationIds, setDeletedAnnotationIds] = useState<Set<string>>(new Set());
+  const [pendingAnnotations, setPendingAnnotations] = useState<Annotation[]>(
+    [],
+  );
+  const [deletedAnnotationIds, setDeletedAnnotationIds] = useState<Set<string>>(
+    new Set(),
+  );
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -378,15 +382,16 @@ export const PDFViewer: React.FC<Props> = ({
 
   /* ── Merged annotations (DB + pending - deleted) ─────────────────────────── */
   const mergedAnnotations = useMemo(() => {
-    const dbAnns = annotations.filter(a => !deletedAnnotationIds.has(a.id));
+    const dbAnns = annotations.filter((a) => !deletedAnnotationIds.has(a.id));
     // Deduplicate: pending might overlap with DB if loaded after a save
-    const pendingIds = new Set(pendingAnnotations.map(a => a.id));
-    const combined = dbAnns.filter(a => !pendingIds.has(a.id));
+    const pendingIds = new Set(pendingAnnotations.map((a) => a.id));
+    const combined = dbAnns.filter((a) => !pendingIds.has(a.id));
     return [...combined, ...pendingAnnotations];
   }, [annotations, pendingAnnotations, deletedAnnotationIds]);
 
   /* ── Dirty (unsaved changes) state ───────────────────────────────────────── */
-  const hasUnsavedChanges = pendingAnnotations.length > 0 || deletedAnnotationIds.size > 0;
+  const hasUnsavedChanges =
+    pendingAnnotations.length > 0 || deletedAnnotationIds.size > 0;
 
   useEffect(() => {
     window.dispatchEvent(
@@ -398,18 +403,18 @@ export const PDFViewer: React.FC<Props> = ({
 
   /* ── Annotation callbacks (buffer, don't persist) ────────────────────────── */
   const onAnnotationCreated = useCallback((ann: Annotation) => {
-    setPendingAnnotations(prev => [...prev, ann]);
+    setPendingAnnotations((prev) => [...prev, ann]);
   }, []);
 
   const onAnnotationDeleted = useCallback((annId: string) => {
     // If it's a pending annotation, just remove from pending
-    setPendingAnnotations(prev => {
-      const found = prev.find(a => a.id === annId);
-      if (found) return prev.filter(a => a.id !== annId);
+    setPendingAnnotations((prev) => {
+      const found = prev.find((a) => a.id === annId);
+      if (found) return prev.filter((a) => a.id !== annId);
       return prev;
     });
     // If it was already in DB, mark for deletion
-    setDeletedAnnotationIds(prev => {
+    setDeletedAnnotationIds((prev) => {
       const copy = new Set(prev);
       copy.add(annId);
       return copy;
@@ -486,7 +491,11 @@ export const PDFViewer: React.FC<Props> = ({
 
       // 4. Reindex PDF with annotation text
       if (vaultPath) {
-        await window.electronAPI.reindexPdf(vaultPath, filePath, effectiveFileId);
+        await window.electronAPI.reindexPdf(
+          vaultPath,
+          filePath,
+          effectiveFileId,
+        );
       }
 
       // 5. Clear pending state and reload from DB
@@ -498,7 +507,16 @@ export const PDFViewer: React.FC<Props> = ({
     } finally {
       setSaving(false);
     }
-  }, [filePath, saving, vaultPath, pendingAnnotations, deletedAnnotationIds, mergedAnnotations, effectiveFileId, loadAnnotations]);
+  }, [
+    filePath,
+    saving,
+    vaultPath,
+    pendingAnnotations,
+    deletedAnnotationIds,
+    mergedAnnotations,
+    effectiveFileId,
+    loadAnnotations,
+  ]);
 
   /* ── Escape to deactivate tool ───────────────────────────────────────────── */
   useEffect(() => {

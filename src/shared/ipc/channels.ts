@@ -44,3 +44,8 @@ export const WINDOW_CHANNELS = {
   IS_MAXIMIZED: 'window:is-maximized',
   MAXIMIZED_CHANGED: 'window:maximized-changed',
 } as const;
+
+export const AI_CHANNELS = {
+  VAULT_INJECT: 'ai:vault-inject',
+  REGISTER_WEBVIEW: 'ai:register-webview',
+} as const;

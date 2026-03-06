@@ -40,6 +40,7 @@ The entire workflow lives in one window: vault browser on the left, multi-tab do
 ## Features
 
 ### Knowledge Base & Search
+
 - **Automatic Indexing** — Drop files into your vault and Axiom picks them up in real time with chokidar-powered file watching
 - **Semantic Search** — All-MiniLM-L6-v2 embeddings (384-dim, fully local via `@xenova/transformers`) stored in LanceDB
 - **Full-Text Search** — Parallel FTS5 (SQLite) keyword search for exact-match and fast recall
@@ -47,23 +48,27 @@ The entire workflow lives in one window: vault browser on the left, multi-tab do
 - **Supported Formats** — PDF, PPTX, Markdown, plain text
 
 ### Document Viewer
+
 - **PDF Rendering** — High-fidelity rendering with `pdfjs-dist`, page navigation, and zoom
 - **Annotation Toolkit** — Highlight, sticky notes, freehand drawing, textboxes, image embeds, eraser
 - **Annotation Persistence** — Annotations saved to SQLite as JSON and reloaded on next open; indexed alongside document chunks for search
 - **PDF Export** — Write annotations back into the source PDF with `pdf-lib`
 
 ### Notes
+
 - **Markdown Editor** — CodeMirror 6 editor with syntax highlighting and autocomplete
 - **LaTeX Support** — Inline and block math via KaTeX and remark-math/rehype-katex
 - **Source Linking** — Notes can be pinned to a source file and page number
 - **PDF Export** — Export any note as a formatted PDF
 
 ### AI Integration
+
 - **Three Providers** — ChatGPT, Claude, Gemini — each in a persistent, isolated webview partition
 - **Session Persistence** — Login state is retained across app restarts
 - **Header Spoofing** — Electron fingerprints are stripped and replaced with real Chrome headers so Google/Anthropic authentication works without interruption
 
 ### App Shell
+
 - **Frameless Window** — Custom title bar with native window controls (minimize, maximize, close)
 - **Collapsible Panels** — Vault sidebar and AI panel can be hidden to maximize workspace
 - **Multi-Tab Workspace** — Open multiple documents simultaneously with per-tab state
@@ -73,22 +78,22 @@ The entire workflow lives in one window: vault browser on the left, multi-tab do
 
 ## Tech Stack
 
-| Layer | Technology |
-|---|---|
-| **Desktop Shell** | Electron 40 |
-| **UI Framework** | React 19, TypeScript ~4.5 |
-| **Styling** | Tailwind CSS 3, PostCSS, dark-mode-first |
-| **Build** | electron-forge 7, Webpack 5, ts-loader |
-| **Database** | better-sqlite3 (metadata, FTS5), LanceDB / vectordb (vectors) |
-| **Embeddings** | `@xenova/transformers` — all-MiniLM-L6-v2, 384-dim, fully offline |
-| **PDF Rendering** | pdfjs-dist 5 |
-| **PDF Processing** | pdf-parse (extraction), pdf-lib (annotation export) |
-| **Office Parsing** | officeparser (PPTX) |
-| **Markdown** | CodeMirror 6, react-markdown, remark-gfm, remark-math, rehype-katex |
-| **Math** | KaTeX 0.16 |
-| **Icons** | lucide-react |
-| **File Watching** | chokidar 4 |
-| **Config Storage** | electron-store 11 |
+| Layer              | Technology                                                          |
+| ------------------ | ------------------------------------------------------------------- |
+| **Desktop Shell**  | Electron 40                                                         |
+| **UI Framework**   | React 19, TypeScript ~4.5                                           |
+| **Styling**        | Tailwind CSS 3, PostCSS, dark-mode-first                            |
+| **Build**          | electron-forge 7, Webpack 5, ts-loader                              |
+| **Database**       | better-sqlite3 (metadata, FTS5), LanceDB / vectordb (vectors)       |
+| **Embeddings**     | `@xenova/transformers` — all-MiniLM-L6-v2, 384-dim, fully offline   |
+| **PDF Rendering**  | pdfjs-dist 5                                                        |
+| **PDF Processing** | pdf-parse (extraction), pdf-lib (annotation export)                 |
+| **Office Parsing** | officeparser (PPTX)                                                 |
+| **Markdown**       | CodeMirror 6, react-markdown, remark-gfm, remark-math, rehype-katex |
+| **Math**           | KaTeX 0.16                                                          |
+| **Icons**          | lucide-react                                                        |
+| **File Watching**  | chokidar 4                                                          |
+| **Config Storage** | electron-store 11                                                   |
 
 ---
 
@@ -288,53 +293,53 @@ All renderer↔main communication is funnelled through a typed `electronAPI` obj
 
 ### Vault Channels
 
-| Channel | Direction | Description |
-|---|---|---|
-| `vault:select` | invoke | Open system folder picker, returns selected path |
-| `vault:open` | invoke | Open vault at path, starts indexer & watcher |
-| `vault:read-directory` | invoke | List directory contents as `FileNode[]` |
-| `vault:read-file` | invoke | Read raw file contents |
-| `vault:write-file` | invoke | Write raw file contents |
-| `vault:get-index-status` | invoke | Returns `IndexStatus` for the open vault |
-| `vault:get-file-id` | invoke | Resolve file path → SQLite file ID |
-| `vault:index-progress` | push | Streaming progress events during indexing |
-| `vault:file-changed` | push | Emitted when a watched file changes |
+| Channel                  | Direction | Description                                      |
+| ------------------------ | --------- | ------------------------------------------------ |
+| `vault:select`           | invoke    | Open system folder picker, returns selected path |
+| `vault:open`             | invoke    | Open vault at path, starts indexer & watcher     |
+| `vault:read-directory`   | invoke    | List directory contents as `FileNode[]`          |
+| `vault:read-file`        | invoke    | Read raw file contents                           |
+| `vault:write-file`       | invoke    | Write raw file contents                          |
+| `vault:get-index-status` | invoke    | Returns `IndexStatus` for the open vault         |
+| `vault:get-file-id`      | invoke    | Resolve file path → SQLite file ID               |
+| `vault:index-progress`   | push      | Streaming progress events during indexing        |
+| `vault:file-changed`     | push      | Emitted when a watched file changes              |
 
 ### Search Channels
 
-| Channel | Direction | Description |
-|---|---|---|
-| `search:query` | invoke | Run hybrid FTS5 + semantic search, returns `SearchResult[]` |
+| Channel        | Direction | Description                                                 |
+| -------------- | --------- | ----------------------------------------------------------- |
+| `search:query` | invoke    | Run hybrid FTS5 + semantic search, returns `SearchResult[]` |
 
 ### Notes Channels
 
-| Channel | Direction | Description |
-|---|---|---|
-| `notes:create` | invoke | Create a new note |
-| `notes:read` | invoke | Read note content by ID |
-| `notes:list` | invoke | List all notes (summarised) |
-| `notes:update` | invoke | Update note title/content |
-| `notes:delete` | invoke | Delete note by ID |
-| `notes:move` | invoke | Move note to a new vault path |
-| `notes:rename` | invoke | Rename note file |
-| `notes:export-pdf` | invoke | Export note Markdown → PDF |
+| Channel            | Direction | Description                   |
+| ------------------ | --------- | ----------------------------- |
+| `notes:create`     | invoke    | Create a new note             |
+| `notes:read`       | invoke    | Read note content by ID       |
+| `notes:list`       | invoke    | List all notes (summarised)   |
+| `notes:update`     | invoke    | Update note title/content     |
+| `notes:delete`     | invoke    | Delete note by ID             |
+| `notes:move`       | invoke    | Move note to a new vault path |
+| `notes:rename`     | invoke    | Rename note file              |
+| `notes:export-pdf` | invoke    | Export note Markdown → PDF    |
 
 ### Annotation Channels
 
-| Channel | Direction | Description |
-|---|---|---|
-| `annotations:save` | invoke | Persist annotation set for a PDF page |
-| `annotations:load` | invoke | Load all annotations for a file |
-| `annotations:delete` | invoke | Delete a single annotation by ID |
-| `annotations:reindex-pdf` | invoke | Re-run indexing pass including annotation text |
+| Channel                   | Direction | Description                                    |
+| ------------------------- | --------- | ---------------------------------------------- |
+| `annotations:save`        | invoke    | Persist annotation set for a PDF page          |
+| `annotations:load`        | invoke    | Load all annotations for a file                |
+| `annotations:delete`      | invoke    | Delete a single annotation by ID               |
+| `annotations:reindex-pdf` | invoke    | Re-run indexing pass including annotation text |
 
 ### Window Channels
 
-| Channel | Direction | Description |
-|---|---|---|
-| `window:minimize` | send | Minimize the main window |
-| `window:toggle-maximize` | send | Toggle maximize/restore |
-| `window:close` | send | Close the application |
+| Channel                  | Direction | Description              |
+| ------------------------ | --------- | ------------------------ |
+| `window:minimize`        | send      | Minimize the main window |
+| `window:toggle-maximize` | send      | Toggle maximize/restore  |
+| `window:close`           | send      | Close the application    |
 
 ---
 
@@ -410,6 +415,7 @@ npm run make     # creates platform-specific installer
 ```
 
 **Outputs:**
+
 - Windows: Squirrel installer (`.exe`)
 - macOS: ZIP archive
 - Linux: RPM and DEB packages

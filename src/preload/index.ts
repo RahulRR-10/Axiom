@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
-import { VAULT_CHANNELS, WINDOW_CHANNELS, SEARCH_CHANNELS, ANNOTATION_CHANNELS, NOTES_CHANNELS } from '../shared/ipc/channels';
+import { VAULT_CHANNELS, WINDOW_CHANNELS, SEARCH_CHANNELS, ANNOTATION_CHANNELS, NOTES_CHANNELS, AI_CHANNELS } from '../shared/ipc/channels';
 import type { FileNode, IndexStatus, SearchResult, Annotation, NoteSummary, NoteDetail } from '../shared/types';
 import type { VaultIndexProgressPayload } from '../shared/ipc/contracts';
 
@@ -102,6 +102,13 @@ const electronAPI = {
   // ── AI panel ─────────────────────────────────────────────────────────────
   getAIPreloadPath: (): Promise<string> =>
     ipcRenderer.invoke('ai:getPreloadPath'),
+
+  vaultInject: (provider: string, prompt: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke(AI_CHANNELS.VAULT_INJECT, { provider, prompt }),
+
+  registerWebview: (provider: string, webContentsId: number): void => {
+    ipcRenderer.send(AI_CHANNELS.REGISTER_WEBVIEW, { provider, webContentsId });
+  },
 
   // ── Window controls ──────────────────────────────────────────────────────
   minimizeWindow: (): Promise<void> =>

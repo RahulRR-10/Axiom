@@ -1,10 +1,13 @@
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain, webContents } from 'electron';
 
 import { registerVaultHandlers } from './ipc/vaultHandlers';
 import { registerSearchHandlers } from './ipc/searchHandlers';
 import { registerAnnotationHandlers } from './ipc/annotationHandlers';
 import { registerNotesHandlers } from './ipc/notesHandlers';
 import { setupAISessions, writeWebviewPreload } from './ai/spoofing';
+import { injectPrompt } from './ai/vaultInject';
+import { AI_CHANNELS } from '../shared/ipc/channels';
+import type { VaultInjectRequest, VaultInjectResponse } from '../shared/ipc/contracts';
 
 declare const MAIN_WINDOW_WEBPACK_ENTRY: string;
 declare const MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY: string;
@@ -88,6 +91,9 @@ const createWindow = (): void => {
   mainWindow.loadURL(MAIN_WINDOW_WEBPACK_ENTRY);
 };
 
+// ── AI webview tracking ──────────────────────────────────────────────────────
+const webviewMap = new Map<string, Electron.WebContents>();
+
 app.whenReady().then(() => {
   registerWindowIpcHandlers();
   registerVaultHandlers();
@@ -99,6 +105,20 @@ app.whenReady().then(() => {
   setupAISessions();
   const aiPreloadURL = writeWebviewPreload();
   ipcMain.handle('ai:getPreloadPath', () => aiPreloadURL);
+
+  // ── AI vault-inject IPC ──────────────────────────────────────────────────
+  ipcMain.on(AI_CHANNELS.REGISTER_WEBVIEW, (_, { provider, webContentsId }: { provider: string; webContentsId: number }) => {
+    const wc = webContents.fromId(webContentsId);
+    if (wc) webviewMap.set(provider, wc);
+  });
+
+  ipcMain.handle(AI_CHANNELS.VAULT_INJECT, async (_, req: VaultInjectRequest): Promise<VaultInjectResponse> => {
+    const wc = webviewMap.get(req.provider);
+    if (!wc) {
+      return { success: false, error: `Webview for ${req.provider} not ready` };
+    }
+    return injectPrompt(wc, req.provider, req.prompt);
+  });
 
   createWindow();
 });

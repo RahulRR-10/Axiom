@@ -16,6 +16,7 @@ export const AppLayout: React.FC = () => {
   const [vaultPath, setVaultPath] = useState<string | null>(null);
   const [aiWidth, setAiWidth] = useState<number>(340);
   const [isResizingAI, setIsResizingAI] = useState<boolean>(false);
+  const [aiQuestion, setAiQuestion] = useState<string>('');
   const isDraggingAI = useRef<boolean>(false);
   const dragStartX = useRef<number>(0);
   const dragStartW = useRef<number>(340);
@@ -248,19 +249,45 @@ export const AppLayout: React.FC = () => {
             </div>
           ) : (
             <div className="h-full w-full flex flex-col overflow-hidden">
-              <div className="h-10 border-b border-[#2a2a2a] flex items-center justify-between px-2">
-                <span className="text-xs text-[#8a8a8a]">AI</span>
+              <div className="h-10 border-b border-[#2a2a2a] flex items-center px-2 gap-1.5">
+                <span className="text-xs text-[#8a8a8a] shrink-0">AI</span>
+                <input
+                  value={aiQuestion}
+                  onChange={(e) => setAiQuestion(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && aiQuestion.trim() && vaultPath) {
+                      window.dispatchEvent(new CustomEvent('ai:ask', { detail: { question: aiQuestion } }));
+                      setAiQuestion('');
+                    }
+                  }}
+                  placeholder="Ask your study material..."
+                  disabled={!vaultPath}
+                  className="flex-1 bg-[#141414] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-[#d4d4d4] outline-none placeholder-[#4a4a4a] focus:border-[#4a9eff] disabled:opacity-50 min-w-0"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (aiQuestion.trim() && vaultPath) {
+                      window.dispatchEvent(new CustomEvent('ai:ask', { detail: { question: aiQuestion } }));
+                      setAiQuestion('');
+                    }
+                  }}
+                  disabled={!aiQuestion.trim() || !vaultPath}
+                  className="shrink-0 px-2 py-1 rounded text-xs font-medium bg-[#4a9eff] text-white hover:bg-[#3a8eff] disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Ask
+                </button>
                 <button
                   type="button"
                   onClick={() => setAiCollapsed(true)}
-                  className="h-8 w-8 rounded-md text-[#d4d4d4] hover:bg-[#2a2a2a]"
+                  className="h-7 w-7 rounded-md text-[#d4d4d4] hover:bg-[#2a2a2a] flex items-center justify-center shrink-0"
                   aria-label="Collapse AI panel"
                 >
                   →
                 </button>
               </div>
               <div className="flex-1 overflow-hidden">
-                <AIPanel />
+                <AIPanel vaultPath={vaultPath} />
               </div>
             </div>
           )}
