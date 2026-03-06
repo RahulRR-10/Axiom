@@ -62,6 +62,9 @@ const electronAPI = {
   deleteAnnotation: (vaultPath: string, annotationId: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(ANNOTATION_CHANNELS.DELETE, vaultPath, annotationId),
 
+  reindexPdf: (vaultPath: string, filePath: string, fileId: string): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(ANNOTATION_CHANNELS.REINDEX_PDF, vaultPath, filePath, fileId),
+
   // ── Notes ──────────────────────────────────────────────────────────────
   createNote: (
     vaultPath: string,

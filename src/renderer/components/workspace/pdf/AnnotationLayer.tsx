@@ -10,19 +10,20 @@ import type {
 import type { PDFTool } from './PDFToolbar';
 
 type Props = {
-  activeTool:        PDFTool;
-  highlightColor:    string;
-  fileId:            string;
-  page:              number;
-  vaultPath:         string;
-  cssWidth:          number;
-  cssHeight:         number;
-  wrapperRef:        React.RefObject<HTMLDivElement>;
-  annotations:       Annotation[];
-  onAnnotationSaved: () => void;
-  fontSize:          number;
-  textColor:         string;
-  zoom:              number;
+  activeTool:          PDFTool;
+  highlightColor:      string;
+  fileId:              string;
+  page:                number;
+  vaultPath:           string;
+  cssWidth:            number;
+  cssHeight:           number;
+  wrapperRef:          React.RefObject<HTMLDivElement>;
+  annotations:         Annotation[];
+  onAnnotationCreated: (ann: Annotation) => void;
+  onAnnotationDeleted: (annId: string) => void;
+  fontSize:            number;
+  textColor:           string;
+  zoom:                number;
 };
 
 type StickyPopover = { id: string | null; x: number; y: number; content: string };
@@ -42,7 +43,8 @@ export const AnnotationLayer: React.FC<Props> = ({
   cssHeight,
   wrapperRef,
   annotations,
-  onAnnotationSaved,
+  onAnnotationCreated,
+  onAnnotationDeleted,
   fontSize: propFontSize,
   textColor: propTextColor,
   zoom: propZoom,
@@ -99,11 +101,9 @@ export const AnnotationLayer: React.FC<Props> = ({
       rects, color: highlightColor, text,
     };
     setNewHighlights(prev => [...prev, ann]);
-    if (!fileId || !vaultPath) { sel.removeAllRanges(); return; }
-    window.electronAPI.saveAnnotation(vaultPath, ann)
-      .then(() => { sel.removeAllRanges(); onAnnotationSaved(); })
-      .catch(err => { console.error(err); sel.removeAllRanges(); });
-  }, [activeTool, highlightColor, fileId, page, vaultPath, wrapperRef, onAnnotationSaved]);
+    onAnnotationCreated(ann);
+    sel.removeAllRanges();
+  }, [activeTool, highlightColor, fileId, page, vaultPath, wrapperRef, onAnnotationCreated]);
 
   useEffect(() => {
     const el = wrapperRef.current;
@@ -135,9 +135,8 @@ export const AnnotationLayer: React.FC<Props> = ({
       id: uuidv4(), file_id: fileId, page, type: 'sticky',
       x: popover.x, y: popover.y, content: popover.content,
     };
-    window.electronAPI.saveAnnotation(vaultPath, ann)
-      .then(() => { setPopover(null); onAnnotationSaved(); })
-      .catch(console.error);
+    onAnnotationCreated(ann);
+    setPopover(null);
   };
 
   /* ══════════════════════════════════════════════════════════════════════════
@@ -186,14 +185,10 @@ export const AnnotationLayer: React.FC<Props> = ({
         points: prev, color: highlightColor, strokeWidth: 2,
       };
       setNewDrawings(d => [...d, ann]);
-      if (fileId && vaultPath) {
-        window.electronAPI.saveAnnotation(vaultPath, ann)
-          .then(() => onAnnotationSaved())
-          .catch(console.error);
-      }
+      onAnnotationCreated(ann);
       return [];
     });
-  }, [fileId, page, vaultPath, highlightColor, onAnnotationSaved]);
+  }, [fileId, page, vaultPath, highlightColor, onAnnotationCreated]);
 
   /* ══════════════════════════════════════════════════════════════════════════
      ERASER TOOL
@@ -232,17 +227,15 @@ export const AnnotationLayer: React.FC<Props> = ({
         if (hit) break;
       }
 
-      if (hit && vaultPath) {
+      if (hit) {
         // Remove from local state
         setNewHighlights(prev => prev.filter(a => a.id !== hit!.id));
         setNewDrawings(prev => prev.filter(a => a.id !== hit!.id));
-        // Remove from database
-        window.electronAPI.deleteAnnotation(vaultPath, hit.id)
-          .then(() => onAnnotationSaved())
-          .catch(console.error);
+        // Mark for deletion
+        onAnnotationDeleted(hit.id);
       }
     },
-    [activeTool, annotations, newHighlights, newDrawings, page, vaultPath, onAnnotationSaved],
+    [activeTool, annotations, newHighlights, newDrawings, page, onAnnotationDeleted],
   );
 
   /* ═══════════════════════════════════════════════════════════════════════════
@@ -462,9 +455,8 @@ export const AnnotationLayer: React.FC<Props> = ({
                   x: textboxEdit.x, y: textboxEdit.y,
                   content: textboxEdit.content, color: textColorRef.current, fontSize: fontSizeRef.current,
                 };
-                window.electronAPI.saveAnnotation(vaultPath, ann)
-                  .then(() => { setTextboxEdit(null); onAnnotationSaved(); })
-                  .catch(console.error);
+                onAnnotationCreated(ann);
+                setTextboxEdit(null);
               } else {
                 setTextboxEdit(null);
               }

@@ -34,6 +34,7 @@ export const ANNOTATION_CHANNELS = {
   SAVE: 'annotation:save',
   LOAD: 'annotation:load',
   DELETE: 'annotation:delete',
+  REINDEX_PDF: 'annotation:reindexPdf',
 } as const;
 
 export const WINDOW_CHANNELS = {

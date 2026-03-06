@@ -58,7 +58,8 @@ const PDFPage = React.memo(function PDFPage({
   fileId,
   vaultPath,
   annotations,
-  onAnnotationSaved,
+  onAnnotationCreated,
+  onAnnotationDeleted,
   fontSize: propFontSize,
   textColor: propTextColor,
   zoom: propZoom,
@@ -73,7 +74,8 @@ const PDFPage = React.memo(function PDFPage({
   fileId: string;
   vaultPath: string;
   annotations: Annotation[];
-  onAnnotationSaved: () => void;
+  onAnnotationCreated: (ann: Annotation) => void;
+  onAnnotationDeleted: (annId: string) => void;
   fontSize: number;
   textColor: string;
   zoom: number;
@@ -243,7 +245,8 @@ const PDFPage = React.memo(function PDFPage({
         cssHeight={cssHeight}
         wrapperRef={wrapRef}
         annotations={annotations.filter((a) => a.page === pageNum)}
-        onAnnotationSaved={onAnnotationSaved}
+        onAnnotationCreated={onAnnotationCreated}
+        onAnnotationDeleted={onAnnotationDeleted}
         fontSize={propFontSize}
         textColor={propTextColor}
         zoom={propZoom}
@@ -296,6 +299,8 @@ export const PDFViewer: React.FC<Props> = ({
   const [fontSize, setFontSize] = useState(14);
   const [textColor, setTextColor] = useState("#ffffff");
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
+  const [pendingAnnotations, setPendingAnnotations] = useState<Annotation[]>([]);
+  const [deletedAnnotationIds, setDeletedAnnotationIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -371,16 +376,69 @@ export const PDFViewer: React.FC<Props> = ({
     loadAnnotations();
   }, [loadAnnotations]);
 
+  /* ── Merged annotations (DB + pending - deleted) ─────────────────────────── */
+  const mergedAnnotations = useMemo(() => {
+    const dbAnns = annotations.filter(a => !deletedAnnotationIds.has(a.id));
+    // Deduplicate: pending might overlap with DB if loaded after a save
+    const pendingIds = new Set(pendingAnnotations.map(a => a.id));
+    const combined = dbAnns.filter(a => !pendingIds.has(a.id));
+    return [...combined, ...pendingAnnotations];
+  }, [annotations, pendingAnnotations, deletedAnnotationIds]);
+
+  /* ── Dirty (unsaved changes) state ───────────────────────────────────────── */
+  const hasUnsavedChanges = pendingAnnotations.length > 0 || deletedAnnotationIds.size > 0;
+
+  useEffect(() => {
+    window.dispatchEvent(
+      new CustomEvent("pdfDirtyChange", {
+        detail: { filePath, dirty: hasUnsavedChanges },
+      }),
+    );
+  }, [filePath, hasUnsavedChanges]);
+
+  /* ── Annotation callbacks (buffer, don't persist) ────────────────────────── */
+  const onAnnotationCreated = useCallback((ann: Annotation) => {
+    setPendingAnnotations(prev => [...prev, ann]);
+  }, []);
+
+  const onAnnotationDeleted = useCallback((annId: string) => {
+    // If it's a pending annotation, just remove from pending
+    setPendingAnnotations(prev => {
+      const found = prev.find(a => a.id === annId);
+      if (found) return prev.filter(a => a.id !== annId);
+      return prev;
+    });
+    // If it was already in DB, mark for deletion
+    setDeletedAnnotationIds(prev => {
+      const copy = new Set(prev);
+      copy.add(annId);
+      return copy;
+    });
+  }, []);
+
   /* ── Save PDF ────────────────────────────────────────────────────────────── */
   const savePdf = useCallback(async () => {
     if (!filePath || saving) return;
     setSaving(true);
     try {
+      // 1. Persist pending annotations to DB
+      if (vaultPath) {
+        for (const ann of pendingAnnotations) {
+          await window.electronAPI.saveAnnotation(vaultPath, ann);
+        }
+        // 2. Delete erased annotations from DB
+        for (const id of deletedAnnotationIds) {
+          await window.electronAPI.deleteAnnotation(vaultPath, id);
+        }
+      }
+
+      // 3. Bake visual annotations into the PDF binary
+      const allAnns = mergedAnnotations;
       const fileBytes = await window.electronAPI.readFile(filePath);
       const pdfDoc = await PDFDocument.load(fileBytes);
       const pages = pdfDoc.getPages();
 
-      for (const ann of annotations) {
+      for (const ann of allAnns) {
         const pageIdx = ann.page - 1;
         if (pageIdx < 0 || pageIdx >= pages.length) continue;
         const pdfPage = pages[pageIdx];
@@ -425,12 +483,22 @@ export const PDFViewer: React.FC<Props> = ({
       // Invalidate cache since file changed
       pdfCache.delete(filePath);
       await window.electronAPI.writeFile(filePath, new Uint8Array(savedBytes));
+
+      // 4. Reindex PDF with annotation text
+      if (vaultPath) {
+        await window.electronAPI.reindexPdf(vaultPath, filePath, effectiveFileId);
+      }
+
+      // 5. Clear pending state and reload from DB
+      setPendingAnnotations([]);
+      setDeletedAnnotationIds(new Set());
+      loadAnnotations();
     } catch (err) {
       console.error("[PDFViewer] Save failed", err);
     } finally {
       setSaving(false);
     }
-  }, [filePath, annotations, saving]);
+  }, [filePath, saving, vaultPath, pendingAnnotations, deletedAnnotationIds, mergedAnnotations, effectiveFileId, loadAnnotations]);
 
   /* ── Escape to deactivate tool ───────────────────────────────────────────── */
   useEffect(() => {
@@ -522,8 +590,9 @@ export const PDFViewer: React.FC<Props> = ({
           highlightColor={hlColor}
           fileId={effectiveFileId}
           vaultPath={vaultPath ?? ""}
-          annotations={annotations}
-          onAnnotationSaved={loadAnnotations}
+          annotations={mergedAnnotations}
+          onAnnotationCreated={onAnnotationCreated}
+          onAnnotationDeleted={onAnnotationDeleted}
           fontSize={fontSize}
           textColor={textColor}
           zoom={zoom}
@@ -541,8 +610,9 @@ export const PDFViewer: React.FC<Props> = ({
     hlColor,
     effectiveFileId,
     vaultPath,
-    annotations,
-    loadAnnotations,
+    mergedAnnotations,
+    onAnnotationCreated,
+    onAnnotationDeleted,
   ]);
 
   /* ── Render ──────────────────────────────────────────────────────────────── */
@@ -621,7 +691,7 @@ export const PDFViewer: React.FC<Props> = ({
             filePath={filePath}
             fileId={effectiveFileId}
             vaultPath={vaultPath ?? ""}
-            onAnnotationSaved={loadAnnotations}
+            onAnnotationCreated={onAnnotationCreated}
           />
         )}
       </div>

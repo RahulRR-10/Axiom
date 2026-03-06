@@ -27,6 +27,7 @@ declare global {
       saveAnnotation: (vaultPath: string, annotation: Annotation) => Promise<{ id: string }>;
       loadAnnotations: (vaultPath: string, fileId: string) => Promise<Annotation[]>;
       deleteAnnotation: (vaultPath: string, annotationId: string) => Promise<{ ok: boolean }>;
+      reindexPdf: (vaultPath: string, filePath: string, fileId: string) => Promise<{ ok: boolean }>;
 
       // ── Notes ──────────────────────────────────────────────────────────
       createNote: (vaultPath: string, targetDirectory: string, title: string, sourceFileId?: string, sourcePage?: number) => Promise<NoteSummary>;

@@ -20,6 +20,7 @@ type WorkspaceProps = {
 export const Workspace: React.FC<WorkspaceProps> = ({ vaultPath }) => {
   const [openFiles, setOpenFiles] = useState<OpenFile[]>([]);
   const [activeIdx, setActiveIdx] = useState(-1);
+  const [dirtyFiles, setDirtyFiles] = useState<Set<string>>(new Set());
 
   const activeFile = activeIdx >= 0 ? (openFiles[activeIdx] ?? null) : null;
 
@@ -75,10 +76,33 @@ export const Workspace: React.FC<WorkspaceProps> = ({ vaultPath }) => {
       window.removeEventListener("openFile", handler as EventListener);
   }, [vaultPath, openFiles]);
 
+  // ── Listen for dirty-state changes from PDFViewer ───────────────────────
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { filePath, dirty } = (
+        e as CustomEvent<{ filePath: string; dirty: boolean }>
+      ).detail;
+      setDirtyFiles((prev) => {
+        const next = new Set(prev);
+        if (dirty) next.add(filePath);
+        else next.delete(filePath);
+        return next;
+      });
+    };
+    window.addEventListener("pdfDirtyChange", handler as EventListener);
+    return () =>
+      window.removeEventListener("pdfDirtyChange", handler as EventListener);
+  }, []);
+
   // ── Close a tab ──────────────────────────────────────────────────────────
   const closeTab = useCallback(
     (idx: number, e?: React.MouseEvent) => {
       e?.stopPropagation();
+      const file = openFiles[idx];
+      if (file && dirtyFiles.has(file.filePath)) {
+        // Block closing — user must save first
+        return;
+      }
       setOpenFiles((prev) => {
         const next = [...prev];
         next.splice(idx, 1);
@@ -90,7 +114,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ vaultPath }) => {
         return prev;
       });
     },
-    [openFiles.length],
+    [openFiles, dirtyFiles],
   );
 
   // ── Render content based on active file ──────────────────────────────────
@@ -182,6 +206,22 @@ export const Workspace: React.FC<WorkspaceProps> = ({ vaultPath }) => {
 
               {/* File name — truncated */}
               <span className="truncate">{f.name}</span>
+
+              {/* Unsaved changes indicator */}
+              {dirtyFiles.has(f.filePath) && (
+                <span
+                  className="flex-shrink-0"
+                  style={{
+                    display: 'inline-block',
+                    width: 8,
+                    height: 8,
+                    borderRadius: '50%',
+                    background: '#ffffff',
+                    marginLeft: 4,
+                  }}
+                  title="Unsaved changes"
+                />
+              )}
 
               {/* Close button */}
               <span

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { ChevronDown, Highlighter } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
-import type { HighlightAnnotation } from '../../../shared/types';
+import type { Annotation, HighlightAnnotation } from '../../../shared/types';
 
 type AITarget = 'claude' | 'chatgpt' | 'gemini';
 const AI_TARGETS: AITarget[] = ['claude', 'chatgpt', 'gemini'];
@@ -22,7 +22,7 @@ type Props = {
   filePath:     string;
   fileId:       string;
   vaultPath:    string;
-  onAnnotationSaved: () => void;
+  onAnnotationCreated: (ann: Annotation) => void;
 };
 
 /**
@@ -88,7 +88,7 @@ export const FloatingActionBar: React.FC<Props> = ({
   filePath,
   fileId,
   vaultPath,
-  onAnnotationSaved,
+  onAnnotationCreated,
 }) => {
   const [pos, setPos]                   = useState<Position | null>(null);
   const [selectedText, setSelectedText] = useState('');
@@ -156,18 +156,14 @@ export const FloatingActionBar: React.FC<Props> = ({
   // ── Instant highlight with given color ──────────────────────────────────
   const doHighlight = useCallback((color: string) => {
     const result = buildHighlightFromSelection(fileId, color);
-    if (!result || !vaultPath) return;
+    if (!result) return;
 
-    window.electronAPI.saveAnnotation(vaultPath, result.annotation)
-      .then(() => {
-        onAnnotationSaved();
-        window.getSelection()?.removeAllRanges();
-      })
-      .catch(console.error);
+    onAnnotationCreated(result.annotation);
+    window.getSelection()?.removeAllRanges();
 
     setPos(null);
     setHlOpen(false);
-  }, [fileId, vaultPath, onAnnotationSaved]);
+  }, [fileId, onAnnotationCreated]);
 
   // Dispatch helpers
   const dispatchSendToAI = (target: AITarget) => {
