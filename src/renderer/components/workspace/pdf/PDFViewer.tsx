@@ -527,6 +527,23 @@ export const PDFViewer: React.FC<Props> = ({
     return () => document.removeEventListener("keydown", handler);
   }, []);
 
+  /* ── Touchpad pinch-to-zoom ──────────────────────────────────────────────── */
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+
+    const handler = (e: WheelEvent) => {
+      // Trackpad pinch gestures fire as wheel events with ctrlKey set
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      const delta = -e.deltaY * 0.01;
+      setZoom(prev => Math.min(4, Math.max(0.25, prev + delta)));
+    };
+
+    el.addEventListener('wheel', handler, { passive: false });
+    return () => el.removeEventListener('wheel', handler);
+  }, []);
+
   /* ── Scroll-based virtualization + page tracking ──────────────────────────── */
   const prevZoomRef = useRef(zoom);
   const currentPageRef = useRef(currentPage);
