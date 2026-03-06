@@ -4,6 +4,35 @@ import { X, ChevronRight } from "lucide-react";
 import { PDFViewer } from "./pdf/PDFViewer";
 import { NotesEditor } from "./notes/NotesEditor";
 
+// ── Simple image viewer (loads via IPC to bypass webSecurity) ─────────────────
+
+const ImageViewer: React.FC<{ filePath: string; name: string }> = ({ filePath, name }) => {
+  const [src, setSrc] = useState<string | null>(null);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    window.electronAPI.readFile(filePath)
+      .then((bytes) => {
+        const ext = filePath.split('.').pop()?.toLowerCase() || 'png';
+        const mimeMap: Record<string, string> = {
+          png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+          gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml', bmp: 'image/bmp',
+        };
+        const mime = mimeMap[ext] || 'image/png';
+        let binary = '';
+        for (let i = 0; i < bytes.length; i++) {
+          binary += String.fromCharCode(bytes[i]);
+        }
+        setSrc(`data:${mime};base64,${btoa(binary)}`);
+      })
+      .catch(() => setError(true));
+  }, [filePath]);
+
+  if (error) return <p className="text-[#666] text-sm">Failed to load image</p>;
+  if (!src) return <p className="text-[#4e4e4e] text-sm">Loading…</p>;
+  return <img src={src} alt={name} className="max-w-full max-h-full object-contain select-none" draggable={false} />;
+};
+
 type OpenFile = {
   filePath: string;
   fileId: string | null;
@@ -160,6 +189,55 @@ export const Workspace: React.FC<WorkspaceProps> = ({ vaultPath }) => {
     return () =>
       window.removeEventListener("openFile", handler as EventListener);
   }, [vaultPath, openFiles]);
+
+  // ── Listen for openFileToRight events ──────────────────────────────────
+  useEffect(() => {
+    const handler = async (e: Event) => {
+      const { filePath, fileType } = (
+        e as CustomEvent<{ filePath: string; fileType: string }>
+      ).detail;
+
+      // If already open, just activate
+      const existing = openFiles.find((f) => f.filePath === filePath);
+      if (existing) { setActiveFilePath(filePath); return; }
+
+      let fileId: string | null = null;
+      if (vaultPath) {
+        try { fileId = await window.electronAPI.getFileId(vaultPath, filePath); } catch { /* ignore */ }
+      }
+
+      const name = filePath.split(/[\\/]/).pop() ?? filePath;
+      const newFile: OpenFile = { filePath, fileId, fileType, name };
+
+      setOpenFiles((prev) => {
+        const activeIdx = prev.findIndex((f) => f.filePath === activeFilePath);
+        if (activeIdx < 0) return [...prev, newFile];
+
+        // Insert right after the active tab
+        const next = [...prev];
+        next.splice(activeIdx + 1, 0, newFile);
+
+        // If active tab is in a group, add new file to same group
+        const grp = tabGroups.find((g) => g.filePaths.includes(activeFilePath!));
+        if (grp) {
+          setTabGroups((gs) =>
+            gs.map((g) =>
+              g.id === grp.id
+                ? { ...g, filePaths: [...g.filePaths, filePath] }
+                : g,
+            ),
+          );
+        }
+
+        return next;
+      });
+      setActiveFilePath(filePath);
+    };
+
+    window.addEventListener("openFileToRight", handler as EventListener);
+    return () =>
+      window.removeEventListener("openFileToRight", handler as EventListener);
+  }, [vaultPath, openFiles, activeFilePath, tabGroups]);
 
   // ── Listen for dirty-state changes from PDFViewer ──────────────────────
   useEffect(() => {
@@ -626,6 +704,18 @@ export const Workspace: React.FC<WorkspaceProps> = ({ vaultPath }) => {
                   noteId={f.fileId ?? ""}
                   vaultPath={vaultPath ?? ""}
                 />
+              </div>
+            );
+          }
+
+          if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp'].includes(f.fileType)) {
+            return (
+              <div
+                key={f.filePath}
+                className="flex-1 min-h-0 overflow-auto flex items-center justify-center bg-[#141414]"
+                style={{ display: isActive ? undefined : 'none' }}
+              >
+                <ImageViewer filePath={f.filePath} name={f.name} />
               </div>
             );
           }

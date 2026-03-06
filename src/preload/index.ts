@@ -99,6 +99,45 @@ const electronAPI = {
     void ipcRenderer.invoke('shell:openExternal', url);
   },
 
+  showItemInFolder: (filePath: string): void => {
+    void ipcRenderer.invoke('shell:showItemInFolder', filePath);
+  },
+
+  makeCopy: (filePath: string): Promise<string> =>
+    ipcRenderer.invoke('file:makeCopy', filePath),
+
+  moveFile: (src: string, destDir: string): Promise<string> =>
+    ipcRenderer.invoke('file:move', src, destDir),
+
+  renameFile: (filePath: string, newName: string): Promise<string> =>
+    ipcRenderer.invoke('file:rename', filePath, newName),
+
+  deleteFile: (filePath: string): Promise<void> =>
+    ipcRenderer.invoke('file:delete', filePath),
+
+  createFolder: (folderPath: string): Promise<void> =>
+    ipcRenderer.invoke('file:createFolder', folderPath),
+
+  saveImage: (dirPath: string, fileName: string, data: Uint8Array): Promise<string> =>
+    ipcRenderer.invoke('file:saveImage', dirPath, fileName, Buffer.from(data)),
+
+  selectFolder: (defaultPath: string): Promise<string | null> =>
+    ipcRenderer.invoke('file:selectFolder', defaultPath),
+
+  openNewWindow: (filePath: string, fileType: string, vaultPath?: string): Promise<void> =>
+    ipcRenderer.invoke('window:openNew', filePath, fileType, vaultPath),
+
+  broadcastAnnotationsSaved: (fileId: string): Promise<void> =>
+    ipcRenderer.invoke('annotations:broadcastSaved', fileId),
+
+  onAnnotationsSaved: (callback: (fileId: string) => void): (() => void) => {
+    const listener = (_: unknown, fileId: string): void => callback(fileId);
+    ipcRenderer.on('annotations:saved', listener);
+    return () => ipcRenderer.removeListener('annotations:saved', listener);
+  },
+
+
+
   // ── AI panel ─────────────────────────────────────────────────────────────
   getAIPreloadPath: (): Promise<string> =>
     ipcRenderer.invoke('ai:getPreloadPath'),

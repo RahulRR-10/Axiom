@@ -1,12 +1,21 @@
 import {
   ChevronDown,
   ChevronRight,
+  Copy,
+  ExternalLink,
   FileText,
   Folder,
   FolderOpen,
+  FolderInput,
+  FolderPlus,
+  PanelRight,
+  Pencil,
   PlusCircle,
+  Trash2,
+  AppWindow,
+  ClipboardCopy,
 } from 'lucide-react';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { FileNode, IndexStatus } from '../../../shared/types';
 
@@ -122,6 +131,111 @@ const NewNoteModal: React.FC<NewNoteModalProps> = ({ targetFolder, onCancel, onC
   );
 };
 
+// ── New Folder Modal ──────────────────────────────────────────────────────────
+
+type NewFolderModalProps = {
+  targetFolder: string;
+  onCancel: () => void;
+  onCreate: (name: string) => void;
+};
+
+const NewFolderModal: React.FC<NewFolderModalProps> = ({ targetFolder, onCancel, onCreate }) => {
+  const [name, setName] = useState('');
+
+  const folderName = targetFolder.split(/[/\\]/).filter(Boolean).pop() ?? targetFolder;
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    onCreate(trimmed);
+  };
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 9999,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: 'rgba(0,0,0,0.5)',
+      }}
+      onClick={onCancel}
+    >
+      <form
+        onSubmit={handleSubmit}
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: '#252525',
+          border: '1px solid #3a3a3a',
+          borderRadius: '10px',
+          padding: '20px',
+          width: '320px',
+          boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+        }}
+      >
+        <h3 style={{ margin: '0 0 4px', fontSize: '14px', fontWeight: 600, color: '#e4e4e4' }}>
+          New Folder
+        </h3>
+        <p style={{ margin: '0 0 12px', fontSize: '11px', color: '#6a6a6a' }}>
+          in {folderName}/
+        </p>
+        <input
+          autoFocus
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Folder name…"
+          style={{
+            width: '100%',
+            padding: '8px 10px',
+            borderRadius: '6px',
+            border: '1px solid #3a3a3a',
+            background: '#1a1a1a',
+            color: '#d4d4d4',
+            fontSize: '13px',
+            outline: 'none',
+            boxSizing: 'border-box',
+          }}
+        />
+        <div style={{ display: 'flex', gap: '8px', marginTop: '12px', justifyContent: 'flex-end' }}>
+          <button
+            type="button"
+            onClick={onCancel}
+            style={{
+              padding: '5px 14px',
+              borderRadius: '6px',
+              border: '1px solid #3a3a3a',
+              background: 'transparent',
+              color: '#8a8a8a',
+              fontSize: '12px',
+              cursor: 'pointer',
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            style={{
+              padding: '5px 14px',
+              borderRadius: '6px',
+              border: 'none',
+              background: '#4a9eff',
+              color: '#fff',
+              fontSize: '12px',
+              cursor: 'pointer',
+              fontWeight: 500,
+            }}
+          >
+            Create
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+};
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export const VaultSidebar: React.FC<VaultSidebarProps> = ({ onVaultOpen, onFileOpen }) => {
@@ -130,6 +244,8 @@ export const VaultSidebar: React.FC<VaultSidebarProps> = ({ onVaultOpen, onFileO
   const [indexStatus, setIndexStatus] = useState<IndexStatus | null>(null);
   const [activeFile, setActiveFile] = useState<string | null>(null);
   const [newNoteFolder, setNewNoteFolder] = useState<string | null>(null);
+  const [newFolderParent, setNewFolderParent] = useState<string | null>(null);
+  const [emptySpaceMenu, setEmptySpaceMenu] = useState<{ x: number; y: number } | null>(null);
 
   // Subscribe to background indexing progress and file-change events
   useEffect(() => {
@@ -204,6 +320,29 @@ export const VaultSidebar: React.FC<VaultSidebarProps> = ({ onVaultOpen, onFileO
     }
   }, [vaultPath, newNoteFolder]);
 
+  // ── New Folder handler ──────────────────────────────────────────────────
+  const handleCreateFolder = useCallback(async (name: string) => {
+    if (!vaultPath || !newFolderParent) return;
+    try {
+      const sep = newFolderParent.includes('/') ? '/' : '\\';
+      const folderPath = `${newFolderParent}${sep}${name}`;
+      await window.electronAPI.createFolder(folderPath);
+      setNewFolderParent(null);
+      await refreshTree(vaultPath);
+    } catch (err) {
+      console.error('[VaultSidebar] Failed to create folder:', err);
+      setNewFolderParent(null);
+    }
+  }, [vaultPath, newFolderParent]);
+
+  // ── Empty space context menu dismiss ──────────────────────────────────
+  useEffect(() => {
+    if (!emptySpaceMenu) return;
+    const dismiss = () => setEmptySpaceMenu(null);
+    window.addEventListener('click', dismiss);
+    return () => window.removeEventListener('click', dismiss);
+  }, [emptySpaceMenu]);
+
   const vaultName = vaultPath
     ? vaultPath.split(/[/\\]/).filter(Boolean).slice(-1)[0] ?? vaultPath
     : null;
@@ -232,19 +371,11 @@ export const VaultSidebar: React.FC<VaultSidebarProps> = ({ onVaultOpen, onFileO
   return (
     <div className="h-full w-full flex flex-col overflow-hidden">
 
-      {/* Vault name + new note button */}
+      {/* Vault name */}
       <div className="px-2 py-1.5 flex items-center justify-between border-b border-[#2a2a2a]">
         <span className="text-xs font-semibold text-[#d4d4d4] truncate" title={vaultPath}>
           {vaultName}
         </span>
-        <button
-          type="button"
-          title="New Note"
-          className="h-6 w-6 rounded text-[#8a8a8a] hover:text-[#d4d4d4] hover:bg-[#2a2a2a] flex items-center justify-center shrink-0"
-          onClick={handleNewNote}
-        >
-          <PlusCircle size={14} />
-        </button>
       </div>
 
       {/* Indexing progress */}
@@ -263,8 +394,36 @@ export const VaultSidebar: React.FC<VaultSidebarProps> = ({ onVaultOpen, onFileO
         </div>
       )}
 
-      {/* File tree */}
-      <div className="flex-1 overflow-y-auto py-1">
+      {/* File tree — right-click empty space for context menu */}
+      <div
+        className="flex-1 overflow-y-auto py-1"
+        onContextMenu={(e) => {
+          // Only show if right-clicking actual empty space (not a file/folder)
+          if ((e.target as HTMLElement).closest('[data-tree-node]')) return;
+          e.preventDefault();
+          window.dispatchEvent(new Event('dismissFileCtxMenu'));
+          setEmptySpaceMenu({ x: e.clientX, y: e.clientY });
+        }}
+        // Drop target for root vault area
+        onDragOver={(e) => {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          const srcPath = e.dataTransfer.getData('text/vault-path');
+          if (!srcPath || !vaultPath) return;
+          // Move to vault root
+          void (async () => {
+            try {
+              await window.electronAPI.moveFile(srcPath, vaultPath);
+              await refreshTree(vaultPath);
+            } catch (err) {
+              console.error('[VaultSidebar] Drop to root failed:', err);
+            }
+          })();
+        }}
+      >
         {files.length === 0 ? (
           <p className="px-3 py-2 text-xs text-[#5a5a5a]">No files found</p>
         ) : (
@@ -274,12 +433,57 @@ export const VaultSidebar: React.FC<VaultSidebarProps> = ({ onVaultOpen, onFileO
               node={node}
               depth={0}
               activeFile={activeFile}
+              vaultPath={vaultPath}
               onFileClick={handleFileClick}
               onNewNoteInFolder={(folderPath) => setNewNoteFolder(folderPath)}
+              onNewFolderInFolder={(folderPath) => setNewFolderParent(folderPath)}
+              onTreeChanged={() => void refreshTree(vaultPath)}
             />
           ))
         )}
       </div>
+
+      {/* Empty space context menu */}
+      {emptySpaceMenu && (
+        <div
+          style={{
+            position: 'fixed',
+            top: emptySpaceMenu.y,
+            left: emptySpaceMenu.x,
+            zIndex: 9998,
+            background: '#2d2d2d',
+            border: '1px solid #444',
+            borderRadius: '6px',
+            padding: '4px 0',
+            boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+            minWidth: '160px',
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              setEmptySpaceMenu(null);
+              setNewNoteFolder(vaultPath);
+            }}
+            className="w-full text-left px-3 py-1.5 text-xs text-[#d4d4d4] hover:bg-[#3a3a3a] transition-colors flex items-center gap-2"
+          >
+            <PlusCircle size={12} />
+            New Note
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setEmptySpaceMenu(null);
+              setNewFolderParent(vaultPath);
+            }}
+            className="w-full text-left px-3 py-1.5 text-xs text-[#d4d4d4] hover:bg-[#3a3a3a] transition-colors flex items-center gap-2"
+          >
+            <FolderPlus size={12} />
+            New Folder
+          </button>
+        </div>
+      )}
 
       {/* New Note Modal */}
       {newNoteFolder && (
@@ -287,6 +491,15 @@ export const VaultSidebar: React.FC<VaultSidebarProps> = ({ onVaultOpen, onFileO
           targetFolder={newNoteFolder}
           onCancel={() => setNewNoteFolder(null)}
           onCreate={(title) => void handleCreateNote(title)}
+        />
+      )}
+
+      {/* New Folder Modal */}
+      {newFolderParent && (
+        <NewFolderModal
+          targetFolder={newFolderParent}
+          onCancel={() => setNewFolderParent(null)}
+          onCreate={(name) => void handleCreateFolder(name)}
         />
       )}
     </div>
@@ -299,38 +512,257 @@ type TreeNodeProps = {
   node: FileNode;
   depth: number;
   activeFile: string | null;
+  vaultPath: string;
   onFileClick: (node: FileNode) => void;
   onNewNoteInFolder?: (folderPath: string) => void;
+  onNewFolderInFolder?: (folderPath: string) => void;
+  onTreeChanged?: () => void;
 };
 
-const TreeNode: React.FC<TreeNodeProps> = ({ node, depth, activeFile, onFileClick, onNewNoteInFolder }) => {
+const TreeNode: React.FC<TreeNodeProps> = ({ node, depth, activeFile, vaultPath, onFileClick, onNewNoteInFolder, onNewFolderInFolder, onTreeChanged }) => {
   const [open, setOpen] = useState<boolean>(true);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
+  const [showCopyPathSub, setShowCopyPathSub] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [renameValue, setRenameValue] = useState('');
+  const renameRef = useRef<HTMLInputElement>(null);
+  const [dropTarget, setDropTarget] = useState(false);
 
-  // Close context menu on outside click
+  // Close context menu on outside click or when another file opens its menu
   useEffect(() => {
     if (!ctxMenu) return;
-    const dismiss = () => setCtxMenu(null);
+    const dismiss = () => { setCtxMenu(null); setShowCopyPathSub(false); };
     window.addEventListener('click', dismiss);
-    window.addEventListener('contextmenu', dismiss);
+    window.addEventListener('dismissFileCtxMenu', dismiss);
     return () => {
       window.removeEventListener('click', dismiss);
-      window.removeEventListener('contextmenu', dismiss);
+      window.removeEventListener('dismissFileCtxMenu', dismiss);
     };
   }, [ctxMenu]);
 
+  // Focus rename input
+  useEffect(() => {
+    if (renaming && renameRef.current) {
+      renameRef.current.focus();
+      const dotIdx = renameValue.lastIndexOf('.');
+      renameRef.current.setSelectionRange(0, dotIdx > 0 ? dotIdx : renameValue.length);
+    }
+  }, [renaming]);
+
+  const commitRename = async () => {
+    const trimmed = renameValue.trim();
+    if (!trimmed || trimmed === node.name) { setRenaming(false); return; }
+    try {
+      await window.electronAPI.renameFile(node.path, trimmed);
+      onTreeChanged?.();
+    } catch (err) {
+      console.error('[VaultSidebar] Rename failed:', err);
+    }
+    setRenaming(false);
+  };
+
+  // ── Drag handlers ──────────────────────────────────────────────────────
+  const handleDragStart = (e: React.DragEvent) => {
+    e.dataTransfer.setData('text/vault-path', node.path);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleFolderDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'move';
+    setDropTarget(true);
+  };
+
+  const handleFolderDragLeave = () => {
+    setDropTarget(false);
+  };
+
+  const handleFolderDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDropTarget(false);
+    const srcPath = e.dataTransfer.getData('text/vault-path');
+    if (!srcPath || srcPath === node.path) return;
+    // Don't drop a folder into itself or its own subfolder
+    if (node.path.startsWith(srcPath)) return;
+    void (async () => {
+      try {
+        await window.electronAPI.moveFile(srcPath, node.path);
+        onTreeChanged?.();
+      } catch (err) {
+        console.error('[VaultSidebar] Drop failed:', err);
+      }
+    })();
+  };
+
+  // ── File context menu actions ──────────────────────────────────────────
+  const fileCtxActions = {
+    openInNewTab: () => {
+      window.dispatchEvent(new CustomEvent('openFile', { detail: { filePath: node.path, fileType: node.fileType } }));
+    },
+    openToRight: () => {
+      window.dispatchEvent(new CustomEvent('openFileToRight', { detail: { filePath: node.path, fileType: node.fileType } }));
+    },
+    openInNewWindow: () => {
+      void window.electronAPI.openNewWindow(node.path, node.fileType ?? 'txt', vaultPath);
+    },
+    makeCopy: async () => {
+      await window.electronAPI.makeCopy(node.path);
+      onTreeChanged?.();
+    },
+    moveFileTo: async () => {
+      const dest = await window.electronAPI.selectFolder(vaultPath);
+      if (!dest) return;
+      try {
+        await window.electronAPI.moveFile(node.path, dest);
+        onTreeChanged?.();
+      } catch (err) {
+        console.error('[VaultSidebar] Move failed:', err);
+      }
+    },
+    copyVaultRelativePath: () => {
+      const rel = node.path.startsWith(vaultPath)
+        ? node.path.slice(vaultPath.length).replace(/^[\\/]/, '')
+        : node.path;
+      navigator.clipboard.writeText(rel);
+    },
+    copySystemPath: () => {
+      navigator.clipboard.writeText(node.path);
+    },
+    openInDefaultApp: () => {
+      window.electronAPI.openExternal(node.path);
+    },
+    showInExplorer: () => {
+      window.electronAPI.showItemInFolder(node.path);
+    },
+    startRename: () => {
+      setRenameValue(node.name);
+      setRenaming(true);
+    },
+    deleteFile: async () => {
+      const ok = window.confirm(`Move "${node.name}" to trash?`);
+      if (!ok) return;
+      try {
+        await window.electronAPI.deleteFile(node.path);
+        onTreeChanged?.();
+      } catch (err) {
+        console.error('[VaultSidebar] Delete failed:', err);
+      }
+    },
+  };
+
+  // ── Shared context-menu dropdown UI ────────────────────────────────────
+  const renderFileContextMenu = () => {
+    if (!ctxMenu) return null;
+
+    const sep = <div style={{ height: 1, background: '#3a3a3a', margin: '4px 0' }} />;
+    const item = (label: string, icon: React.ReactNode, onClick: () => void, danger = false) => (
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); setCtxMenu(null); setShowCopyPathSub(false); onClick(); }}
+        className="w-full text-left px-3 py-1.5 text-xs hover:bg-[#3a3a3a] transition-colors flex items-center gap-2"
+        style={{ color: danger ? '#f87171' : '#d4d4d4' }}
+      >
+        {icon}
+        {label}
+      </button>
+    );
+
+    return (
+      <div
+        style={{
+          position: 'fixed',
+          top: ctxMenu.y,
+          left: ctxMenu.x,
+          zIndex: 9998,
+          background: '#2d2d2d',
+          border: '1px solid #444',
+          borderRadius: '6px',
+          padding: '4px 0',
+          boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+          minWidth: '200px',
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {item('Open in new tab', <ExternalLink size={12} />, fileCtxActions.openInNewTab)}
+        {item('Open to the right', <PanelRight size={12} />, fileCtxActions.openToRight)}
+        {item('Open in new window', <AppWindow size={12} />, fileCtxActions.openInNewWindow)}
+        {sep}
+        {item('Make a copy', <Copy size={12} />, () => void fileCtxActions.makeCopy())}
+        {item('Move file to…', <FolderInput size={12} />, () => void fileCtxActions.moveFileTo())}
+        {sep}
+
+        {/* Copy path sub-menu */}
+        <div
+          className="relative"
+          onMouseEnter={() => setShowCopyPathSub(true)}
+          onMouseLeave={() => setShowCopyPathSub(false)}
+        >
+          <button
+            type="button"
+            className="w-full text-left px-3 py-1.5 text-xs text-[#d4d4d4] hover:bg-[#3a3a3a] transition-colors flex items-center gap-2"
+            onClick={(e) => { e.stopPropagation(); setShowCopyPathSub((v) => !v); }}
+          >
+            <ClipboardCopy size={12} />
+            Copy path
+            <ChevronRight size={10} className="ml-auto text-[#6a6a6a]" />
+          </button>
+
+          {showCopyPathSub && (
+            <div
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: '100%',
+                marginLeft: 2,
+                background: '#2d2d2d',
+                border: '1px solid #444',
+                borderRadius: '6px',
+                padding: '4px 0',
+                boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+                minWidth: '180px',
+                zIndex: 9999,
+              }}
+            >
+              {item('Vault relative path', null, () => { fileCtxActions.copyVaultRelativePath(); setShowCopyPathSub(false); })}
+              {item('System absolute path', null, () => { fileCtxActions.copySystemPath(); setShowCopyPathSub(false); })}
+            </div>
+          )}
+        </div>
+
+        {sep}
+        {item('Open in default app', <ExternalLink size={12} />, fileCtxActions.openInDefaultApp)}
+        {item('Show in system explorer', <FolderOpen size={12} />, fileCtxActions.showInExplorer)}
+        {sep}
+        {item('Rename', <Pencil size={12} />, fileCtxActions.startRename)}
+        {item('Delete', <Trash2 size={12} />, () => void fileCtxActions.deleteFile(), true)}
+      </div>
+    );
+  };
+
   if (node.type === 'folder') {
     return (
-      <div>
+      <div data-tree-node>
         <button
           type="button"
+          draggable
+          onDragStart={handleDragStart}
+          onDragOver={handleFolderDragOver}
+          onDragLeave={handleFolderDragLeave}
+          onDrop={handleFolderDrop}
           onClick={() => setOpen((o) => !o)}
           onContextMenu={(e) => {
             e.preventDefault();
             e.stopPropagation();
+            window.dispatchEvent(new Event('dismissFileCtxMenu'));
             setCtxMenu({ x: e.clientX, y: e.clientY });
           }}
-          style={{ paddingLeft: depth * 12 + 8 }}
+          style={{
+            paddingLeft: depth * 12 + 8,
+            background: dropTarget ? 'rgba(74, 158, 255, 0.15)' : undefined,
+            borderLeft: dropTarget ? '2px solid #4a9eff' : '2px solid transparent',
+          }}
           className="w-full flex items-center gap-1.5 py-1 pr-2 text-left hover:bg-[#2a2a2a] rounded transition-colors"
         >
           <span className="text-[#6a6a6a] shrink-0">
@@ -355,7 +787,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({ node, depth, activeFile, onFileClic
               borderRadius: '6px',
               padding: '4px 0',
               boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
-              minWidth: '140px',
+              minWidth: '160px',
             }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -370,6 +802,75 @@ const TreeNode: React.FC<TreeNodeProps> = ({ node, depth, activeFile, onFileClic
               <PlusCircle size={12} />
               New Note
             </button>
+            <button
+              type="button"
+              onClick={() => {
+                setCtxMenu(null);
+                onNewFolderInFolder?.(node.path);
+              }}
+              className="w-full text-left px-3 py-1.5 text-xs text-[#d4d4d4] hover:bg-[#3a3a3a] transition-colors flex items-center gap-2"
+            >
+              <FolderPlus size={12} />
+              New Folder
+            </button>
+            <div style={{ height: 1, background: '#3a3a3a', margin: '4px 0' }} />
+            <button
+              type="button"
+              onClick={() => {
+                setCtxMenu(null);
+                setRenameValue(node.name);
+                setRenaming(true);
+              }}
+              className="w-full text-left px-3 py-1.5 text-xs text-[#d4d4d4] hover:bg-[#3a3a3a] transition-colors flex items-center gap-2"
+            >
+              <Pencil size={12} />
+              Rename
+            </button>
+            <button
+              type="button"
+              onClick={async () => {
+                setCtxMenu(null);
+                const ok = window.confirm(`Move "${node.name}" to trash?`);
+                if (!ok) return;
+                try {
+                  await window.electronAPI.deleteFile(node.path);
+                  onTreeChanged?.();
+                } catch (err) {
+                  console.error('[VaultSidebar] Delete folder failed:', err);
+                }
+              }}
+              className="w-full text-left px-3 py-1.5 text-xs text-[#f87171] hover:bg-[#3a3a3a] transition-colors flex items-center gap-2"
+            >
+              <Trash2 size={12} />
+              Delete
+            </button>
+          </div>
+        )}
+
+        {/* Inline rename for folder */}
+        {renaming && (
+          <div style={{ paddingLeft: depth * 12 + 20 }} className="flex items-center gap-1.5 py-0.5 pr-2">
+            <Folder size={13} className="shrink-0 text-[#6a6a6a]" />
+            <input
+              ref={renameRef}
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void commitRename();
+                if (e.key === 'Escape') setRenaming(false);
+              }}
+              onBlur={() => void commitRename()}
+              style={{
+                flex: 1,
+                padding: '1px 4px',
+                borderRadius: '3px',
+                border: '1px solid #4a9eff',
+                background: '#1a1a1a',
+                color: '#d4d4d4',
+                fontSize: '12px',
+                outline: 'none',
+              }}
+            />
           </div>
         )}
 
@@ -379,8 +880,11 @@ const TreeNode: React.FC<TreeNodeProps> = ({ node, depth, activeFile, onFileClic
             node={child}
             depth={depth + 1}
             activeFile={activeFile}
+            vaultPath={vaultPath}
             onFileClick={onFileClick}
             onNewNoteInFolder={onNewNoteInFolder}
+            onNewFolderInFolder={onNewFolderInFolder}
+            onTreeChanged={onTreeChanged}
           />
         ))}
       </div>
@@ -389,17 +893,59 @@ const TreeNode: React.FC<TreeNodeProps> = ({ node, depth, activeFile, onFileClic
 
   const isActive = node.path === activeFile;
 
+  // Inline rename mode
+  if (renaming) {
+    return (
+      <div data-tree-node style={{ paddingLeft: depth * 12 + 20 }} className="flex items-center gap-1.5 py-0.5 pr-2">
+        <FileIcon fileType={node.fileType ?? ''} />
+        <input
+          ref={renameRef}
+          value={renameValue}
+          onChange={(e) => setRenameValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void commitRename();
+            if (e.key === 'Escape') setRenaming(false);
+          }}
+          onBlur={() => void commitRename()}
+          style={{
+            flex: 1,
+            padding: '1px 4px',
+            borderRadius: '3px',
+            border: '1px solid #4a9eff',
+            background: '#1a1a1a',
+            color: '#d4d4d4',
+            fontSize: '12px',
+            outline: 'none',
+          }}
+        />
+      </div>
+    );
+  }
+
   return (
-    <button
-      type="button"
-      onClick={() => onFileClick(node)}
-      style={{ paddingLeft: depth * 12 + 20 }}
-      className={`w-full flex items-center gap-1.5 py-1 pr-2 text-left rounded transition-colors ${isActive ? 'bg-[#3a3a3a]' : 'hover:bg-[#2a2a2a]'
-        }`}
-    >
-      <FileIcon fileType={node.fileType ?? ''} />
-      <span className="text-xs text-[#d4d4d4] truncate">{node.name}</span>
-    </button>
+    <>
+      <button
+        type="button"
+        data-tree-node
+        draggable
+        onDragStart={handleDragStart}
+        onClick={() => onFileClick(node)}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          window.dispatchEvent(new Event('dismissFileCtxMenu'));
+          setCtxMenu({ x: e.clientX, y: e.clientY });
+        }}
+        style={{ paddingLeft: depth * 12 + 20 }}
+        className={`w-full flex items-center gap-1.5 py-1 pr-2 text-left rounded transition-colors ${isActive ? 'bg-[#3a3a3a]' : 'hover:bg-[#2a2a2a]'
+          }`}
+      >
+        <FileIcon fileType={node.fileType ?? ''} />
+        <span className="text-xs text-[#d4d4d4] truncate">{node.name}</span>
+      </button>
+
+      {renderFileContextMenu()}
+    </>
   );
 };
 
@@ -411,6 +957,13 @@ const FileIcon: React.FC<{ fileType: string }> = ({ fileType }) => {
     md: '#60a5fa',
     txt: '#9ca3af',
     pptx: '#fb923c',
+    png: '#a78bfa',
+    jpg: '#a78bfa',
+    jpeg: '#a78bfa',
+    gif: '#a78bfa',
+    webp: '#a78bfa',
+    svg: '#a78bfa',
+    bmp: '#a78bfa',
   };
   return (
     <FileText

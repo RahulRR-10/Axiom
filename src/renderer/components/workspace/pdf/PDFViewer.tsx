@@ -383,6 +383,18 @@ export const PDFViewer: React.FC<Props> = ({
     loadAnnotations();
   }, [loadAnnotations]);
 
+  /* ── Listen for annotation saves from other windows ───────────────────────── */
+  useEffect(() => {
+    const unsub = window.electronAPI.onAnnotationsSaved((savedFileId) => {
+      if (savedFileId === effectiveFileId) {
+        // Reload annotations from DB and invalidate PDF cache
+        pdfCache.delete(filePath);
+        loadAnnotations();
+      }
+    });
+    return unsub;
+  }, [effectiveFileId, filePath, loadAnnotations]);
+
   /* ── Merged annotations (DB + pending - deleted) ─────────────────────────── */
   const mergedAnnotations = useMemo(() => {
     const dbAnns = annotations.filter((a) => !deletedAnnotationIds.has(a.id));
@@ -538,6 +550,9 @@ export const PDFViewer: React.FC<Props> = ({
       setPendingAnnotations([]);
       setDeletedAnnotationIds(new Set());
       loadAnnotations();
+
+      // 6. Broadcast to other windows so they refresh
+      void window.electronAPI.broadcastAnnotationsSaved(effectiveFileId);
     } catch (err) {
       console.error("[PDFViewer] Save failed", err);
     } finally {

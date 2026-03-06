@@ -111,7 +111,7 @@ function handleGetIndexStatus(vaultPath: string): VaultGetIndexStatusResponse {
 
 // ── Directory utilities ───────────────────────────────────────────────────────
 
-const INDEXABLE_EXTENSIONS = new Set(['.pdf', '.pptx', '.md', '.txt']);
+const INDEXABLE_EXTENSIONS = new Set(['.pdf', '.pptx', '.md', '.txt', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp']);
 
 function buildFileTree(rootPath: string): FileNode[] {
   const nodes: FileNode[] = [];

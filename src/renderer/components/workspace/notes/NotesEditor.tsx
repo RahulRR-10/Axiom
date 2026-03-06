@@ -5,8 +5,8 @@ import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import rehypeRaw from 'rehype-raw';
 
-import { EditorState } from '@codemirror/state';
-import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, rectangularSelection } from '@codemirror/view';
+import { EditorState, StateField, type Range } from '@codemirror/state';
+import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, rectangularSelection, Decoration, WidgetType, type DecorationSet } from '@codemirror/view';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { syntaxHighlighting, defaultHighlightStyle, bracketMatching } from '@codemirror/language';
@@ -96,19 +96,174 @@ const TOOLBAR_ACTIONS: ToolbarAction[] = [
 
 function preprocessMathDelimiters(text: string): string {
     // \[ ... \] → $$ ... $$ (LaTeX display math)
-    let result = text.replace(/\\\[([\s\S]*?)\\\]/g, (_, math) => `$$${math}$$`);
+    let result = text.replace(/\\\[([\\s\\S]*?)\\\]/g, (_, math) => `$$${math}$$`);
     // \( ... \) → $ ... $ (LaTeX inline math)
-    result = result.replace(/\\\(([\s\S]*?)\\\)/g, (_, math) => `$${math}$`);
+    result = result.replace(/\\\(([\\s\\S]*?)\\\)/g, (_, math) => `$${math}$`);
     // Standalone bare brackets on their own lines:
     //   [
     //   S \div R = T(X)
     //   ]
     // → $$\nS \div R = T(X)\n$$
     result = result.replace(
-        /^[ \t]*\[[ \t]*$([\s\S]*?)^[ \t]*\][ \t]*$/gm,
+        /^[ \t]*\[[ \t]*$([\\s\\S]*?)^[ \t]*\][ \t]*$/gm,
         (_, math) => `$$\n${math.trim()}\n$$`,
     );
     return result;
+}
+
+// ── Image helpers ─────────────────────────────────────────────────────────────
+
+function generateImageName(ext: string): string {
+    const timestamp = Date.now();
+    const rand = Math.random().toString(36).substring(2, 8);
+    return `image-${timestamp}-${rand}.${ext}`;
+}
+
+function getFileDir(filePath: string): string {
+    const sep = filePath.includes('/') ? '/' : '\\';
+    const parts = filePath.split(sep);
+    parts.pop();
+    return parts.join(sep);
+}
+
+function getNoteName(filePath: string): string {
+    const name = filePath.split(/[\\/]/).pop() ?? '';
+    return name.replace(/\.md$/i, '');
+}
+
+// ── Async image component for read-mode rendering ─────────────────────────────
+// Loads images via IPC (readFile) and converts to data URIs so they display
+// correctly regardless of webSecurity / same-origin restrictions.
+
+const NoteImage: React.FC<{ src?: string; alt?: string; fileDir: string }> = ({ src, alt, fileDir }) => {
+    const [dataUri, setDataUri] = useState<string | null>(null);
+    const [error, setError] = useState(false);
+
+    useEffect(() => {
+        if (!src) { setError(true); return; }
+        if (src.startsWith('http') || src.startsWith('data:')) {
+            setDataUri(src);
+            return;
+        }
+
+        const cleanSrc = src.replace(/^\.\//, '').replace(/^\.\\/, '');
+        const sep = fileDir.includes('/') ? '/' : '\\';
+        const fullPath = src.startsWith('file:///')
+            ? decodeURIComponent(src.replace('file:///', ''))
+            : `${fileDir}${sep}${cleanSrc}`;
+
+        window.electronAPI.readFile(fullPath)
+            .then((bytes) => {
+                const ext = fullPath.split('.').pop()?.toLowerCase() || 'png';
+                const mimeMap: Record<string, string> = {
+                    png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+                    gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml',
+                };
+                const mime = mimeMap[ext] || 'image/png';
+                let binary = '';
+                for (let i = 0; i < bytes.length; i++) {
+                    binary += String.fromCharCode(bytes[i]);
+                }
+                setDataUri(`data:${mime};base64,${btoa(binary)}`);
+            })
+            .catch(() => setError(true));
+    }, [src, fileDir]);
+
+    if (error) return <span className="text-[#666] text-xs italic">[image not found]</span>;
+    if (!dataUri) return <span className="text-[#4e4e4e] text-xs">Loading image…</span>;
+    return <img src={dataUri} alt={alt || 'image'} className="notes-embedded-image" />;
+};
+
+// ── CodeMirror inline image preview widget ────────────────────────────────────
+// Scans document for ![...](path) patterns pointing to local images and renders
+// a preview widget below the line.
+
+const IMAGE_RE = /!\[[^\]]*\]\(([^)]+)\)/g;
+const IMAGE_EXTS = /\.(png|jpe?g|gif|webp|svg|bmp)$/i;
+
+class ImageWidget extends WidgetType {
+    constructor(readonly src: string, readonly fileDir: string) { super(); }
+
+    eq(other: ImageWidget): boolean {
+        return other.src === this.src && other.fileDir === this.fileDir;
+    }
+
+    toDOM(): HTMLElement {
+        const wrap = document.createElement('div');
+        wrap.className = 'cm-image-preview';
+        wrap.style.cssText = 'padding:4px 0 8px;max-width:100%;';
+
+        const img = document.createElement('img');
+        img.style.cssText = 'max-width:100%;max-height:300px;border-radius:6px;display:block;';
+        img.alt = 'preview';
+
+        // Resolve relative path to absolute and load via IPC
+        const cleanSrc = this.src.replace(/^\.\//, '').replace(/^\.\\/, '');
+        const sep = this.fileDir.includes('/') ? '/' : '\\';
+        const fullPath = `${this.fileDir}${sep}${cleanSrc}`;
+
+        window.electronAPI.readFile(fullPath)
+            .then((bytes) => {
+                const ext = fullPath.split('.').pop()?.toLowerCase() || 'png';
+                const mimeMap: Record<string, string> = {
+                    png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+                    gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml', bmp: 'image/bmp',
+                };
+                const mime = mimeMap[ext] || 'image/png';
+                let binary = '';
+                for (let i = 0; i < bytes.length; i++) {
+                    binary += String.fromCharCode(bytes[i]);
+                }
+                img.src = `data:${mime};base64,${btoa(binary)}`;
+            })
+            .catch(() => {
+                img.style.display = 'none';
+            });
+
+        wrap.appendChild(img);
+        return wrap;
+    }
+
+    ignoreEvent(): boolean { return true; }
+}
+
+function buildImageDecorations(state: EditorState, fileDir: string): DecorationSet {
+    const widgets: Range<Decoration>[] = [];
+    const doc = state.doc;
+
+    for (let i = 1; i <= doc.lines; i++) {
+        const line = doc.line(i);
+        let match: RegExpExecArray | null;
+        IMAGE_RE.lastIndex = 0;
+        while ((match = IMAGE_RE.exec(line.text)) !== null) {
+            const src = match[1];
+            if (IMAGE_EXTS.test(src) && !src.startsWith('http')) {
+                widgets.push(
+                    Decoration.widget({
+                        widget: new ImageWidget(src, fileDir),
+                        block: true,
+                    }).range(line.to),
+                );
+            }
+        }
+    }
+
+    return Decoration.set(widgets, true);
+}
+
+function imagePreviewPlugin(fileDir: string) {
+    return StateField.define<DecorationSet>({
+        create(state) {
+            return buildImageDecorations(state, fileDir);
+        },
+        update(value, tr) {
+            if (tr.docChanged) {
+                return buildImageDecorations(tr.state, fileDir);
+            }
+            return value;
+        },
+        provide: (f) => EditorView.decorations.from(f),
+    });
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -124,6 +279,9 @@ export const NotesEditor: React.FC<NotesEditorProps> = ({ filePath, noteId, vaul
     const [loaded, setLoaded] = useState(false);
     const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const contentRef = useRef(content);
+
+    const fileDir = useMemo(() => getFileDir(filePath), [filePath]);
+    const noteName = useMemo(() => getNoteName(filePath), [filePath]);
 
     // Keep contentRef in sync
     useEffect(() => { contentRef.current = content; }, [content]);
@@ -189,6 +347,31 @@ export const NotesEditor: React.FC<NotesEditorProps> = ({ filePath, noteId, vaul
         }, 1000);
     }, [noteId, vaultPath, filePath]);
 
+    // ── Image paste/drop handler ────────────────────────────────────────────
+    const insertImageIntoEditor = useCallback(async (imageData: ArrayBuffer, ext: string) => {
+        const view = viewRef.current;
+        if (!view) return;
+
+        const fileName = generateImageName(ext);
+        const sep = fileDir.includes('/') ? '/' : '\\';
+        const imageDir = `${fileDir}${sep}${noteName}`;
+        try {
+            await window.electronAPI.saveImage(imageDir, fileName, new Uint8Array(imageData));
+            const mdRef = `![image](./${noteName}/${fileName})`;
+            const pos = view.state.selection.main.head;
+            const insertText = pos > 0 && view.state.doc.sliceString(pos - 1, pos) !== '\n'
+                ? `\n${mdRef}\n`
+                : `${mdRef}\n`;
+            view.dispatch({
+                changes: { from: pos, insert: insertText },
+                selection: { anchor: pos + insertText.length },
+            });
+            view.focus();
+        } catch (err) {
+            console.error('[NotesEditor] Image save failed:', err);
+        }
+    }, [fileDir, noteName]);
+
     // ── CodeMirror setup ────────────────────────────────────────────────────
     const extensions = useMemo(() => [
         lineNumbers(),
@@ -222,7 +405,8 @@ export const NotesEditor: React.FC<NotesEditorProps> = ({ filePath, noteId, vaul
             '.cm-cursor': { borderLeftColor: '#4a9eff' },
             '.cm-selectionBackground': { background: 'rgba(74,158,255,0.2) !important' },
         }),
-    ], []);
+        imagePreviewPlugin(fileDir),
+    ], [fileDir]);
 
     // ── Initialize / destroy CodeMirror ─────────────────────────────────────
     useEffect(() => {
@@ -249,12 +433,48 @@ export const NotesEditor: React.FC<NotesEditorProps> = ({ filePath, noteId, vaul
 
         viewRef.current = view;
 
+        // ── Paste handler for images ──
+        const handlePaste = (e: ClipboardEvent) => {
+            const items = e.clipboardData?.items;
+            if (!items) return;
+            for (const item of Array.from(items)) {
+                if (item.type.startsWith('image/')) {
+                    e.preventDefault();
+                    const blob = item.getAsFile();
+                    if (!blob) continue;
+                    const ext = item.type.split('/')[1] || 'png';
+                    void blob.arrayBuffer().then((buf) => insertImageIntoEditor(buf, ext));
+                    return;
+                }
+            }
+        };
+
+        // ── Drop handler for images ──
+        const handleDrop = (e: DragEvent) => {
+            const files = e.dataTransfer?.files;
+            if (!files || files.length === 0) return;
+            for (const file of Array.from(files)) {
+                if (file.type.startsWith('image/')) {
+                    e.preventDefault();
+                    const ext = file.name.split('.').pop() || 'png';
+                    void file.arrayBuffer().then((buf) => insertImageIntoEditor(buf, ext));
+                    return;
+                }
+            }
+        };
+
+        const editorDom = view.dom;
+        editorDom.addEventListener('paste', handlePaste);
+        editorDom.addEventListener('drop', handleDrop);
+
         return () => {
+            editorDom.removeEventListener('paste', handlePaste);
+            editorDom.removeEventListener('drop', handleDrop);
             view.destroy();
             viewRef.current = null;
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [loaded, mode, extensions, triggerSave]);
+    }, [loaded, mode, extensions, triggerSave, insertImageIntoEditor]);
 
     // ── Keyboard shortcut: Ctrl+E toggles modes ────────────────────────────
     useEffect(() => {
@@ -286,6 +506,30 @@ export const NotesEditor: React.FC<NotesEditorProps> = ({ filePath, noteId, vaul
         view.focus();
     }, []);
 
+    // ── Custom image component for ReactMarkdown ──────────────────────────
+    // For display: uses NoteImage which loads via IPC (data URIs)
+    const markdownComponents = useMemo(() => ({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        img: ({ src, alt, ...props }: any) => (
+            <NoteImage src={src} alt={alt} fileDir={fileDir} />
+        ),
+    }), [fileDir]);
+
+    // For PDF export hidden view: uses raw relative paths that the PDF export
+    // code can resolve and inline as data URIs.
+    const pdfMarkdownComponents = useMemo(() => ({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        img: ({ src, alt, ...props }: any) => {
+            let resolvedSrc = src;
+            if (src && !src.startsWith('http') && !src.startsWith('data:') && !src.startsWith('file:')) {
+                const sep = fileDir.includes('/') ? '/' : '\\';
+                const cleanSrc = src.replace(/^\.\//, '').replace(/^\.\\/, '');
+                resolvedSrc = `file:///${fileDir.replace(/\\/g, '/')}/${cleanSrc.replace(/\\/g, '/')}`;
+            }
+            return <img src={resolvedSrc} alt={alt || 'image'} {...props} className="notes-embedded-image" />;
+        },
+    }), [fileDir]);
+
     // ── PDF export ──────────────────────────────────────────────────────────
     const handleExportPdf = useCallback(async () => {
         setPdfStatus('exporting');
@@ -294,6 +538,44 @@ export const NotesEditor: React.FC<NotesEditorProps> = ({ filePath, noteId, vaul
         await new Promise<void>((resolve) => setTimeout(resolve, 80));
 
         const bodyHtml = readViewRef.current?.innerHTML ?? '';
+
+        // Convert all relative image <img src="file:///..."> to base64 data URIs
+        // so the PDF includes them
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = bodyHtml;
+        const images = tempDiv.querySelectorAll('img');
+        for (const img of Array.from(images)) {
+            const imgSrc = img.getAttribute('src') || '';
+            if (imgSrc.startsWith('file:///') || (!imgSrc.startsWith('http') && !imgSrc.startsWith('data:'))) {
+                try {
+                    // Resolve the actual file path from the src
+                    let actualPath: string;
+                    if (imgSrc.startsWith('file:///')) {
+                        actualPath = decodeURIComponent(imgSrc.replace('file:///', ''));
+                    } else {
+                        const sep = fileDir.includes('/') ? '/' : '\\';
+                        const cleanSrc = imgSrc.replace(/^\.\//, '').replace(/^\.\\/, '');
+                        actualPath = `${fileDir}${sep}${cleanSrc}`;
+                    }
+                    const imageBytes = await window.electronAPI.readFile(actualPath);
+                    const ext = actualPath.split('.').pop()?.toLowerCase() || 'png';
+                    const mimeMap: Record<string, string> = {
+                        png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+                        gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml',
+                    };
+                    const mime = mimeMap[ext] || 'image/png';
+                    // Convert to base64
+                    let binary = '';
+                    for (let i = 0; i < imageBytes.length; i++) {
+                        binary += String.fromCharCode(imageBytes[i]);
+                    }
+                    const base64 = btoa(binary);
+                    img.setAttribute('src', `data:${mime};base64,${base64}`);
+                } catch (err) {
+                    console.error('[NotesEditor] Failed to inline image for PDF:', err);
+                }
+            }
+        }
 
         // Collect all stylesheets active in this renderer (includes KaTeX CSS etc.)
         // Only extract KaTeX CSS — we need it for math rendering but we must
@@ -348,7 +630,7 @@ table { border-collapse: collapse !important; width: 100% !important; margin: 1e
 th, td { border: 1px solid #dfe2e5 !important; padding: 0.5em 0.75em !important; color: #1a1a1a !important; }
 th { background: #f6f8fa !important; font-weight: 600 !important; }
 tr:nth-child(even) td { background: #fafafa !important; }
-img { max-width: 100% !important; }
+img { max-width: 100% !important; border-radius: 6px; margin: 0.5em 0; }
 input[type="checkbox"] { margin-right: 0.4em; }
 hr { border: none !important; border-top: 1px solid #ddd !important; margin: 1.5em 0 !important; }
 ul, ol { padding-left: 1.5em !important; margin: 0.5em 0 !important; }
@@ -357,7 +639,7 @@ li { margin: 0.2em 0 !important; color: #1a1a1a !important; }
 </style>
 </head>
 <body>
-<div>${bodyHtml}</div>
+<div>${tempDiv.innerHTML}</div>
 </body>
 </html>`;
 
@@ -370,7 +652,7 @@ li { margin: 0.2em 0 !important; color: #1a1a1a !important; }
             setPdfStatus('error');
             setTimeout(() => setPdfStatus('idle'), 3000);
         }
-    }, [filePath]);
+    }, [filePath, fileDir, vaultPath]);
 
     if (!loaded) {
         return (
@@ -451,6 +733,7 @@ li { margin: 0.2em 0 !important; color: #1a1a1a !important; }
                         <ReactMarkdown
                             remarkPlugins={[remarkGfm, remarkMath]}
                             rehypePlugins={[rehypeKatex, rehypeRaw]}
+                            components={markdownComponents}
                         >
                             {processedContent}
                         </ReactMarkdown>
@@ -468,6 +751,7 @@ li { margin: 0.2em 0 !important; color: #1a1a1a !important; }
                             <ReactMarkdown
                                 remarkPlugins={[remarkGfm, remarkMath]}
                                 rehypePlugins={[rehypeKatex, rehypeRaw]}
+                                components={pdfMarkdownComponents}
                             >
                                 {processedContent}
                             </ReactMarkdown>

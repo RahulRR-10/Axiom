@@ -41,6 +41,18 @@ declare global {
 
       // ── Misc ───────────────────────────────────────────────────────────
       openExternal: (url: string) => void;
+      showItemInFolder: (filePath: string) => void;
+      makeCopy: (filePath: string) => Promise<string>;
+      moveFile: (src: string, destDir: string) => Promise<string>;
+      renameFile: (filePath: string, newName: string) => Promise<string>;
+      deleteFile: (filePath: string) => Promise<void>;
+      selectFolder: (defaultPath: string) => Promise<string | null>;
+      openNewWindow: (filePath: string, fileType: string, vaultPath?: string) => Promise<void>;
+      broadcastAnnotationsSaved: (fileId: string) => Promise<void>;
+      onAnnotationsSaved: (callback: (fileId: string) => void) => () => void;
+      createFolder: (folderPath: string) => Promise<void>;
+      saveImage: (dirPath: string, fileName: string, data: Uint8Array) => Promise<string>;
+
 
       // ── AI panel ─────────────────────────────────────────────────────────
       getAIPreloadPath: () => Promise<string>;

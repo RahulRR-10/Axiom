@@ -9,7 +9,7 @@ import { indexFile, purgeFile } from '../indexing/indexer';
 import { VAULT_CHANNELS } from '../../shared/ipc/channels';
 import type { VaultIndexProgressPayload } from '../../shared/ipc/contracts';
 
-const WATCHED_EXTENSIONS = new Set(['.pdf', '.pptx', '.md', '.txt']);
+const WATCHED_EXTENSIONS = new Set(['.pdf', '.pptx', '.md', '.txt', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp']);
 const DEBOUNCE_MS = 500;
 
 let activeWatcher: FSWatcher | null = null;
