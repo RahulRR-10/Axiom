@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron';
+import { BrowserWindow, ipcMain } from 'electron';
 import { v4 as uuidv4 } from 'uuid';
 
 import { ANNOTATION_CHANNELS } from '../../shared/ipc/channels';
@@ -13,7 +13,7 @@ export function registerAnnotationHandlers(): void {
   // ── annotation:save ────────────────────────────────────────────────────────
   ipcMain.handle(
     ANNOTATION_CHANNELS.SAVE,
-    async (_event, vaultPath: string, annotation: Annotation) => {
+    async (event, vaultPath: string, annotation: Annotation) => {
       const db = getDb(vaultPath);
       const id = annotation.id ?? uuidv4();
 
@@ -32,6 +32,13 @@ export function registerAnnotationHandlers(): void {
         JSON.stringify(annotation),
         id,
       );
+
+      // Broadcast to other windows so other viewers refresh
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (win.webContents.id !== event.sender.id) {
+          win.webContents.send('annotations:saved', annotation.file_id);
+        }
+      }
 
       return { id };
     },

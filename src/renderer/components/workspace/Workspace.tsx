@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef, useMemo } from "react";
-import { X, ChevronRight } from "lucide-react";
+import { X, ChevronRight, ZoomIn, ZoomOut } from "lucide-react";
 
 import { PDFViewer } from "./pdf/PDFViewer";
 import { NotesEditor } from "./notes/NotesEditor";
@@ -9,6 +9,9 @@ import { NotesEditor } from "./notes/NotesEditor";
 const ImageViewer: React.FC<{ filePath: string; name: string }> = ({ filePath, name }) => {
   const [src, setSrc] = useState<string | null>(null);
   const [error, setError] = useState(false);
+  const [zoom, setZoom] = useState(1);
+  const [naturalSize, setNaturalSize] = useState<{ w: number; h: number } | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     window.electronAPI.readFile(filePath)
@@ -28,9 +31,81 @@ const ImageViewer: React.FC<{ filePath: string; name: string }> = ({ filePath, n
       .catch(() => setError(true));
   }, [filePath]);
 
-  if (error) return <p className="text-[#666] text-sm">Failed to load image</p>;
-  if (!src) return <p className="text-[#4e4e4e] text-sm">Loading…</p>;
-  return <img src={src} alt={name} className="max-w-full max-h-full object-contain select-none" draggable={false} />;
+  // Touchpad pinch-to-zoom — exact same mechanism as PDFViewer
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const handler = (e: WheelEvent) => {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      const delta = -e.deltaY * 0.01;
+      setZoom(prev => Math.min(4, Math.max(0.25, prev + delta)));
+    };
+    el.addEventListener('wheel', handler, { passive: false });
+    return () => el.removeEventListener('wheel', handler);
+  }, [src]);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%' }}>
+      {/* Image toolbar with zoom controls */}
+      <div className="flex items-center h-10 px-3 bg-[#1e1e1e] border-b border-[#2a2a2a] gap-1 shrink-0">
+        <span className="text-xs text-[#8a8a8a] select-none mr-auto truncate">{name}</span>
+        <button
+          type="button"
+          onClick={() => setZoom(prev => Math.max(0.25, prev - 0.25))}
+          className="h-8 w-8 flex items-center justify-center rounded text-[#8a8a8a] hover:bg-[#2a2a2a] hover:text-[#d4d4d4] transition-colors"
+          title="Zoom Out"
+        >
+          <ZoomOut size={16} />
+        </button>
+        <span className="text-xs text-[#d4d4d4] w-12 text-center select-none">
+          {Math.round(zoom * 100)}%
+        </span>
+        <button
+          type="button"
+          onClick={() => setZoom(prev => Math.min(4, prev + 0.25))}
+          className="h-8 w-8 flex items-center justify-center rounded text-[#8a8a8a] hover:bg-[#2a2a2a] hover:text-[#d4d4d4] transition-colors"
+          title="Zoom In"
+        >
+          <ZoomIn size={16} />
+        </button>
+      </div>
+      {/* Scroll container */}
+      <div
+        ref={scrollRef}
+        style={{ flex: 1, overflow: 'auto', background: '#141414' }}
+      >
+        {error && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
+            <p className="text-[#666] text-sm">Failed to load image</p>
+          </div>
+        )}
+        {!src && !error && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
+            <p className="text-[#4e4e4e] text-sm">Loading…</p>
+          </div>
+        )}
+        {src && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100%', minWidth: '100%', padding: 24 }}>
+            <img
+              src={src}
+              alt={name}
+              draggable={false}
+              className="select-none"
+              onLoad={(e) => {
+                const img = e.currentTarget;
+                setNaturalSize({ w: img.naturalWidth, h: img.naturalHeight });
+              }}
+              style={naturalSize
+                ? { width: naturalSize.w * zoom, height: naturalSize.h * zoom }
+                : { maxWidth: '100%', maxHeight: '100%' }
+              }
+            />
+          </div>
+        )}
+      </div>
+    </div>
+  );
 };
 
 type OpenFile = {
@@ -97,6 +172,10 @@ export const Workspace: React.FC<WorkspaceProps> = ({ vaultPath }) => {
     (f) => f.filePath === activeFilePath,
   );
   const activeFile = activeIdx >= 0 ? openFiles[activeIdx] : null;
+
+  const normalizePath = useCallback((p: string | null | undefined): string => {
+    return (p ?? '').replace(/\\/g, '/').toLowerCase();
+  }, []);
 
   // ── Helper: find group for a file path ─────────────────────────────────
   const getGroupForFile = useCallback(
@@ -283,6 +362,59 @@ export const Workspace: React.FC<WorkspaceProps> = ({ vaultPath }) => {
   );
 
   // ── Drag and drop ─────────────────────────────────────────────────────
+
+  // ── Cross-window sync: close md tab when saved elsewhere ───────────────
+  useEffect(() => {
+    const unsub = window.electronAPI.onNoteSaved((_savedNoteId, savedFilePath) => {
+      const normalizedSaved = normalizePath(savedFilePath);
+      setOpenFiles((prev) => {
+        const file = prev.find((f) => normalizePath(f.filePath) === normalizedSaved && f.fileType === 'md');
+        if (!file) return prev;
+        // Close the tab
+        return prev.filter((f) => normalizePath(f.filePath) !== normalizedSaved);
+      });
+      setActiveFilePath((prev) => {
+        if (normalizePath(prev) === normalizedSaved) return null;
+        return prev;
+      });
+    });
+    return unsub;
+  }, [normalizePath]);
+
+  // ── Cross-window sync: close + reopen pdf tab when saved elsewhere ─────
+  useEffect(() => {
+    const unsub = window.electronAPI.onPdfFileChanged((changedPath) => {
+      const normalizedChanged = normalizePath(changedPath);
+      setOpenFiles((prev) => {
+        const file = prev.find((f) => normalizePath(f.filePath) === normalizedChanged && f.fileType === 'pdf');
+        if (!file) return prev;
+        // Replace with a new object to force remount (fresh load)
+        return prev.map((f) =>
+          normalizePath(f.filePath) === normalizedChanged
+            ? { ...f, scrollNonce: Date.now() }
+            : f
+        );
+      });
+    });
+    return unsub;
+  }, [normalizePath]);
+
+  // ── Cross-window sync: refresh pdf tab when annotations saved elsewhere ──
+  useEffect(() => {
+    const unsub = window.electronAPI.onAnnotationsSaved((savedFileId) => {
+      setOpenFiles((prev) => {
+        const file = prev.find((f) => f.fileType === 'pdf' && f.fileId === savedFileId);
+        if (!file) return prev;
+        return prev.map((f) =>
+          f.fileType === 'pdf' && f.fileId === savedFileId
+            ? { ...f, scrollNonce: Date.now() }
+            : f,
+        );
+      });
+    });
+    return unsub;
+  }, []);
+
   const handleDragStart = useCallback(
     (e: React.DragEvent, type: "tab" | "group", id: string) => {
       dragRef.current =
@@ -712,7 +844,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ vaultPath }) => {
             return (
               <div
                 key={f.filePath}
-                className="flex-1 min-h-0 overflow-auto flex items-center justify-center bg-[#141414]"
+                className="flex-1 min-h-0 overflow-hidden"
                 style={{ display: isActive ? undefined : 'none' }}
               >
                 <ImageViewer filePath={f.filePath} name={f.name} />

@@ -22,7 +22,7 @@ export function registerVaultHandlers(): void {
   ipcMain.handle(VAULT_CHANNELS.OPEN, (_e, vaultPath: string) => handleOpen(vaultPath));
   ipcMain.handle(VAULT_CHANNELS.READ_DIRECTORY, (_e, dirPath: string) => handleReadDirectory(dirPath));
   ipcMain.handle(VAULT_CHANNELS.READ_FILE, (_e, filePath: string) => handleReadFile(filePath));
-  ipcMain.handle(VAULT_CHANNELS.WRITE_FILE, (_e, filePath: string, data: Buffer) => handleWriteFile(filePath, data));
+  ipcMain.handle(VAULT_CHANNELS.WRITE_FILE, (e, filePath: string, data: Buffer) => handleWriteFile(filePath, data, e.sender.id));
   ipcMain.handle(VAULT_CHANNELS.GET_INDEX_STATUS, (_e, vaultPath: string) => handleGetIndexStatus(vaultPath));
   ipcMain.handle(VAULT_CHANNELS.GET_FILE_ID, (_e, vaultPath: string, filePath: string) => {
     const db = getDb(vaultPath);
@@ -96,9 +96,19 @@ function handleReadFile(filePath: string): Buffer {
   return fs.readFileSync(filePath);
 }
 
-function handleWriteFile(filePath: string, data: Buffer): void {
+function handleWriteFile(filePath: string, data: Buffer, senderId?: number): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, data);
+  // Broadcast so other windows showing this file can refresh
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (senderId != null && win.webContents.id === senderId) continue;
+    if (filePath.endsWith('.md')) {
+      win.webContents.send('notes:saved', '', filePath);
+    }
+    if (filePath.endsWith('.pdf')) {
+      win.webContents.send('pdf:fileChanged', filePath);
+    }
+  }
 }
 
 function handleGetIndexStatus(vaultPath: string): VaultGetIndexStatusResponse {

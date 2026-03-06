@@ -158,7 +158,7 @@ export function registerNotesHandlers(): void {
     // ── notes:update ──────────────────────────────────────────────────────────
     ipcMain.handle(
         NOTES_CHANNELS.UPDATE,
-        async (_event, vaultPath: string, noteId: string, content: string) => {
+        async (event, vaultPath: string, noteId: string, content: string) => {
             const db = getDb(vaultPath);
             let row = db.prepare('SELECT * FROM notes WHERE id = ?').get(noteId) as NoteRow | undefined;
 
@@ -178,6 +178,12 @@ export function registerNotesHandlers(): void {
                         INSERT OR IGNORE INTO notes (id, title, content, file_path, subject, source_file_id, source_page, created_at, updated_at)
                         VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, ?)
                     `).run(noteId, title, content, fileRow.path, now, now);
+                    // Broadcast to other windows so other editors refresh
+                    for (const win of BrowserWindow.getAllWindows()) {
+                        if (win.webContents.id !== event.sender.id) {
+                            win.webContents.send('notes:saved', noteId, fileRow.path);
+                        }
+                    }
                     return;
                 }
                 throw new Error(`Note ${noteId} not found`);
@@ -194,6 +200,14 @@ export function registerNotesHandlers(): void {
             const now = Math.floor(Date.now() / 1000);
             db.prepare('UPDATE notes SET content = ?, updated_at = ? WHERE id = ?')
                 .run(content, now, noteId);
+
+            // Broadcast to other windows so other editors refresh
+            const filePath = row.file_path ?? '';
+            for (const win of BrowserWindow.getAllWindows()) {
+                if (win.webContents.id !== event.sender.id) {
+                    win.webContents.send('notes:saved', noteId, filePath);
+                }
+            }
         },
     );
 

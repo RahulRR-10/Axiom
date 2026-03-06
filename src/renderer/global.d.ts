@@ -48,8 +48,11 @@ declare global {
       deleteFile: (filePath: string) => Promise<void>;
       selectFolder: (defaultPath: string) => Promise<string | null>;
       openNewWindow: (filePath: string, fileType: string, vaultPath?: string) => Promise<void>;
-      broadcastAnnotationsSaved: (fileId: string) => Promise<void>;
+      broadcastAnnotationsSaved: (fileId: string) => void;
       onAnnotationsSaved: (callback: (fileId: string) => void) => () => void;
+      broadcastNoteSaved: (noteId: string, filePath: string) => void;
+      onNoteSaved: (callback: (noteId: string, filePath: string) => void) => () => void;
+      onPdfFileChanged: (callback: (filePath: string) => void) => () => void;
       createFolder: (folderPath: string) => Promise<void>;
       saveImage: (dirPath: string, fileName: string, data: Uint8Array) => Promise<string>;
 

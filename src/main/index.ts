@@ -53,7 +53,15 @@ const registerWindowIpcHandlers = (): void => {
   });
 
   ipcMain.handle('window:close', (e) => {
-    BrowserWindow.fromWebContents(e.sender)?.close();
+    const win = BrowserWindow.fromWebContents(e.sender);
+    if (!win) return;
+    // If this is the main window, close it normally (triggers 'closed' → app.quit)
+    if (win === mainWindow) {
+      win.close();
+    } else {
+      // Child windows: destroy directly so they don't interfere with the main window
+      win.destroy();
+    }
   });
 
   ipcMain.handle('window:is-maximized', (e) => {
@@ -150,13 +158,6 @@ const registerWindowIpcHandlers = (): void => {
       url += `&vaultPath=${encodeURIComponent(vaultPathArg)}`;
     }
     child.loadURL(url);
-  });
-
-  // Broadcast annotation saves to all windows so parent can refresh
-  ipcMain.handle('annotations:broadcastSaved', (_e, fileId: string) => {
-    for (const win of BrowserWindow.getAllWindows()) {
-      win.webContents.send('annotations:saved', fileId);
-    }
   });
 };
 

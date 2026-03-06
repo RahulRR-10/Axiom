@@ -127,8 +127,8 @@ const electronAPI = {
   openNewWindow: (filePath: string, fileType: string, vaultPath?: string): Promise<void> =>
     ipcRenderer.invoke('window:openNew', filePath, fileType, vaultPath),
 
-  broadcastAnnotationsSaved: (fileId: string): Promise<void> =>
-    ipcRenderer.invoke('annotations:broadcastSaved', fileId),
+  broadcastAnnotationsSaved: (fileId: string): void =>
+    ipcRenderer.send('annotations:broadcastSaved', fileId),
 
   onAnnotationsSaved: (callback: (fileId: string) => void): (() => void) => {
     const listener = (_: unknown, fileId: string): void => callback(fileId);
@@ -136,6 +136,20 @@ const electronAPI = {
     return () => ipcRenderer.removeListener('annotations:saved', listener);
   },
 
+  broadcastNoteSaved: (noteId: string, filePath: string): void =>
+    ipcRenderer.send('notes:broadcastSaved', noteId, filePath),
+
+  onNoteSaved: (callback: (noteId: string, filePath: string) => void): (() => void) => {
+    const listener = (_: unknown, noteId: string, filePath: string): void => callback(noteId, filePath);
+    ipcRenderer.on('notes:saved', listener);
+    return () => ipcRenderer.removeListener('notes:saved', listener);
+  },
+
+  onPdfFileChanged: (callback: (filePath: string) => void): (() => void) => {
+    const listener = (_: unknown, filePath: string): void => callback(filePath);
+    ipcRenderer.on('pdf:fileChanged', listener);
+    return () => ipcRenderer.removeListener('pdf:fileChanged', listener);
+  },
 
 
   // ── AI panel ─────────────────────────────────────────────────────────────

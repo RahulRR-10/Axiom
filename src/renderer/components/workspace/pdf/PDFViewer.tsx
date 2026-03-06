@@ -312,6 +312,7 @@ export const PDFViewer: React.FC<Props> = ({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [visibleRange, setVisibleRange] = useState<[number, number]>([1, 3]);
+  const [pdfLoadNonce, setPdfLoadNonce] = useState(0);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -360,7 +361,7 @@ export const PDFViewer: React.FC<Props> = ({
       setError(String(err));
       setLoading(false);
     });
-  }, [filePath]);
+  }, [filePath, pdfLoadNonce]);
 
   /* ── Scroll to initialPage after load ───────────────────────────────────── */
   useEffect(() => {
@@ -387,13 +388,24 @@ export const PDFViewer: React.FC<Props> = ({
   useEffect(() => {
     const unsub = window.electronAPI.onAnnotationsSaved((savedFileId) => {
       if (savedFileId === effectiveFileId) {
-        // Reload annotations from DB and invalidate PDF cache
         pdfCache.delete(filePath);
         loadAnnotations();
+        setPdfLoadNonce(n => n + 1);
       }
     });
     return unsub;
   }, [effectiveFileId, filePath, loadAnnotations]);
+
+  /* ── Listen for PDF file changes from other windows ──────────────────────── */
+  useEffect(() => {
+    const unsub = window.electronAPI.onPdfFileChanged((changedPath) => {
+      if (changedPath !== filePath) return;
+      pdfCache.delete(filePath);
+      setPdfLoadNonce(n => n + 1);
+      loadAnnotations();
+    });
+    return unsub;
+  }, [filePath, loadAnnotations]);
 
   /* ── Merged annotations (DB + pending - deleted) ─────────────────────────── */
   const mergedAnnotations = useMemo(() => {
@@ -551,8 +563,6 @@ export const PDFViewer: React.FC<Props> = ({
       setDeletedAnnotationIds(new Set());
       loadAnnotations();
 
-      // 6. Broadcast to other windows so they refresh
-      void window.electronAPI.broadcastAnnotationsSaved(effectiveFileId);
     } catch (err) {
       console.error("[PDFViewer] Save failed", err);
     } finally {
