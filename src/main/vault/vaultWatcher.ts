@@ -1,3 +1,4 @@
+import * as fs from 'fs';
 import * as path from 'path';
 
 import { BrowserWindow } from 'electron';
@@ -8,8 +9,8 @@ import { indexFile, purgeFile } from '../indexing/indexer';
 import { VAULT_CHANNELS } from '../../shared/ipc/channels';
 import type { VaultIndexProgressPayload } from '../../shared/ipc/contracts';
 
-const WATCHED_GLOB = '**/*.{pdf,pptx,md,txt}';
-const DEBOUNCE_MS  = 500;
+const WATCHED_EXTENSIONS = new Set(['.pdf', '.pptx', '.md', '.txt']);
+const DEBOUNCE_MS = 500;
 
 let activeWatcher: FSWatcher | null = null;
 
@@ -23,21 +24,25 @@ export function startWatching(vaultPath: string): void {
   const ignored = [
     path.join(vaultPath, '.axiom', '**'),
     /(^|[/\\])\../, // dotfiles
+    // Allow directories (so chokidar traverses into them), ignore non-indexable files
+    (filePath: string, stats?: fs.Stats) => {
+      if (!stats || stats.isDirectory()) return false;
+      return !WATCHED_EXTENSIONS.has(path.extname(filePath).toLowerCase());
+    },
   ];
 
-  activeWatcher = chokidar.watch(WATCHED_GLOB, {
-    cwd:            vaultPath,
+  activeWatcher = chokidar.watch(vaultPath, {
     ignored,
-    persistent:     true,
-    ignoreInitial:  true, // initial scan handled by vault:open handler
+    persistent: true,
+    ignoreInitial: true, // initial scan handled by vault:open handler
     awaitWriteFinish: { stabilityThreshold: DEBOUNCE_MS, pollInterval: 100 },
   });
 
   activeWatcher
-    .on('add',    (rel) => void handleAdd(path.join(vaultPath, rel), vaultPath))
-    .on('change', (rel) => void handleChange(path.join(vaultPath, rel), vaultPath))
-    .on('unlink', (rel) => void handleUnlink(path.join(vaultPath, rel), vaultPath))
-    .on('error',  (err) => console.error('[watcher] Error:', err));
+    .on('add', (abs) => void handleAdd(abs, vaultPath))
+    .on('change', (abs) => void handleChange(abs, vaultPath))
+    .on('unlink', (abs) => void handleUnlink(abs, vaultPath))
+    .on('error', (err) => console.error('[watcher] Error:', err));
 
   console.log('[watcher] Watching', vaultPath);
 }
