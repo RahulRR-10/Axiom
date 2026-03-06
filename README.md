@@ -1,43 +1,497 @@
 <div align="center">
 
-# Axiom
+# ⚡ Axiom
 
-**AI-Powered Study Operating System**
+### The Study Operating System
 
-An Electron desktop application that turns your study vault into a fully searchable, annotatable, AI-assisted knowledge base — entirely offline embeddings, no API keys required.
+**Your documents. Your notes. Your AI. One window. Fully offline.**
+
+[![Electron](https://img.shields.io/badge/Electron-40-47848F?logo=electron&logoColor=white)](https://www.electronjs.org/)
+[![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](https://react.dev/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-4.5-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 </div>
 
 ---
 
+Axiom is an AI-powered desktop app that turns any folder of PDFs, Markdown notes, and text files into a fully searchable, annotatable, AI-assisted knowledge base. No cloud. No API keys. Everything runs locally.
+
+Point Axiom at a folder — it indexes every document with local vector embeddings, lets you annotate and take linked notes, and embeds **ChatGPT**, **Claude**, and **Gemini** directly in the app with vault-grounded responses powered by your own files.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Vault Sidebar  │       Multi-Tab Workspace       │  AI Panel  │
+│                 │                                  │            │
+│  📁 folder tree │  📄 PDF Viewer + Annotations     │  ChatGPT   │
+│  📝 notes list  │  📝 Markdown Editor (CodeMirror) │  Claude    │
+│  🔍 search      │  📑 Tabbed document viewing      │  Gemini    │
+│  📊 index stats │  🖊️ Rich annotation toolkit      │  Sources   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
 ## Table of Contents
 
-- [Overview](#overview)
-- [Features](#features)
+- [Key Features](#key-features)
+- [How It Works](#how-it-works)
 - [Tech Stack](#tech-stack)
-- [Architecture](#architecture)
 - [Getting Started](#getting-started)
+- [Architecture](#architecture)
 - [Project Structure](#project-structure)
-- [IPC API](#ipc-api)
+- [IPC API Reference](#ipc-api-reference)
 - [Database Schema](#database-schema)
 - [Building & Packaging](#building--packaging)
 
 ---
 
-## Overview
+## Key Features
 
-Axiom is a desktop application built on **Electron + React** that creates a personal, offline-first study environment. Point it at a folder of PDFs, PowerPoints, Markdown notes, or text files and Axiom will:
+### 🔍 Hybrid Search Engine
 
-- Index every document with local vector embeddings (no cloud, no API keys)
-- Expose a hybrid full-text + semantic search across all content
-- Let you annotate, highlight, and take linked notes directly on documents
-- Embed live sessions of **ChatGPT**, **Claude**, and **Gemini** inside the app — with persistent login
+Axiom combines two search strategies for maximum recall and precision:
 
-The entire workflow lives in one window: vault browser on the left, multi-tab document viewer in the center, AI chat panels on the right.
+- **Semantic Search** — `all-MiniLM-L6-v2` embeddings (384-dim) run entirely offline via `@xenova/transformers`, stored in LanceDB with cosine similarity ranking
+- **Full-Text Search** — SQLite FTS5 with BM25 ranking for exact keyword matching
+- **Smart Merging** — Results from both engines are deduplicated and scored (40% keyword, 60% semantic), with annotation-sourced chunks boosted 1.3×
+- **Multi-Pass Fallback** — Searches chunks → notes → filenames if no results found
+- **Filters** — Narrow results by file type (PDF / Markdown / text) or subject (inferred from folder name)
+
+### 📄 PDF Viewer & Annotations
+
+A full-featured document viewer built on `pdfjs-dist`:
+
+- **High-fidelity rendering** with device pixel ratio support and selectable text layer
+- **Lazy page rendering** — only pages in the viewport (±1200px) are rendered, keeping 100+ page PDFs smooth
+- **Zoom** — 50–300% with incremental controls
+- **Annotation toolkit** — highlights (8 colors), sticky notes, textboxes, freehand drawing, eraser
+- **Persistent annotations** — saved as JSON in SQLite, reloaded on open, and indexed for search
+- **PDF export** — flatten annotations back into the source PDF with `pdf-lib`
+- **Undo/redo**, drag-and-drop repositioning, resize handles, inline editing
+
+### 📝 Markdown Notes
+
+A professional editing environment powered by CodeMirror 6:
+
+- **Syntax highlighting**, bracket matching, autocompletion, line numbers
+- **Formatting toolbar** — bold, italic, code, headings, lists (bullet/numbered/task), tables, blockquotes, math blocks, code blocks
+- **LaTeX math** — inline `$...$` and block `$$...$$` via KaTeX, with auto-conversion of `\[...\]` and `\(...\)` notation
+- **Read mode** — GitHub Flavored Markdown rendering with rendered math, tables, and task lists
+- **Source linking** — pin any note to a specific document and page number
+- **Autosave** — 1-second debounce to SQLite with visual save indicator
+- **PDF export** — render any note as a formatted, print-ready PDF
+
+### 🤖 AI Integration
+
+Embed ChatGPT, Claude, and Gemini directly in the app — each in an isolated, persistent webview:
+
+- **Vault-grounded Q&A** — ask a question and Axiom retrieves the top semantic chunks from your vault, builds a grounded prompt (`"Answer ONLY using the provided material..."`), and injects it directly into the active AI chat
+- **Sources panel** — see exactly which files and pages were used to ground each answer, with one-click navigation to the source
+- **Persistent sessions** — login once, stay logged in across restarts via session partitions
+- **Chrome-level spoofing** — Electron fingerprints stripped and replaced with real Chrome headers (UA, `sec-ch-ua`, `accept-language`) for seamless authentication
+- **Auth popup handling** — Google/OpenAI/Anthropic redirects intercepted and opened in a properly spoofed popup window
+
+### 📁 Vault Management
+
+- **Real-time file watching** — chokidar monitors your vault for new, changed, or deleted files with 500ms debounce
+- **Smart re-indexing** — SHA-256 content hash + mtime check skips unchanged files
+- **Multi-format support** — PDF, Markdown, plain text (PPTX parsing compiled in but disabled)
+- **Automatic chunking** — sliding window (300 tokens, 50-token overlap) preserves cross-page context
+- **Live progress** — indexing progress streamed to the UI in real time
+
+### 🖥️ App Shell
+
+- **Three-panel layout** — collapsible vault sidebar (left), multi-tab workspace (center), drag-resizable AI panel (right, 200–700px)
+- **Frameless window** — custom title bar with native minimize/maximize/close controls
+- **Multi-tab workspace** — open multiple documents simultaneously with per-tab state (file, type, scroll position)
+- **Keyboard shortcuts** — `Ctrl+K` opens the universal search spotlight
+- **Dark mode** — dark-first design throughout
 
 ---
 
-## Features
+## How It Works
+
+### Indexing Pipeline
+
+```
+New/Changed File Detected (chokidar)
+        │
+        ▼
+  Hash check (SHA-256 + mtime) ── skip if unchanged
+        │
+        ▼
+  Extract text ── pdf-parse (PDFs) · fs.readFile (text/md)
+        │
+        ▼
+  Chunk text ── sliding window, 300 tokens, 50-token overlap
+        │
+        ▼
+  Embed chunks ── all-MiniLM-L6-v2, batches of 32
+        │
+        ├──► SQLite  (files → chunks → FTS5 virtual table)
+        └──► LanceDB (384-dim vector embeddings)
+```
+
+### Search Flow
+
+```
+User Query
+    │
+    ├──► FTS5 keyword search (BM25 ranked)
+    │
+    └──► Embed query → cosine similarity in LanceDB (top-k)
+                │
+                ▼
+    Merge + deduplicate + score → ranked SearchResult[]
+```
+
+### Vault-Grounded AI Flow
+
+```
+User asks a question
+        │
+        ▼
+  Hybrid search → top-2 semantic chunks from vault
+        │
+        ▼
+  buildVaultPrompt(question, chunks)
+  → "You are a study assistant. Answer using ONLY..."
+        │
+        ▼
+  vaultInject → DOM automation into active AI webview
+  → text injected + Enter dispatched
+```
+
+---
+
+## Tech Stack
+
+| Layer             | Technology                                                          |
+| ----------------- | ------------------------------------------------------------------- |
+| **Desktop**       | Electron 40, electron-forge 7                                       |
+| **Frontend**      | React 19, TypeScript ~4.5, Tailwind CSS 3                           |
+| **Build**         | Webpack 5, ts-loader, fork-ts-checker                               |
+| **Database**      | better-sqlite3 (metadata + FTS5), LanceDB (vectors)                 |
+| **Embeddings**    | `@xenova/transformers` — all-MiniLM-L6-v2, 384-dim, fully offline   |
+| **PDF**           | pdfjs-dist (render), pdf-parse (extract), pdf-lib (export)          |
+| **Markdown**      | CodeMirror 6, react-markdown, remark-gfm, remark-math, rehype-katex |
+| **Math**          | KaTeX 0.16                                                          |
+| **File Watching** | chokidar 4                                                          |
+| **Icons**         | lucide-react                                                        |
+
+---
+
+## Getting Started
+
+### Prerequisites
+
+- **Node.js** 18+
+- **Python** (required by `node-gyp` for native modules)
+- C++ build toolchain:
+  - **Windows:** Visual Studio Build Tools with "Desktop development with C++"
+  - **macOS:** `xcode-select --install`
+  - **Linux:** `build-essential`
+
+### Install & Run
+
+```bash
+git clone https://github.com/RahulRR-10/Axiom.git
+cd axiom
+npm install        # postinstall rebuilds better-sqlite3 + vectordb for Electron
+npm start          # launches in dev mode with hot-reload
+```
+
+### First Launch
+
+1. Click **Open Vault** and pick a folder of study files
+2. Watch the indexing progress bar as Axiom processes your documents
+3. Use **Ctrl+K** to open search, or browse the vault sidebar
+4. Open the **AI Panel**, log in to ChatGPT / Claude / Gemini (one-time)
+5. Ask a question — Axiom grounds the AI's response with your vault content
+
+---
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        Electron Main Process                    │
+│                                                                 │
+│  ┌──────────────┐  ┌─────────────────┐  ┌───────────────────┐  │
+│  │   IPC Layer  │  │    Indexer       │  │   AI Spoofing     │  │
+│  │              │  │                  │  │                   │  │
+│  │ vaultHandlers│  │ text extraction  │  │ session partitions│  │
+│  │ searchHandler│  │ chunking         │  │ header rewriting  │  │
+│  │ notesHandlers│  │ embedding        │  │ UA spoofing       │  │
+│  │ annotHandlers│  │ fts5 + lancedb   │  │ auth popup proxy  │  │
+│  │ ai vault inj.│  └────────┬────────┘  └───────────────────┘  │
+│  └──────┬───────┘           │                                   │
+│         │                   │                                   │
+│  ┌──────▼───────────────────▼───────────────────────────────┐  │
+│  │                  Database Layer                           │  │
+│  │   better-sqlite3 (files, chunks, notes, annotations,     │  │
+│  │   tags, FTS5 virtual tables, schema_migrations)           │  │
+│  │                  + LanceDB (vector store)                 │  │
+│  └───────────────────────────────────────────────────────────┘  │
+└───────────────────────────────┬─────────────────────────────────┘
+                                │ contextBridge (preload)
+┌───────────────────────────────▼─────────────────────────────────┐
+│                      Renderer Process                           │
+│                                                                 │
+│  ┌────────────────────────────────────────────────────────────┐ │
+│  │                      AppLayout                             │ │
+│  │  ┌─────────────┐  ┌────────────────────┐  ┌────────────┐  │ │
+│  │  │ VaultSidebar│  │     Workspace      │  │  AIPanel   │  │ │
+│  │  │             │  │                    │  │            │  │ │
+│  │  │ folder tree │  │  WorkspaceTabBar   │  │ ChatGPT    │  │ │
+│  │  │ file list   │  │  PDFViewer         │  │ Claude     │  │ │
+│  │  │ create note │  │  ↳ AnnotationLayer │  │ Gemini     │  │ │
+│  │  │ SearchPanel │  │  NotesEditor       │  │ (webviews) │  │ │
+│  │  │             │  │  ↳ CodeMirror 6    │  │ Sources    │  │ │
+│  │  └─────────────┘  └────────────────────┘  └────────────┘  │ │
+│  └────────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Project Structure
+
+```
+src/
+├── main/                          # Electron main process
+│   ├── index.ts                   # Entry point, window creation, IPC wiring
+│   ├── ai/
+│   │   ├── spoofing.ts            # Session partitions, header spoofing, auth proxy
+│   │   └── vaultInject.ts         # DOM injection into AI webviews
+│   ├── database/
+│   │   ├── schema.ts              # SQLite connection, WAL, migration runner
+│   │   ├── migrations.ts          # Versioned schema migrations (001–004)
+│   │   └── vectorStore.ts         # LanceDB wrapper (add/delete/query)
+│   ├── indexing/
+│   │   └── indexer.ts             # Text extraction, chunking, embedding pipeline
+│   ├── ipc/
+│   │   ├── vaultHandlers.ts       # Vault open, browse, index status
+│   │   ├── searchHandlers.ts      # Hybrid FTS5 + semantic search
+│   │   ├── notesHandlers.ts       # Notes CRUD + PDF export
+│   │   └── annotationHandlers.ts  # Annotation save/load/delete/reindex
+│   ├── vault/
+│   │   └── vaultWatcher.ts        # chokidar file system watcher
+│   └── workers/
+│       └── embedder.ts            # all-MiniLM-L6-v2 embedding worker
+│
+├── preload/
+│   └── index.ts                   # contextBridge — safe IPC surface
+│
+├── renderer/                      # React UI
+│   ├── App.tsx                    # Root component
+│   ├── components/
+│   │   ├── ai/AIPanel.tsx         # AI webviews + sources panel
+│   │   ├── layout/
+│   │   │   ├── AppLayout.tsx      # Three-panel shell, drag-resize
+│   │   │   └── WindowControlsToolbar.tsx
+│   │   ├── search/SearchPanel.tsx # Universal search spotlight
+│   │   ├── vault/VaultSidebar.tsx # File tree + vault management
+│   │   └── workspace/
+│   │       ├── Workspace.tsx      # Tab manager + content routing
+│   │       ├── WorkspaceTabBar.tsx
+│   │       ├── FloatingActionBar.tsx
+│   │       ├── notes/NotesEditor.tsx   # CodeMirror 6 + read mode
+│   │       └── pdf/
+│   │           ├── PDFViewer.tsx       # pdfjs-dist renderer
+│   │           ├── PDFToolbar.tsx      # Annotation + nav controls
+│   │           └── AnnotationLayer.tsx # Canvas annotation layer
+│   ├── hooks/useSearch.ts         # Debounced search hook
+│   └── utils/buildVaultPrompt.ts  # Grounded prompt builder
+│
+└── shared/
+    ├── types.ts                   # Shared TypeScript types
+    └── ipc/
+        ├── channels.ts            # IPC channel constants
+        └── contracts.ts           # Request/response type contracts
+```
+
+---
+
+## IPC API Reference
+
+All renderer ↔ main communication uses a typed `electronAPI` object exposed via `contextBridge`. Channel constants are in `src/shared/ipc/channels.ts`, type contracts in `src/shared/ipc/contracts.ts`.
+
+<details>
+<summary><strong>Vault Channels</strong></summary>
+
+| Channel                | Direction | Description                         |
+| ---------------------- | --------- | ----------------------------------- |
+| `vault:select`         | invoke    | Open system folder picker           |
+| `vault:open`           | invoke    | Open vault, start indexer & watcher |
+| `vault:readDirectory`  | invoke    | List directory as `FileNode[]`      |
+| `vault:readFile`       | invoke    | Read file as `Uint8Array`           |
+| `vault:writeFile`      | invoke    | Write file contents                 |
+| `vault:getIndexStatus` | invoke    | Current `IndexStatus`               |
+| `vault:getFileId`      | invoke    | Resolve file path → SQLite ID       |
+| `vault:indexProgress`  | push      | Streaming index progress events     |
+| `vault:fileChanged`    | push      | File add/change/delete events       |
+
+</details>
+
+<details>
+<summary><strong>Search Channels</strong></summary>
+
+| Channel        | Direction | Description                                      |
+| -------------- | --------- | ------------------------------------------------ |
+| `search:query` | invoke    | Hybrid FTS5 + semantic search → `SearchResult[]` |
+
+</details>
+
+<details>
+<summary><strong>Notes Channels</strong></summary>
+
+| Channel           | Direction | Description                      |
+| ----------------- | --------- | -------------------------------- |
+| `notes:create`    | invoke    | Create note → `NoteSummary`      |
+| `notes:read`      | invoke    | Read note by ID → `NoteDetail`   |
+| `notes:list`      | invoke    | List all notes → `NoteSummary[]` |
+| `notes:update`    | invoke    | Update note content              |
+| `notes:delete`    | invoke    | Delete note                      |
+| `notes:move`      | invoke    | Move note to new directory       |
+| `notes:rename`    | invoke    | Rename note title                |
+| `notes:exportPdf` | invoke    | Render HTML → PDF                |
+
+</details>
+
+<details>
+<summary><strong>Annotation Channels</strong></summary>
+
+| Channel                 | Direction | Description                     |
+| ----------------------- | --------- | ------------------------------- |
+| `annotation:save`       | invoke    | Persist annotation → `{ id }`   |
+| `annotation:load`       | invoke    | Load all annotations for a file |
+| `annotation:delete`     | invoke    | Delete annotation by ID         |
+| `annotation:reindexPdf` | invoke    | Re-index with annotation text   |
+
+</details>
+
+<details>
+<summary><strong>AI Channels</strong></summary>
+
+| Channel               | Direction | Description                            |
+| --------------------- | --------- | -------------------------------------- |
+| `ai:getPreloadPath`   | invoke    | Path to webview spoofing preload       |
+| `ai:register-webview` | send      | Register webview under provider name   |
+| `ai:vault-inject`     | invoke    | Inject grounded prompt into AI webview |
+
+</details>
+
+<details>
+<summary><strong>Window Channels</strong></summary>
+
+| Channel                    | Direction | Description                |
+| -------------------------- | --------- | -------------------------- |
+| `window:minimize`          | invoke    | Minimize window            |
+| `window:toggle-maximize`   | invoke    | Toggle maximize/restore    |
+| `window:close`             | invoke    | Close application          |
+| `window:is-maximized`      | invoke    | Get maximized state        |
+| `window:maximized-changed` | push      | Maximize/unmaximize events |
+
+</details>
+
+---
+
+## Database Schema
+
+Per-vault SQLite database at `<vault>/.axiom/axiom.db` with WAL mode, foreign keys, and versioned migrations. Vector embeddings stored separately in LanceDB at `<vault>/.axiom/vectors/`.
+
+<details>
+<summary><strong>View full schema</strong></summary>
+
+```sql
+-- Migration tracking
+schema_migrations (version TEXT PRIMARY KEY, applied_at INTEGER)
+
+-- Indexed files
+files (
+  id           TEXT PRIMARY KEY,  -- UUID
+  path         TEXT UNIQUE NOT NULL,
+  name         TEXT NOT NULL,
+  type         TEXT NOT NULL,      -- 'pdf' | 'md' | 'txt' | 'pptx'
+  subject      TEXT,              -- inferred from parent folder
+  size         INTEGER,
+  mtime_ms     INTEGER,
+  content_hash TEXT,              -- SHA-256 for change detection
+  indexed_at   INTEGER,
+  created_at   INTEGER DEFAULT (unixepoch())
+)
+
+-- Text chunks (source for FTS & embeddings)
+chunks (
+  id            TEXT PRIMARY KEY,
+  file_id       TEXT NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+  page_or_slide INTEGER,
+  text          TEXT NOT NULL,
+  chunk_index   INTEGER,
+  is_annotation INTEGER DEFAULT 0
+)
+
+-- FTS5 virtual table (mirrors chunks)
+chunks_fts (text, file_id, page_or_slide)
+
+-- Markdown notes
+notes (
+  id             TEXT PRIMARY KEY,
+  title          TEXT NOT NULL,
+  content        TEXT DEFAULT '',
+  subject        TEXT,
+  source_file_id TEXT,
+  source_page    INTEGER,
+  file_path      TEXT,
+  created_at     INTEGER DEFAULT (unixepoch()),
+  updated_at     INTEGER DEFAULT (unixepoch())
+)
+
+-- Tag taxonomy (schema ready, UI not yet implemented)
+tags (id TEXT PRIMARY KEY, name TEXT UNIQUE NOT NULL)
+file_tags (file_id TEXT, tag_id TEXT, PRIMARY KEY (file_id, tag_id))
+
+-- Document annotations
+annotations (
+  id         TEXT PRIMARY KEY,
+  file_id    TEXT NOT NULL,
+  page       INTEGER NOT NULL,
+  type       TEXT NOT NULL,       -- 'highlight' | 'sticky' | 'textbox' | 'draw' | 'image'
+  data_json  TEXT NOT NULL,
+  created_at INTEGER DEFAULT (unixepoch())
+)
+```
+
+</details>
+
+---
+
+## Building & Packaging
+
+```bash
+npm run package    # create distributable for current platform
+npm run make       # build platform installers (Squirrel/deb/rpm/zip)
+```
+
+electron-forge bundles into an ASAR archive. Native modules (`better-sqlite3`, `vectordb`) are rebuilt automatically via `postinstall`. The `all-MiniLM-L6-v2` model weights are downloaded on first launch and cached locally by transformers.js.
+
+---
+
+## License
+
+[MIT](LICENSE)
+
+---
+
+<div align="center">
+
+**Built with Electron, React, and local embeddings.**
+
+[Report Bug](https://github.com/RahulRR-10/Axiom/issues) · [Request Feature](https://github.com/RahulRR-10/Axiom/issues)
+
+</div>
 
 ### Knowledge Base & Search
 
