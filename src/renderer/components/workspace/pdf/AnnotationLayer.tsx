@@ -94,7 +94,29 @@ export const AnnotationLayer: React.FC<Props> = ({
         w: r.width  / wrapW,
         h: r.height / wrapH,
       }));
-    if (!rects.length) return;
+    if (!rects.length) { sel.removeAllRanges(); return; }
+
+    // Clear mode: remove overlapping highlights instead of creating new ones
+    if (highlightColor === 'clear') {
+      const allHl = [
+        ...annotations.filter((a): a is HighlightAnnotation => a.type === 'highlight' && a.page === page),
+        ...newHighlights.filter(a => a.page === page),
+      ];
+      for (const hl of allHl) {
+        const overlaps = hl.rects.some(hr =>
+          rects.some(sr =>
+            sr.x < hr.x + hr.w && sr.x + sr.w > hr.x &&
+            sr.y < hr.y + hr.h && sr.y + sr.h > hr.y
+          )
+        );
+        if (overlaps) {
+          setNewHighlights(prev => prev.filter(a => a.id !== hl.id));
+          onAnnotationDeleted(hl.id);
+        }
+      }
+      sel.removeAllRanges();
+      return;
+    }
 
     const ann: HighlightAnnotation = {
       id: uuidv4(), file_id: fileId, page, type: 'highlight',
@@ -103,7 +125,7 @@ export const AnnotationLayer: React.FC<Props> = ({
     setNewHighlights(prev => [...prev, ann]);
     onAnnotationCreated(ann);
     sel.removeAllRanges();
-  }, [activeTool, highlightColor, fileId, page, vaultPath, wrapperRef, onAnnotationCreated]);
+  }, [activeTool, highlightColor, fileId, page, vaultPath, wrapperRef, onAnnotationCreated, annotations, newHighlights, onAnnotationDeleted]);
 
   useEffect(() => {
     const el = wrapperRef.current;
@@ -283,7 +305,24 @@ export const AnnotationLayer: React.FC<Props> = ({
           onClick={
             activeTool === 'sticky' ? handleStickyClick
             : activeTool === 'eraser' ? handleEraserClick
-            : activeTool === 'textbox' ? ((e: React.MouseEvent<HTMLDivElement>) => {
+            : activeTool === 'textbox' ? (() => {
+                // Single click: dismiss the active textbox (commit if it has content)
+                if (textboxEdit) {
+                  if (textboxEdit.content.trim()) {
+                    const ann: TextboxAnnotation = {
+                      id: uuidv4(), file_id: fileId, page, type: 'textbox',
+                      x: textboxEdit.x, y: textboxEdit.y,
+                      content: textboxEdit.content, color: textColorRef.current, fontSize: fontSizeRef.current,
+                    };
+                    onAnnotationCreated(ann);
+                  }
+                  setTextboxEdit(null);
+                }
+              })
+            : undefined
+          }
+          onDoubleClick={
+            activeTool === 'textbox' ? ((e: React.MouseEvent<HTMLDivElement>) => {
                 const rect = e.currentTarget.getBoundingClientRect();
                 setTextboxEdit({
                   x: (e.clientX - rect.left) / (rect.width || 1),
@@ -353,21 +392,46 @@ export const AnnotationLayer: React.FC<Props> = ({
 
       {/* ── Sticky note pins ── */}
       {allStickies.map(s => (
-        <button
+        <div
           key={`st-${s.id}`}
-          type="button"
           style={{
             position: 'absolute',
             top: s.y * cssHeight - 12, left: s.x * cssWidth - 8,
-            background: 'transparent', border: 'none',
-            cursor: 'pointer', fontSize: '20px', lineHeight: 1,
-            padding: 0, pointerEvents: 'all', zIndex: 5,
+            pointerEvents: 'all', zIndex: 5,
+            display: 'flex', alignItems: 'flex-start', gap: '2px',
           }}
-          onClick={e => { e.stopPropagation(); setPopover({ id: s.id, x: s.x, y: s.y, content: s.content }); }}
-          title="Sticky note"
         >
-          📌
-        </button>
+          <button
+            type="button"
+            style={{
+              background: 'transparent', border: 'none',
+              cursor: 'pointer', fontSize: '20px', lineHeight: 1,
+              padding: 0,
+            }}
+            onClick={e => { e.stopPropagation(); setPopover({ id: s.id, x: s.x, y: s.y, content: s.content }); }}
+            title="Sticky note"
+          >
+            📌
+          </button>
+          <button
+            type="button"
+            onClick={e => {
+              e.stopPropagation();
+              setNewHighlights(prev => prev.filter(a => a.id !== s.id));
+              onAnnotationDeleted(s.id);
+            }}
+            title="Delete note"
+            style={{
+              background: 'rgba(0,0,0,0.6)', border: 'none', borderRadius: '50%',
+              width: '16px', height: '16px', cursor: 'pointer',
+              color: '#ccc', fontSize: '10px', lineHeight: 1,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              padding: 0, flexShrink: 0,
+            }}
+          >
+            ✕
+          </button>
+        </div>
       ))}
 
       {/* ── Sticky popover ── */}
@@ -409,18 +473,43 @@ export const AnnotationLayer: React.FC<Props> = ({
             position: 'absolute',
             top: tb.y * cssHeight,
             left: tb.x * cssWidth,
-            color: tb.color,
-            fontSize: `${tb.fontSize * propZoom}px`,
-            fontFamily: 'sans-serif',
-            pointerEvents: 'none',
+            pointerEvents: 'all',
             zIndex: 4,
-            whiteSpace: 'pre-wrap',
-            maxWidth: `${cssWidth - tb.x * cssWidth - 8}px`,
-            lineHeight: 1.3,
-            textShadow: '0 0 2px rgba(0,0,0,0.5)',
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: '2px',
           }}
         >
-          {tb.content}
+          <div
+            style={{
+              color: tb.color,
+              fontSize: `${tb.fontSize * propZoom}px`,
+              fontFamily: 'sans-serif',
+              whiteSpace: 'pre-wrap',
+              maxWidth: `${cssWidth - tb.x * cssWidth - 24}px`,
+              lineHeight: 1.3,
+              textShadow: '0 0 2px rgba(0,0,0,0.5)',
+            }}
+          >
+            {tb.content}
+          </div>
+          <button
+            type="button"
+            onClick={e => {
+              e.stopPropagation();
+              onAnnotationDeleted(tb.id);
+            }}
+            title="Delete text"
+            style={{
+              background: 'rgba(0,0,0,0.6)', border: 'none', borderRadius: '50%',
+              width: '16px', height: '16px', cursor: 'pointer',
+              color: '#ccc', fontSize: '10px', lineHeight: 1,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              padding: 0, flexShrink: 0,
+            }}
+          >
+            ✕
+          </button>
         </div>
       ))}
 

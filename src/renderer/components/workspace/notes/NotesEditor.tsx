@@ -414,7 +414,7 @@ li { margin: 0.2em 0 !important; color: #1a1a1a !important; }
                 </span>
 
                 {/* Mode toggle + PDF export */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginLeft: 'auto' }}>
                     <div className="notes-mode-toggle">
                         <button
                             type="button"
