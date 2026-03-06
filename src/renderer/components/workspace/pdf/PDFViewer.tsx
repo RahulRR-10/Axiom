@@ -60,6 +60,7 @@ const PDFPage = React.memo(function PDFPage({
   annotations,
   onAnnotationCreated,
   onAnnotationDeleted,
+  onAnnotationUpdated,
   fontSize: propFontSize,
   textColor: propTextColor,
   zoom: propZoom,
@@ -76,6 +77,7 @@ const PDFPage = React.memo(function PDFPage({
   annotations: Annotation[];
   onAnnotationCreated: (ann: Annotation) => void;
   onAnnotationDeleted: (annId: string) => void;
+  onAnnotationUpdated: (ann: Annotation) => void;
   fontSize: number;
   textColor: string;
   zoom: number;
@@ -247,6 +249,7 @@ const PDFPage = React.memo(function PDFPage({
         annotations={annotations.filter((a) => a.page === pageNum)}
         onAnnotationCreated={onAnnotationCreated}
         onAnnotationDeleted={onAnnotationDeleted}
+        onAnnotationUpdated={onAnnotationUpdated}
         fontSize={propFontSize}
         textColor={propTextColor}
         zoom={propZoom}
@@ -421,6 +424,39 @@ export const PDFViewer: React.FC<Props> = ({
     });
   }, []);
 
+  const onAnnotationUpdated = useCallback((ann: Annotation) => {
+    // Update in pending if it exists there, otherwise delete+re-create
+    setPendingAnnotations((prev) => {
+      const idx = prev.findIndex((a) => a.id === ann.id);
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = ann;
+        return next;
+      }
+      return prev;
+    });
+    // If it was a DB annotation, mark old for deletion and add updated as pending
+    setAnnotations((prev) => {
+      const idx = prev.findIndex((a) => a.id === ann.id);
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = ann;
+        return next;
+      }
+      return prev;
+    });
+    // Mark as dirty — delete the old DB version and re-add as pending
+    setDeletedAnnotationIds((prev) => {
+      const copy = new Set(prev);
+      copy.add(ann.id);
+      return copy;
+    });
+    setPendingAnnotations((prev) => {
+      if (prev.find((a) => a.id === ann.id)) return prev;
+      return [...prev, ann];
+    });
+  }, []);
+
   /* ── Save PDF ────────────────────────────────────────────────────────────── */
   const savePdf = useCallback(async () => {
     if (!filePath || saving) return;
@@ -518,14 +554,18 @@ export const PDFViewer: React.FC<Props> = ({
     loadAnnotations,
   ]);
 
-  /* ── Escape to deactivate tool ───────────────────────────────────────────── */
+  /* ── Escape to deactivate tool / Ctrl+S to save ──────────────────────────── */
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === "Escape") setActiveTool("none");
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        savePdf();
+      }
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, []);
+  }, [savePdf]);
 
   /* ── Touchpad pinch-to-zoom ──────────────────────────────────────────────── */
   useEffect(() => {
@@ -628,6 +668,7 @@ export const PDFViewer: React.FC<Props> = ({
           annotations={mergedAnnotations}
           onAnnotationCreated={onAnnotationCreated}
           onAnnotationDeleted={onAnnotationDeleted}
+          onAnnotationUpdated={onAnnotationUpdated}
           fontSize={fontSize}
           textColor={textColor}
           zoom={zoom}

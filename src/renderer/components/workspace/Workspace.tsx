@@ -183,7 +183,13 @@ export const Workspace: React.FC<WorkspaceProps> = ({ vaultPath }) => {
   const closeTab = useCallback(
     (filePath: string, e?: React.MouseEvent) => {
       e?.stopPropagation();
-      if (dirtyFiles.has(filePath)) return;
+
+      if (dirtyFiles.has(filePath)) {
+        const confirmed = window.confirm(
+          'You have unsaved annotation changes. Close without saving?',
+        );
+        if (!confirmed) return;
+      }
 
       const idx = openFiles.findIndex((f) => f.filePath === filePath);
       if (idx < 0) return;
@@ -573,9 +579,9 @@ export const Workspace: React.FC<WorkspaceProps> = ({ vaultPath }) => {
     return () => window.removeEventListener("keydown", handler);
   }, [allTabsFlat, tabGroups]);
 
-  // ── Render content based on active file ────────────────────────────────
-  const renderContent = () => {
-    if (!activeFile) {
+  // ── Render all open files (hide inactive ones to preserve state) ────────
+  const renderAllFiles = () => {
+    if (openFiles.length === 0) {
       return (
         <div className="flex-1 flex items-center justify-center">
           <p className="text-[#4e4e4e] text-sm select-none">
@@ -585,40 +591,66 @@ export const Workspace: React.FC<WorkspaceProps> = ({ vaultPath }) => {
       );
     }
 
-    if (activeFile.fileType === "pdf") {
-      return (
-        <div className="flex-1 min-h-0 overflow-hidden">
-          <PDFViewer
-            key={activeFile.filePath}
-            filePath={activeFile.filePath}
-            fileId={activeFile.fileId ?? ""}
-            vaultPath={vaultPath}
-            initialPage={activeFile.initialPage}
-            scrollNonce={activeFile.scrollNonce}
-          />
-        </div>
-      );
-    }
-
-    if (activeFile.fileType === "md") {
-      return (
-        <div className="flex-1 min-h-0 overflow-hidden">
-          <NotesEditor
-            key={activeFile.filePath}
-            filePath={activeFile.filePath}
-            noteId={activeFile.fileId ?? ""}
-            vaultPath={vaultPath ?? ""}
-          />
-        </div>
-      );
-    }
-
     return (
-      <div className="flex-1 flex items-center justify-center">
-        <p className="text-[#4e4e4e] text-sm select-none">
-          {activeFile.name} — unsupported file type
-        </p>
-      </div>
+      <>
+        {openFiles.map((f) => {
+          const isActive = f.filePath === activeFilePath;
+
+          if (f.fileType === "pdf") {
+            return (
+              <div
+                key={f.filePath}
+                className="flex-1 min-h-0 overflow-hidden"
+                style={{ display: isActive ? undefined : 'none' }}
+              >
+                <PDFViewer
+                  filePath={f.filePath}
+                  fileId={f.fileId ?? ""}
+                  vaultPath={vaultPath}
+                  initialPage={f.initialPage}
+                  scrollNonce={f.scrollNonce}
+                />
+              </div>
+            );
+          }
+
+          if (f.fileType === "md") {
+            return (
+              <div
+                key={f.filePath}
+                className="flex-1 min-h-0 overflow-hidden"
+                style={{ display: isActive ? undefined : 'none' }}
+              >
+                <NotesEditor
+                  filePath={f.filePath}
+                  noteId={f.fileId ?? ""}
+                  vaultPath={vaultPath ?? ""}
+                />
+              </div>
+            );
+          }
+
+          return (
+            <div
+              key={f.filePath}
+              className="flex-1 flex items-center justify-center"
+              style={{ display: isActive ? undefined : 'none' }}
+            >
+              <p className="text-[#4e4e4e] text-sm select-none">
+                {f.name} — unsupported file type
+              </p>
+            </div>
+          );
+        })}
+        {/* Show placeholder if no active file selected */}
+        {!activeFile && (
+          <div className="flex-1 flex items-center justify-center">
+            <p className="text-[#4e4e4e] text-sm select-none">
+              Open a file from the vault to get started
+            </p>
+          </div>
+        )}
+      </>
     );
   };
 
@@ -905,7 +937,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ vaultPath }) => {
         </div>
       )}
 
-      {renderContent()}
+      {renderAllFiles()}
     </section>
   );
 };

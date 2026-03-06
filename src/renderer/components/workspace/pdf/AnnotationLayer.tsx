@@ -21,6 +21,7 @@ type Props = {
   annotations:         Annotation[];
   onAnnotationCreated: (ann: Annotation) => void;
   onAnnotationDeleted: (annId: string) => void;
+  onAnnotationUpdated: (ann: Annotation) => void;
   fontSize:            number;
   textColor:           string;
   zoom:                number;
@@ -45,6 +46,7 @@ export const AnnotationLayer: React.FC<Props> = ({
   annotations,
   onAnnotationCreated,
   onAnnotationDeleted,
+  onAnnotationUpdated,
   fontSize: propFontSize,
   textColor: propTextColor,
   zoom: propZoom,
@@ -54,7 +56,21 @@ export const AnnotationLayer: React.FC<Props> = ({
   const [popover, setPopover]             = useState<StickyPopover | null>(null);
   const [textboxEdit, setTextboxEdit]     = useState<{ x: number; y: number; content: string } | null>(null);
 
-  // Refs to always have the latest text color / font size (avoids stale closures in onBlur)
+  // ID of textbox currently being edited (existing annotation)
+  const [editingTextboxId, setEditingTextboxId] = useState<string | null>(null);
+  const [editingTextboxContent, setEditingTextboxContent] = useState('');
+  const [editingTextboxColor, setEditingTextboxColor] = useState('#ffffff');
+
+  // ID of sticky note being edited
+  const [editingStickyId, setEditingStickyId] = useState<string | null>(null);
+
+  // Color picker popup for textbox editing
+  const [showEditColorPicker, setShowEditColorPicker] = useState(false);
+
+  // Drag state for annotations
+  const dragAnn = useRef<{ id: string; type: 'sticky' | 'textbox'; startX: number; startY: number; origX: number; origY: number } | null>(null);
+
+  // Refs to always have the latest text color / font size
   const textColorRef = useRef(propTextColor);
   const fontSizeRef  = useRef(propFontSize);
   useEffect(() => { textColorRef.current = propTextColor; }, [propTextColor]);
@@ -153,6 +169,15 @@ export const AnnotationLayer: React.FC<Props> = ({
 
   const saveSticky = () => {
     if (!popover) return;
+    if (popover.id) {
+      // Update existing sticky
+      const existing = allStickies.find(s => s.id === popover.id);
+      if (existing) {
+        onAnnotationUpdated({ ...existing, content: popover.content });
+      }
+      setPopover(null);
+      return;
+    }
     const ann: StickyAnnotation = {
       id: uuidv4(), file_id: fileId, page, type: 'sticky',
       x: popover.x, y: popover.y, content: popover.content,
@@ -221,9 +246,8 @@ export const AnnotationLayer: React.FC<Props> = ({
       const rect = e.currentTarget.getBoundingClientRect();
       const cx = (e.clientX - rect.left) / (rect.width  || 1);
       const cy = (e.clientY - rect.top)  / (rect.height || 1);
-      const threshold = 0.03; // ~3% of page — generous hit area
+      const threshold = 0.03;
 
-      // Find nearest annotation to delete
       const allAnns = [...annotations, ...newHighlights, ...newDrawings];
       let hit: Annotation | null = null;
 
@@ -250,15 +274,47 @@ export const AnnotationLayer: React.FC<Props> = ({
       }
 
       if (hit) {
-        // Remove from local state
         setNewHighlights(prev => prev.filter(a => a.id !== hit!.id));
         setNewDrawings(prev => prev.filter(a => a.id !== hit!.id));
-        // Mark for deletion
         onAnnotationDeleted(hit.id);
       }
     },
     [activeTool, annotations, newHighlights, newDrawings, page, onAnnotationDeleted],
   );
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+     ANNOTATION DRAGGING (sticky + textbox)
+  ═══════════════════════════════════════════════════════════════════════════ */
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!dragAnn.current || !wrapperRef.current) return;
+      const rect = wrapperRef.current.getBoundingClientRect();
+      const newX = dragAnn.current.origX + (e.clientX - dragAnn.current.startX) / (rect.width || 1);
+      const newY = dragAnn.current.origY + (e.clientY - dragAnn.current.startY) / (rect.height || 1);
+      const clampedX = Math.max(0, Math.min(1, newX));
+      const clampedY = Math.max(0, Math.min(1, newY));
+
+      const { id, type } = dragAnn.current;
+      if (type === 'sticky') {
+        const ann = allStickies.find(s => s.id === id);
+        if (ann) onAnnotationUpdated({ ...ann, x: clampedX, y: clampedY });
+      } else {
+        const ann = allTextboxes.find(t => t.id === id);
+        if (ann) onAnnotationUpdated({ ...ann, x: clampedX, y: clampedY });
+      }
+    };
+
+    const handleMouseUp = () => {
+      dragAnn.current = null;
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [wrapperRef, onAnnotationUpdated, annotations]);
 
   /* ═══════════════════════════════════════════════════════════════════════════
      MERGE ANNOTATIONS
@@ -286,6 +342,11 @@ export const AnnotationLayer: React.FC<Props> = ({
   ═══════════════════════════════════════════════════════════════════════════ */
   const toSvgPoints = (pts: Array<{ x: number; y: number }>) =>
     pts.map(p => `${p.x * cssWidth},${p.y * cssHeight}`).join(' ');
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+     TEXTBOX COLOR CHOICES
+  ═══════════════════════════════════════════════════════════════════════════ */
+  const textboxColors = ['#ffffff', '#ef4444', '#22c55e', '#3b82f6', '#eab308', '#ec4899', '#f97316', '#06b6d4'];
 
   /* ═══════════════════════════════════════════════════════════════════════════
      RENDER — all elements via Fragment, no container div
@@ -317,6 +378,10 @@ export const AnnotationLayer: React.FC<Props> = ({
                     onAnnotationCreated(ann);
                   }
                   setTextboxEdit(null);
+                }
+                // Also dismiss any editing textbox
+                if (editingTextboxId) {
+                  setEditingTextboxId(null);
                 }
               })
             : undefined
@@ -375,7 +440,6 @@ export const AnnotationLayer: React.FC<Props> = ({
               strokeLinejoin="round"
             />
           ))}
-          {/* Live drawing preview */}
           {drawing && drawPoints.length > 1 && (
             <polyline
               points={toSvgPoints(drawPoints)}
@@ -391,48 +455,44 @@ export const AnnotationLayer: React.FC<Props> = ({
       )}
 
       {/* ── Sticky note pins ── */}
-      {allStickies.map(s => (
-        <div
-          key={`st-${s.id}`}
-          style={{
-            position: 'absolute',
-            top: s.y * cssHeight - 12, left: s.x * cssWidth - 8,
-            pointerEvents: 'all', zIndex: 5,
-            display: 'flex', alignItems: 'flex-start', gap: '2px',
-          }}
-        >
-          <button
-            type="button"
+      {allStickies.map(s => {
+        const isEditing = editingStickyId === s.id;
+        return (
+          <div
+            key={`st-${s.id}`}
             style={{
-              background: 'transparent', border: 'none',
-              cursor: 'pointer', fontSize: '20px', lineHeight: 1,
-              padding: 0,
+              position: 'absolute',
+              top: s.y * cssHeight - 12, left: s.x * cssWidth - 8,
+              pointerEvents: 'all', zIndex: 5,
+              display: 'flex', alignItems: 'flex-start', gap: '2px',
+              cursor: isEditing ? 'default' : 'grab',
             }}
-            onClick={e => { e.stopPropagation(); setPopover({ id: s.id, x: s.x, y: s.y, content: s.content }); }}
-            title="Sticky note"
-          >
-            📌
-          </button>
-          <button
-            type="button"
-            onClick={e => {
+            onMouseDown={e => {
+              if (isEditing) return;
               e.stopPropagation();
-              setNewHighlights(prev => prev.filter(a => a.id !== s.id));
-              onAnnotationDeleted(s.id);
-            }}
-            title="Delete note"
-            style={{
-              background: 'rgba(0,0,0,0.6)', border: 'none', borderRadius: '50%',
-              width: '16px', height: '16px', cursor: 'pointer',
-              color: '#ccc', fontSize: '10px', lineHeight: 1,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              padding: 0, flexShrink: 0,
+              dragAnn.current = { id: s.id, type: 'sticky', startX: e.clientX, startY: e.clientY, origX: s.x, origY: s.y };
             }}
           >
-            ✕
-          </button>
-        </div>
-      ))}
+            <button
+              type="button"
+              style={{
+                background: 'transparent', border: 'none',
+                cursor: 'pointer', fontSize: '20px', lineHeight: 1,
+                padding: 0,
+              }}
+              onClick={e => {
+                e.stopPropagation();
+                setEditingStickyId(s.id);
+                setPopover({ id: s.id, x: s.x, y: s.y, content: s.content });
+              }}
+              title="Sticky note"
+            >
+              📌
+            </button>
+
+          </div>
+        );
+      })}
 
       {/* ── Sticky popover ── */}
       {popover && (
@@ -446,6 +506,27 @@ export const AnnotationLayer: React.FC<Props> = ({
           }}
           onClick={e => e.stopPropagation()}
         >
+          {/* ✕ on top-right corner of yellow box */}
+          <button
+            type="button"
+            onClick={e => {
+              e.stopPropagation();
+              if (popover.id) onAnnotationDeleted(popover.id);
+              setPopover(null);
+              setEditingStickyId(null);
+            }}
+            style={{
+              position: 'absolute', top: -8, right: -8,
+              background: 'rgba(0,0,0,0.7)', border: 'none', borderRadius: '50%',
+              width: '20px', height: '20px', cursor: 'pointer',
+              color: '#fff', fontSize: '12px', lineHeight: 1,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              padding: 0, boxShadow: '0 1px 4px rgba(0,0,0,0.3)',
+            }}
+            title="Delete note"
+          >
+            ✕
+          </button>
           <textarea
             autoFocus value={popover.content}
             onChange={e => setPopover(p => p ? { ...p, content: e.target.value } : p)}
@@ -457,63 +538,188 @@ export const AnnotationLayer: React.FC<Props> = ({
             }}
           />
           <div className="flex justify-end gap-2 mt-2">
-            <button type="button" onClick={() => setPopover(null)}
+            <button type="button" onClick={() => { setPopover(null); setEditingStickyId(null); }}
               className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1">Cancel</button>
-            <button type="button" onClick={saveSticky}
+            <button type="button" onClick={() => { saveSticky(); setEditingStickyId(null); }}
               className="text-xs bg-yellow-400 text-yellow-900 px-3 py-1 rounded hover:bg-yellow-500">Save</button>
           </div>
         </div>
       )}
 
-      {/* ── Saved textbox annotations ── */}
-      {allTextboxes.map(tb => (
+      {/* ── Click-outside overlay for editing textbox ── */}
+      {editingTextboxId && (
         <div
-          key={`tb-${tb.id}`}
           style={{
-            position: 'absolute',
-            top: tb.y * cssHeight,
-            left: tb.x * cssWidth,
-            pointerEvents: 'all',
-            zIndex: 4,
-            display: 'flex',
-            alignItems: 'flex-start',
-            gap: '2px',
+            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+            zIndex: 19, cursor: 'default',
           }}
-        >
-          <div
-            style={{
-              color: tb.color,
-              fontSize: `${tb.fontSize * propZoom}px`,
-              fontFamily: 'sans-serif',
-              whiteSpace: 'pre-wrap',
-              maxWidth: `${cssWidth - tb.x * cssWidth - 24}px`,
-              lineHeight: 1.3,
-              textShadow: '0 0 2px rgba(0,0,0,0.5)',
-            }}
-          >
-            {tb.content}
-          </div>
-          <button
-            type="button"
-            onClick={e => {
-              e.stopPropagation();
-              onAnnotationDeleted(tb.id);
-            }}
-            title="Delete text"
-            style={{
-              background: 'rgba(0,0,0,0.6)', border: 'none', borderRadius: '50%',
-              width: '16px', height: '16px', cursor: 'pointer',
-              color: '#ccc', fontSize: '10px', lineHeight: 1,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              padding: 0, flexShrink: 0,
-            }}
-          >
-            ✕
-          </button>
-        </div>
-      ))}
+          onClick={() => {
+            const tb = allTextboxes.find(t => t.id === editingTextboxId);
+            if (tb && editingTextboxContent.trim()) {
+              onAnnotationUpdated({ ...tb, content: editingTextboxContent, color: editingTextboxColor });
+            } else if (tb && !editingTextboxContent.trim()) {
+              onAnnotationDeleted(editingTextboxId);
+            }
+            setEditingTextboxId(null);
+            setShowEditColorPicker(false);
+          }}
+        />
+      )}
 
-      {/* ── Active textbox input ── */}
+      {/* ── Saved textbox annotations ── */}
+      {allTextboxes.map(tb => {
+        const isEditing = editingTextboxId === tb.id;
+        return (
+          <div
+            key={`tb-${tb.id}`}
+            style={{
+              position: 'absolute',
+              top: tb.y * cssHeight,
+              left: tb.x * cssWidth,
+              pointerEvents: 'all',
+              zIndex: isEditing ? 20 : 4,
+              cursor: isEditing ? 'default' : 'grab',
+            }}
+            onMouseDown={e => {
+              if (isEditing) return;
+              e.stopPropagation();
+              dragAnn.current = { id: tb.id, type: 'textbox', startX: e.clientX, startY: e.clientY, origX: tb.x, origY: tb.y };
+            }}
+            onDoubleClick={e => {
+              e.stopPropagation();
+              setEditingTextboxId(tb.id);
+              setEditingTextboxContent(tb.content);
+              setEditingTextboxColor(tb.color);
+              setShowEditColorPicker(false);
+            }}
+          >
+            {isEditing ? (
+              <div
+                onClick={e => e.stopPropagation()}
+                onMouseDown={e => e.stopPropagation()}
+              >
+                <textarea
+                  autoFocus
+                  rows={1}
+                  ref={ta => {
+                    if (!ta) return;
+                    ta.style.height = 'auto';
+                    const lineH = parseFloat(getComputedStyle(ta).lineHeight) || (tb.fontSize * 1.4);
+                    const maxH = lineH * 5;
+                    ta.style.height = `${Math.min(ta.scrollHeight, maxH)}px`;
+                    ta.style.overflowY = ta.scrollHeight > maxH ? 'auto' : 'hidden';
+                  }}
+                  value={editingTextboxContent}
+                  onChange={e => {
+                    setEditingTextboxContent(e.target.value);
+                    const ta = e.target;
+                    ta.style.height = 'auto';
+                    const lineH = parseFloat(getComputedStyle(ta).lineHeight) || (tb.fontSize * 1.4);
+                    const maxH = lineH * 5;
+                    ta.style.height = `${Math.min(ta.scrollHeight, maxH)}px`;
+                    ta.style.overflowY = ta.scrollHeight > maxH ? 'auto' : 'hidden';
+                  }}
+                  onKeyDown={e => {
+                    if (e.key === 'Escape') {
+                      e.preventDefault();
+                      setEditingTextboxId(null);
+                      setShowEditColorPicker(false);
+                    }
+                  }}
+                  style={{
+                    background: 'transparent',
+                    border: `1px solid ${editingTextboxColor}`,
+                    borderRadius: '4px',
+                    color: editingTextboxColor,
+                    fontSize: `${tb.fontSize}px`,
+                    fontFamily: 'sans-serif',
+                    padding: '4px 8px',
+                    outline: 'none',
+                    minWidth: '150px',
+                    resize: 'horizontal',
+                    overflowY: 'hidden',
+                    lineHeight: '1.4',
+                  }}
+                />
+                {/* Compact toolbar: current color circle + delete icon */}
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px',
+                  background: 'rgba(0,0,0,0.85)', borderRadius: '20px', padding: '5px 10px',
+                  width: 'fit-content',
+                }}>
+                  {/* Current color circle */}
+                  <div style={{ position: 'relative' }}>
+                    <button
+                      type="button"
+                      onClick={() => setShowEditColorPicker(prev => !prev)}
+                      style={{
+                        width: 22, height: 22, borderRadius: '50%',
+                        background: editingTextboxColor,
+                        border: '2px solid #666', cursor: 'pointer', padding: 0,
+                      }}
+                      title="Change color"
+                    />
+                    {showEditColorPicker && (
+                      <div style={{
+                        position: 'absolute', bottom: '30px', left: '50%',
+                        transform: 'translateX(-50%)',
+                        display: 'flex', gap: '4px',
+                        background: 'rgba(0,0,0,0.95)', borderRadius: '14px',
+                        padding: '5px 8px', boxShadow: '0 2px 8px rgba(0,0,0,0.5)',
+                      }}>
+                        {textboxColors.map(c => (
+                          <button
+                            key={c}
+                            type="button"
+                            onClick={() => { setEditingTextboxColor(c); setShowEditColorPicker(false); }}
+                            style={{
+                              width: 18, height: 18, borderRadius: '50%',
+                              background: c,
+                              border: editingTextboxColor === c ? '2px solid #fff' : '1px solid #555',
+                              cursor: 'pointer', padding: 0, flexShrink: 0,
+                            }}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  {/* Delete icon */}
+                  <button
+                    type="button"
+                    onClick={() => { onAnnotationDeleted(tb.id); setEditingTextboxId(null); setShowEditColorPicker(false); }}
+                    style={{
+                      background: 'transparent', border: 'none', cursor: 'pointer', padding: '2px',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}
+                    title="Delete"
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#aaa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="3 6 5 6 21 6"/>
+                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div
+                style={{
+                  color: tb.color,
+                  fontSize: `${tb.fontSize * propZoom}px`,
+                  fontFamily: 'sans-serif',
+                  whiteSpace: 'pre-wrap',
+                  maxWidth: `${cssWidth - tb.x * cssWidth - 24}px`,
+                  lineHeight: 1.3,
+                  textShadow: '0 0 2px rgba(0,0,0,0.5)',
+                }}
+              >
+                {tb.content}
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {/* ── Active textbox input (new) ── */}
       {textboxEdit && (
         <div
           style={{
@@ -531,7 +737,6 @@ export const AnnotationLayer: React.FC<Props> = ({
             value={textboxEdit.content}
             onChange={e => {
               setTextboxEdit(prev => prev ? { ...prev, content: e.target.value } : prev);
-              // Auto-resize up to 5 lines
               const ta = e.target;
               ta.style.height = 'auto';
               const lineH = parseFloat(getComputedStyle(ta).lineHeight) || (propFontSize * 1.4);
@@ -544,7 +749,6 @@ export const AnnotationLayer: React.FC<Props> = ({
                 e.preventDefault();
                 setTextboxEdit(null);
               }
-              // Allow Enter as a newline — do not commit on Enter
             }}
             onBlur={() => {
               if (textboxEdit.content.trim()) {

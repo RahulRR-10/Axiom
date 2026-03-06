@@ -127,6 +127,13 @@ export const FloatingActionBar: React.FC<Props> = ({
     if (!container) return;
 
     const onMouseUp = () => {
+      // Only show the bar when the selection is inside a PDF text layer (not annotations)
+      const sel = window.getSelection();
+      if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
+      const anchorEl = sel.anchorNode?.nodeType === Node.TEXT_NODE
+        ? sel.anchorNode.parentElement : sel.anchorNode as Element | null;
+      if (!anchorEl?.closest('.textLayer')) return;
+
       const result = computePosition();
       if (!result) return;
 
