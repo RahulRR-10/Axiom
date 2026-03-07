@@ -88,6 +88,11 @@ const PDFPage = React.memo(function PDFPage({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const textLayerRef = useRef<HTMLDivElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const cleanupSelectionRef = useRef<{
+    mousedown: ((e: MouseEvent) => void) | null;
+    mouseup: (() => void) | null;
+    div: HTMLDivElement | null;
+  }>({ mousedown: null, mouseup: null, div: null }).current;
 
   /* Scale existing canvas content before paint so there is no blank/flash frame
      while the async re-render is in flight (e.g. during zoom). */
@@ -207,15 +212,29 @@ const PDFPage = React.memo(function PDFPage({
         return;
       }
 
-      // Force Chromium to register hit-test regions
-      const parent = textLayerDiv.parentNode;
-      const next = textLayerDiv.nextSibling;
-      if (parent) {
-        parent.removeChild(textLayerDiv);
-        void (parent as HTMLElement).offsetHeight;
-        parent.insertBefore(textLayerDiv, next);
-        void textLayerDiv.offsetHeight;
-      }
+      // Append the endOfContent sentinel div used by the official pdf.js
+      // viewer to constrain browser text selection to the text layer.
+      const endOfContent = document.createElement("div");
+      endOfContent.className = "endOfContent";
+      textLayerDiv.append(endOfContent);
+
+      // Manage the "selecting" class so endOfContent covers the page
+      // during drag-selection and prevents the browser from over-selecting.
+      const onMouseDown = (evt: MouseEvent) => {
+        if ((evt.target as HTMLElement)?.closest(".endOfContent")) return;
+        textLayerDiv.classList.add("selecting");
+      };
+      textLayerDiv.addEventListener("mousedown", onMouseDown);
+
+      const onMouseUp = () => {
+        textLayerDiv.classList.remove("selecting");
+      };
+      document.addEventListener("mouseup", onMouseUp);
+
+      // Store cleanup references so the effect teardown can remove them.
+      cleanupSelectionRef.mousedown = onMouseDown;
+      cleanupSelectionRef.mouseup = onMouseUp;
+      cleanupSelectionRef.div = textLayerDiv;
 
       page.cleanup();
     })().catch(console.error);
@@ -229,6 +248,16 @@ const PDFPage = React.memo(function PDFPage({
       } catch {
         /* ignore */
       }
+      // Remove selection listeners from previous render cycle
+      if (cleanupSelectionRef.div && cleanupSelectionRef.mousedown) {
+        cleanupSelectionRef.div.removeEventListener("mousedown", cleanupSelectionRef.mousedown);
+      }
+      if (cleanupSelectionRef.mouseup) {
+        document.removeEventListener("mouseup", cleanupSelectionRef.mouseup);
+      }
+      cleanupSelectionRef.mousedown = null;
+      cleanupSelectionRef.mouseup = null;
+      cleanupSelectionRef.div = null;
     };
   }, [pdf, pageNum, scale, cssWidth, cssHeight, _renderNonce]);
 
