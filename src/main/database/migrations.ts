@@ -105,4 +105,34 @@ export const MIGRATIONS: Array<{ version: string; sql: string }> = [
       CREATE INDEX IF NOT EXISTS idx_notes_file_path ON notes(file_path);
     `,
   },
+  {
+    version: '005_chunks_fix_duplicate_fk',
+    sql: `
+      -- Recreate chunks without the duplicate (non-cascading) table-level FK.
+      CREATE TABLE IF NOT EXISTS chunks_new (
+        id            TEXT PRIMARY KEY,
+        file_id       TEXT NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+        page_or_slide INTEGER,
+        text          TEXT NOT NULL,
+        chunk_index   INTEGER,
+        is_annotation INTEGER DEFAULT 0
+      );
+
+      INSERT OR IGNORE INTO chunks_new
+        SELECT id, file_id, page_or_slide, text, chunk_index, is_annotation
+        FROM chunks;
+
+      DROP TABLE IF EXISTS chunks;
+      ALTER TABLE chunks_new RENAME TO chunks;
+
+      CREATE INDEX IF NOT EXISTS idx_chunks_file_id ON chunks(file_id);
+
+      -- Rebuild the FTS5 content table reference
+      DROP TABLE IF EXISTS chunks_fts;
+      CREATE VIRTUAL TABLE chunks_fts
+        USING fts5(text, file_id, page_or_slide, content=chunks, content_rowid=rowid);
+      INSERT INTO chunks_fts(rowid, text, file_id, page_or_slide)
+        SELECT rowid, text, file_id, page_or_slide FROM chunks;
+    `,
+  },
 ];

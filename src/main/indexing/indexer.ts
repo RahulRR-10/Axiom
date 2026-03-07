@@ -16,6 +16,22 @@ export const ENABLE_PPTX_INDEXING = false;
 const EXTRACT_TIMEOUT_MS = 30_000;   // 30 s per file
 const EMBED_SUB_BATCH = 32;       // chunks sent to embedder at a time
 
+// ── Per-file lock to prevent concurrent indexing of the same path ────────────
+const indexLocks = new Map<string, Promise<void>>();
+
+async function withFileLock(filePath: string, fn: () => Promise<void>): Promise<void> {
+  const norm = filePath.toLowerCase();
+  const prev = indexLocks.get(norm) ?? Promise.resolve();
+  const current = prev.then(fn, fn);   // run fn after previous completes (even if it failed)
+  indexLocks.set(norm, current);
+  try {
+    await current;
+  } finally {
+    // Clean up if no newer call has replaced our entry
+    if (indexLocks.get(norm) === current) indexLocks.delete(norm);
+  }
+}
+
 const SUPPORTED_EXTENSIONS = new Set([
   '.md',
   '.txt',
@@ -40,8 +56,17 @@ export async function indexFile(filePath: string, vaultPath: string): Promise<vo
   const ext = path.extname(filePath).toLowerCase();
   if (!SUPPORTED_EXTENSIONS.has(ext)) return;
 
+  await withFileLock(filePath, () => indexFileInner(filePath, vaultPath));
+}
+
+async function indexFileInner(filePath: string, vaultPath: string): Promise<void> {
+  const ext = path.extname(filePath).toLowerCase();
   const fileType = ext.slice(1) as SupportedType;
   const db = getDb(vaultPath);
+
+  // File may have been deleted between the event and lock acquisition
+  if (!fs.existsSync(filePath)) return;
+
   const stat = fs.statSync(filePath);
   const mtimeMs = stat.mtimeMs;
 
@@ -69,7 +94,7 @@ export async function indexFile(filePath: string, vaultPath: string): Promise<vo
   const subject = path.relative(vaultPath, path.dirname(filePath)).split(path.sep)[0] || null;
 
   // ── Upsert file record ───────────────────────────────────────────────────
-  const fileId = existing?.id ?? uuidv4();
+  const proposedId = existing?.id ?? uuidv4();
 
   db.prepare(`
     INSERT INTO files (id, path, name, type, subject, size, mtime_ms, content_hash)
@@ -83,7 +108,7 @@ export async function indexFile(filePath: string, vaultPath: string): Promise<vo
       content_hash = excluded.content_hash,
       indexed_at   = NULL
   `).run(
-    fileId,
+    proposedId,
     filePath,
     path.basename(filePath),
     fileType,
@@ -92,6 +117,10 @@ export async function indexFile(filePath: string, vaultPath: string): Promise<vo
     mtimeMs,
     contentHash,
   );
+
+  // Read back actual ID — may differ from proposedId if another call
+  // inserted a row for this path between our purge and upsert.
+  const fileId = (db.prepare('SELECT id FROM files WHERE path = ?').get(filePath) as { id: string }).id;
 
   // ── Chunk text and insert into SQLite ────────────────────────────────────
   const allChunks: Array<{ id: string; file_id: string; page_or_slide: number; text: string; chunk_index: number }> = [];
