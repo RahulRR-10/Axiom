@@ -3,9 +3,6 @@ import { ChevronDown, Highlighter } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import type { Annotation, HighlightAnnotation } from '../../../shared/types';
 
-type AITarget = 'claude' | 'chatgpt' | 'gemini';
-const AI_TARGETS: AITarget[] = ['claude', 'chatgpt', 'gemini'];
-
 type Position = { top: number; left: number };
 
 const HL_COLORS = [
@@ -92,7 +89,6 @@ export const FloatingActionBar: React.FC<Props> = ({
 }) => {
   const [pos, setPos]                   = useState<Position | null>(null);
   const [selectedText, setSelectedText] = useState('');
-  const [aiOpen, setAiOpen]             = useState(false);
   const [hlOpen, setHlOpen]             = useState(false);
   const [defaultColor, setDefaultColor] = useState('#fde68a');
   const barRef                          = useRef<HTMLDivElement>(null);
@@ -138,7 +134,6 @@ export const FloatingActionBar: React.FC<Props> = ({
       if (!result) return;
 
       setSelectedText(result.text);
-      setAiOpen(false);
       setHlOpen(false);
       setPos(result.pos);
     };
@@ -152,7 +147,6 @@ export const FloatingActionBar: React.FC<Props> = ({
     const onMouseDown = (e: MouseEvent) => {
       if (barRef.current && !barRef.current.contains(e.target as Node)) {
         setPos(null);
-        setAiOpen(false);
         setHlOpen(false);
       }
     };
@@ -173,8 +167,8 @@ export const FloatingActionBar: React.FC<Props> = ({
   }, [fileId, onAnnotationCreated]);
 
   // Dispatch helpers
-  const dispatchSendToAI = (target: AITarget) => {
-    window.dispatchEvent(new CustomEvent('sendToAI', { detail: { text: selectedText, target } }));
+  const dispatchSendToAI = () => {
+    window.dispatchEvent(new CustomEvent('sendToAI', { detail: { text: selectedText } }));
     setPos(null);
   };
   const dispatchSaveToNotes = () => {
@@ -222,7 +216,7 @@ export const FloatingActionBar: React.FC<Props> = ({
         </button>
         <button
           type="button"
-          onClick={() => { setHlOpen(o => !o); setAiOpen(false); }}
+          onClick={() => { setHlOpen(o => !o); }}
           className="px-1 py-1 text-xs text-[#8a8a8a] rounded-r hover:bg-[#3a3a3a] transition-colors"
           title="Pick highlight color"
         >
@@ -266,41 +260,14 @@ export const FloatingActionBar: React.FC<Props> = ({
 
       <span className="w-px h-4 bg-[#444]" />
 
-      {/* Send to AI ▾ */}
-      <div className="relative">
-        <button
-          type="button"
-          onClick={() => { setAiOpen(o => !o); setHlOpen(false); }}
-          className="flex items-center gap-1 px-2 py-1 text-xs text-[#d4d4d4] rounded hover:bg-[#3a3a3a] transition-colors"
-        >
-          Send to AI <ChevronDown size={12} />
-        </button>
-        {aiOpen && (
-          <div
-            style={{
-              position: 'absolute',
-              top: '100%',
-              left: 0,
-              background: '#2d2d2d',
-              border: '1px solid #444',
-              borderRadius: '8px',
-              overflow: 'hidden',
-              zIndex: 1001,
-            }}
-          >
-            {AI_TARGETS.map(t => (
-              <button
-                key={t}
-                type="button"
-                onClick={() => dispatchSendToAI(t)}
-                className="block w-full text-left px-3 py-1.5 text-xs text-[#d4d4d4] capitalize hover:bg-[#3a3a3a] transition-colors"
-              >
-                {t === 'chatgpt' ? 'ChatGPT' : t.charAt(0).toUpperCase() + t.slice(1)}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
+      {/* Send to AI */}
+      <button
+        type="button"
+        onClick={dispatchSendToAI}
+        className="px-2 py-1 text-xs text-[#d4d4d4] rounded hover:bg-[#3a3a3a] transition-colors"
+      >
+        Send to AI
+      </button>
 
       <span className="w-px h-4 bg-[#444]" />
 

@@ -58,6 +58,13 @@ export const AppLayout: React.FC = () => {
     window.dispatchEvent(new CustomEvent("triggerOpenVault"));
   }, []);
 
+  /* ── sendToAI → auto-expand AI panel ── */
+  useEffect(() => {
+    const handler = (): void => setAiCollapsed(false);
+    window.addEventListener('sendToAI', handler);
+    return () => window.removeEventListener('sendToAI', handler);
+  }, []);
+
   /* ── Ctrl+K → focus search ── */
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {

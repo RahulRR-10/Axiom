@@ -87,6 +87,45 @@ export const AIPanel: React.FC<AIPanelProps> = ({ vaultPath }) => {
     return () => cleanups.forEach((fn) => fn());
   }, [preloadURL]);
 
+  // ── Listen for sendToAI event from FloatingActionBar ─────────────────────
+
+  useEffect(() => {
+    const handler = async (e: Event): Promise<void> => {
+      const { text } = (e as CustomEvent<{ text: string }>).detail;
+      if (!text.trim() || loading) return;
+
+      setLoading(true);
+      setError(null);
+
+      try {
+        const prompt = [
+          'Explain the following text clearly and concisely.',
+          '',
+          'TEXT',
+          '----',
+          text,
+        ].join('\n');
+
+        const { success, error: injErr } = await window.electronAPI.vaultInject(
+          activeTab,
+          prompt,
+        );
+
+        if (!success) {
+          setError(injErr ?? "Failed to send to AI");
+        }
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : "Something went wrong";
+        setError(message);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    window.addEventListener("sendToAI", handler);
+    return () => window.removeEventListener("sendToAI", handler);
+  }, [activeTab, loading]);
+
   // ── Listen for ai:ask event from AppLayout ─────────────────────────────────
 
   useEffect(() => {
