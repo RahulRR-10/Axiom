@@ -22,18 +22,18 @@
   opacity: 1;
   line-height: 1;
   -webkit-text-size-adjust: none;
-     -moz-text-size-adjust: none;
-          text-size-adjust: none;
+  -moz-text-size-adjust: none;
+  text-size-adjust: none;
   forced-color-adjust: none;
   transform-origin: 0 0;
   caret-color: CanvasText;
   z-index: 2;
   color-scheme: only light;
 
-  /* Receive pointer events & allow native text selection */
+  /* Receive pointer events; only spans are selectable (not gaps) */
   pointer-events: auto;
-  -webkit-user-select: text;
-  user-select: text;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 /* Scale helpers (official formula) */
@@ -50,6 +50,8 @@
   white-space: pre;
   cursor: text;
   transform-origin: 0% 0%;
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 /* ── Font sizing & transform ───────────────────────────────────────────────── */
@@ -60,7 +62,8 @@
   font-size: calc(var(--text-scale-factor) * var(--font-height));
   --scale-x: 1;
   --rotate: 0deg;
-  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x))
+    scale(var(--min-font-size-inv));
 }
 
 .textLayer .markedContent {
@@ -74,20 +77,13 @@
   cursor: default;
 }
 
-/* ── End-of-content sentinel ──────────────────────────────────────────────── */
-.textLayer .endOfContent {
-  display: block;
-  position: absolute;
-  inset: 100% 0 0;
-  z-index: 0;
-  cursor: default;
-  -webkit-user-select: none;
-  user-select: none;
-}
+/* ── End-of-content sentinel (removed) ─────────────────────────────────────
+   The endOfContent div and .selecting class were causing over-selection
+   when the cursor moved through gaps between text lines.  Native browser
+   text selection on the spans works correctly without them. ────────────── */
 
-.textLayer.selecting .endOfContent {
-  top: 0;
-}
+/* ── Active selection gap-fill ─────────────────────────────────────────────── */
+/* Disabled: padding was causing over-selection into neighbouring lines. */
 
 /* ── Selection highlight colour ────────────────────────────────────────────── */
 .textLayer ::selection {

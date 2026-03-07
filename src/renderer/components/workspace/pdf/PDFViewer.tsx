@@ -91,8 +91,16 @@ const PDFPage = React.memo(function PDFPage({
   const cleanupSelectionRef = useRef<{
     mousedown: ((e: MouseEvent) => void) | null;
     mouseup: (() => void) | null;
+    mousemove: ((e: MouseEvent) => void) | null;
+    selectstart: ((e: Event) => void) | null;
     div: HTMLDivElement | null;
-  }>({ mousedown: null, mouseup: null, div: null }).current;
+  }>({
+    mousedown: null,
+    mouseup: null,
+    mousemove: null,
+    selectstart: null,
+    div: null,
+  }).current;
 
   /* Scale existing canvas content before paint so there is no blank/flash frame
      while the async re-render is in flight (e.g. during zoom). */
@@ -212,28 +220,222 @@ const PDFPage = React.memo(function PDFPage({
         return;
       }
 
-      // Append the endOfContent sentinel div used by the official pdf.js
-      // viewer to constrain browser text selection to the text layer.
-      const endOfContent = document.createElement("div");
-      endOfContent.className = "endOfContent";
-      textLayerDiv.append(endOfContent);
+      /* ── Manual drag selection ─────────────────────────────────────────────
+         Native browser selection in pdf.js text layers tends to jump through
+         inter-line gaps. We block native drag-selection and manually update
+         the Selection range only when the pointer is inside strict text bands.
+      ──────────────────────────────────────────────────────────────────── */
 
-      // Manage the "selecting" class so endOfContent covers the page
-      // during drag-selection and prevents the browser from over-selecting.
+      let dragSelecting = false;
+      let anchorNode: Node | null = null;
+      let anchorOffset = 0;
+      let lastAppliedEndNode: Node | null = null;
+      let lastAppliedEndOffset = -1;
+      let lastPointerX = -1;
+      let lastPointerY = -1;
+
+      type HitBand = { left: number; top: number; right: number; bottom: number };
+      const strictBandCache = new WeakMap<HTMLElement, HitBand[]>();
+      const looseBandCache = new WeakMap<HTMLElement, HitBand[]>();
+
+      const onSelectStart = (evt: Event) => {
+        evt.preventDefault();
+      };
+      textLayerDiv.addEventListener("selectstart", onSelectStart);
+
+      const getSelectableSpan = (node: Node | null): HTMLElement | null => {
+        if (!node) return null;
+        const el =
+          node.nodeType === Node.TEXT_NODE
+            ? node.parentElement
+            : (node as HTMLElement | null);
+        if (!el) return null;
+
+        const span = el.closest("span");
+        if (!span || !textLayerDiv.contains(span)) return null;
+        if (span.getAttribute("role") === "img") return null;
+        return span;
+      };
+
+      const pointInsideRect = (
+        clientX: number,
+        clientY: number,
+        rect: HitBand,
+      ): boolean => {
+        return (
+          clientX >= rect.left &&
+          clientX <= rect.right &&
+          clientY >= rect.top &&
+          clientY <= rect.bottom
+        );
+      };
+
+      const getSpanHitBands = (span: HTMLElement, strict: boolean): HitBand[] => {
+        const cache = strict ? strictBandCache : looseBandCache;
+        const cached = cache.get(span);
+        if (cached) return cached;
+
+        const bands: HitBand[] = [];
+        const rects = span.getClientRects();
+        for (const rect of rects) {
+          const maxInset = Math.max(0, rect.height / 2 - 1);
+          const verticalInset = strict
+            ? Math.min(Math.max(rect.height * 0.32, 1.5), maxInset)
+            : Math.min(Math.max(rect.height * 0.02, 0), maxInset);
+          const horizontalInset = strict
+            ? Math.min(Math.max(rect.width * 0.005, 0), 0.5)
+            : 0;
+
+          const left = rect.left + horizontalInset;
+          const top = rect.top + verticalInset;
+          const right = rect.right - horizontalInset;
+          const bottom = rect.bottom - verticalInset;
+
+          if (right > left && bottom > top) {
+            bands.push({ left, top, right, bottom });
+          }
+        }
+
+        cache.set(span, bands);
+        return bands;
+      };
+
+      const isPointInsideSpanBand = (
+        span: HTMLElement,
+        clientX: number,
+        clientY: number,
+        strict: boolean,
+      ): boolean => {
+        const hitBands = getSpanHitBands(span, strict);
+        for (const hitBand of hitBands) {
+          if (pointInsideRect(clientX, clientY, hitBand)) {
+            return true;
+          }
+        }
+
+        return false;
+      };
+
+      const getCaretRangeFromPoint = (
+        clientX: number,
+        clientY: number,
+      ): Range | null => {
+        const docWithCaret = document as Document & {
+          caretPositionFromPoint?: (
+            x: number,
+            y: number,
+          ) => { offsetNode: Node; offset: number } | null;
+        };
+
+        if (typeof docWithCaret.caretPositionFromPoint === "function") {
+          const caretPosition = docWithCaret.caretPositionFromPoint(clientX, clientY);
+          if (caretPosition) {
+            const range = document.createRange();
+            range.setStart(caretPosition.offsetNode, caretPosition.offset);
+            range.collapse(true);
+            return range;
+          }
+        }
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        return (document as any).caretRangeFromPoint?.(clientX, clientY) ?? null;
+      };
+
       const onMouseDown = (evt: MouseEvent) => {
-        if ((evt.target as HTMLElement)?.closest(".endOfContent")) return;
-        textLayerDiv.classList.add("selecting");
+        if (evt.button !== 0) return;
+        const caretRange = getCaretRangeFromPoint(evt.clientX, evt.clientY);
+        if (!caretRange) return;
+        const caretSpan = getSelectableSpan(caretRange.startContainer);
+        if (!caretSpan) return;
+        if (!isPointInsideSpanBand(caretSpan, evt.clientX, evt.clientY, false)) return;
+
+        evt.preventDefault();
+
+        dragSelecting = true;
+        anchorNode = caretRange.startContainer;
+        anchorOffset = caretRange.startOffset;
+        lastPointerX = evt.clientX;
+        lastPointerY = evt.clientY;
+        lastAppliedEndNode = anchorNode;
+        lastAppliedEndOffset = anchorOffset;
+
+        const sel = window.getSelection();
+        if (!sel) return;
+        sel.removeAllRanges();
+        const collapsed = document.createRange();
+        collapsed.setStart(anchorNode, anchorOffset);
+        collapsed.collapse(true);
+        sel.addRange(collapsed);
       };
       textLayerDiv.addEventListener("mousedown", onMouseDown);
 
+      const applySelectionAtPoint = (clientX: number, clientY: number) => {
+        if (!dragSelecting || !anchorNode) return;
+        if (clientX === lastPointerX && clientY === lastPointerY) return;
+        lastPointerX = clientX;
+        lastPointerY = clientY;
+
+        const caretRange = getCaretRangeFromPoint(clientX, clientY);
+        if (!caretRange) return;
+        const caretSpan = getSelectableSpan(caretRange.startContainer);
+        if (!caretSpan) return;
+        if (!isPointInsideSpanBand(caretSpan, clientX, clientY, true)) return;
+
+        const endNode = caretRange.startContainer;
+        const endOffset = caretRange.startOffset;
+
+        // Avoid expensive removeAllRanges/addRange when caret endpoint
+        // did not change since the previous frame.
+        if (endNode === lastAppliedEndNode && endOffset === lastAppliedEndOffset) {
+          return;
+        }
+
+        const cmp = anchorNode.compareDocumentPosition(endNode);
+        const forward =
+          cmp === 0
+            ? anchorOffset <= endOffset
+            : !!(cmp & Node.DOCUMENT_POSITION_FOLLOWING);
+
+        const range = document.createRange();
+        if (forward) {
+          range.setStart(anchorNode, anchorOffset);
+          range.setEnd(endNode, endOffset);
+        } else {
+          range.setStart(endNode, endOffset);
+          range.setEnd(anchorNode, anchorOffset);
+        }
+
+        const sel = window.getSelection();
+        if (!sel) return;
+        sel.removeAllRanges();
+        sel.addRange(range);
+
+        lastAppliedEndNode = endNode;
+        lastAppliedEndOffset = endOffset;
+      };
+
+      const onMouseMove = (evt: MouseEvent) => {
+        if (!dragSelecting || !anchorNode) return;
+        applySelectionAtPoint(evt.clientX, evt.clientY);
+      };
+      document.addEventListener("mousemove", onMouseMove);
+
       const onMouseUp = () => {
-        textLayerDiv.classList.remove("selecting");
+        dragSelecting = false;
+        anchorNode = null;
+        anchorOffset = 0;
+        lastPointerX = -1;
+        lastPointerY = -1;
+        lastAppliedEndNode = null;
+        lastAppliedEndOffset = -1;
       };
       document.addEventListener("mouseup", onMouseUp);
 
       // Store cleanup references so the effect teardown can remove them.
       cleanupSelectionRef.mousedown = onMouseDown;
       cleanupSelectionRef.mouseup = onMouseUp;
+      cleanupSelectionRef.mousemove = onMouseMove;
+      cleanupSelectionRef.selectstart = onSelectStart;
       cleanupSelectionRef.div = textLayerDiv;
 
       page.cleanup();
@@ -250,13 +452,30 @@ const PDFPage = React.memo(function PDFPage({
       }
       // Remove selection listeners from previous render cycle
       if (cleanupSelectionRef.div && cleanupSelectionRef.mousedown) {
-        cleanupSelectionRef.div.removeEventListener("mousedown", cleanupSelectionRef.mousedown);
+        cleanupSelectionRef.div.removeEventListener(
+          "mousedown",
+          cleanupSelectionRef.mousedown,
+        );
+      }
+      if (cleanupSelectionRef.div && cleanupSelectionRef.selectstart) {
+        cleanupSelectionRef.div.removeEventListener(
+          "selectstart",
+          cleanupSelectionRef.selectstart,
+        );
       }
       if (cleanupSelectionRef.mouseup) {
         document.removeEventListener("mouseup", cleanupSelectionRef.mouseup);
       }
+      if (cleanupSelectionRef.mousemove) {
+        document.removeEventListener(
+          "mousemove",
+          cleanupSelectionRef.mousemove,
+        );
+      }
       cleanupSelectionRef.mousedown = null;
       cleanupSelectionRef.mouseup = null;
+      cleanupSelectionRef.mousemove = null;
+      cleanupSelectionRef.selectstart = null;
       cleanupSelectionRef.div = null;
     };
   }, [pdf, pageNum, scale, cssWidth, cssHeight, _renderNonce]);
@@ -449,13 +668,13 @@ export const PDFViewer: React.FC<Props> = ({
 
   /* ── Listen for annotation saves from other windows ───────────────────────── */
   useEffect(() => {
-    const normalizedLocal = filePath.replace(/\\/g, '/').toLowerCase();
+    const normalizedLocal = filePath.replace(/\\/g, "/").toLowerCase();
     const unsub = window.electronAPI.onAnnotationsSaved((savedPath) => {
-      const normalizedSaved = savedPath.replace(/\\/g, '/').toLowerCase();
+      const normalizedSaved = savedPath.replace(/\\/g, "/").toLowerCase();
       if (normalizedSaved === normalizedLocal) {
         pdfCache.delete(filePath);
         loadAnnotations();
-        setPdfLoadNonce(n => n + 1);
+        setPdfLoadNonce((n) => n + 1);
       }
     });
     return unsub;
@@ -463,12 +682,12 @@ export const PDFViewer: React.FC<Props> = ({
 
   /* ── Listen for PDF file changes from other windows ──────────────────────── */
   useEffect(() => {
-    const normalizedLocal = filePath.replace(/\\/g, '/').toLowerCase();
+    const normalizedLocal = filePath.replace(/\\/g, "/").toLowerCase();
     const unsub = window.electronAPI.onPdfFileChanged((changedPath) => {
-      const normalizedChanged = changedPath.replace(/\\/g, '/').toLowerCase();
+      const normalizedChanged = changedPath.replace(/\\/g, "/").toLowerCase();
       if (normalizedChanged !== normalizedLocal) return;
       pdfCache.delete(filePath);
-      setPdfLoadNonce(n => n + 1);
+      setPdfLoadNonce((n) => n + 1);
       loadAnnotations();
     });
     return unsub;
@@ -629,7 +848,6 @@ export const PDFViewer: React.FC<Props> = ({
       setPendingAnnotations([]);
       setDeletedAnnotationIds(new Set());
       loadAnnotations();
-
     } catch (err) {
       console.error("[PDFViewer] Save failed", err);
     } finally {
@@ -672,7 +890,7 @@ export const PDFViewer: React.FC<Props> = ({
       if (pendingDelta === 0) return;
       const delta = pendingDelta;
       pendingDelta = 0;
-      setZoom(prev => Math.min(4, Math.max(0.25, prev + delta)));
+      setZoom((prev) => Math.min(4, Math.max(0.25, prev + delta)));
     };
 
     const handler = (e: WheelEvent) => {
@@ -686,9 +904,9 @@ export const PDFViewer: React.FC<Props> = ({
       }
     };
 
-    el.addEventListener('wheel', handler, { passive: false });
+    el.addEventListener("wheel", handler, { passive: false });
     return () => {
-      el.removeEventListener('wheel', handler);
+      el.removeEventListener("wheel", handler);
       if (rafId !== null) cancelAnimationFrame(rafId);
     };
   }, []);
