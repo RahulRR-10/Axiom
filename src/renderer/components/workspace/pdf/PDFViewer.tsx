@@ -635,16 +635,33 @@ export const PDFViewer: React.FC<Props> = ({
     const el = scrollRef.current;
     if (!el) return;
 
+    let pendingDelta = 0;
+    let rafId: number | null = null;
+
+    const applyZoom = () => {
+      rafId = null;
+      if (pendingDelta === 0) return;
+      const delta = pendingDelta;
+      pendingDelta = 0;
+      setZoom(prev => Math.min(4, Math.max(0.25, prev + delta)));
+    };
+
     const handler = (e: WheelEvent) => {
       // Trackpad pinch gestures fire as wheel events with ctrlKey set
       if (!e.ctrlKey) return;
       e.preventDefault();
-      const delta = -e.deltaY * 0.01;
-      setZoom(prev => Math.min(4, Math.max(0.25, prev + delta)));
+      e.stopPropagation();
+      pendingDelta += -e.deltaY * 0.01;
+      if (rafId === null) {
+        rafId = requestAnimationFrame(applyZoom);
+      }
     };
 
     el.addEventListener('wheel', handler, { passive: false });
-    return () => el.removeEventListener('wheel', handler);
+    return () => {
+      el.removeEventListener('wheel', handler);
+      if (rafId !== null) cancelAnimationFrame(rafId);
+    };
   }, []);
 
   /* ── Scroll-based virtualization + page tracking ──────────────────────────── */
@@ -656,22 +673,25 @@ export const PDFViewer: React.FC<Props> = ({
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (!el || !pageMeta || prevZoomRef.current === zoom) return;
+    const prevZoom = prevZoomRef.current;
     prevZoomRef.current = zoom;
 
-    const pageH = Math.floor(pageMeta.height * zoom) + PAGE_GAP;
-    const targetScroll = (currentPageRef.current - 1) * pageH;
-    el.scrollTop = targetScroll;
+    // Proportionally scale scroll position so the same content stays in view
+    const ratio = zoom / prevZoom;
+    const scrollTop = el.scrollTop * ratio;
+    el.scrollTop = scrollTop;
 
     // Update visible range in the same synchronous flush so pageList renders
     // correctly on the first paint — no intermediate wrong-range frame.
+    const pageH = Math.floor(pageMeta.height * zoom) + PAGE_GAP;
     const viewportH = el.clientHeight;
     const firstVisible = Math.max(
       1,
-      Math.floor((targetScroll - BUFFER_PX) / pageH) + 1,
+      Math.floor((scrollTop - BUFFER_PX) / pageH) + 1,
     );
     const lastVisible = Math.min(
       numPages,
-      Math.ceil((targetScroll + viewportH + BUFFER_PX) / pageH),
+      Math.ceil((scrollTop + viewportH + BUFFER_PX) / pageH),
     );
     setVisibleRange([firstVisible, lastVisible]);
   }, [zoom, pageMeta, numPages]);
