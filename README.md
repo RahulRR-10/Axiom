@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://img.shields.io/badge/Axiom-Study%20OS-7C3AED?style=for-the-badge" alt="Axiom" />
+<img src="assets/axiom-logo.png" alt="Axiom Logo" width="120" />
 
 # Axiom — The Study Operating System
 
