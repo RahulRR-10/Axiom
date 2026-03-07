@@ -1,6 +1,7 @@
 import React, {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -88,6 +89,24 @@ const PDFPage = React.memo(function PDFPage({
   const textLayerRef = useRef<HTMLDivElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
 
+  /* Scale existing canvas content before paint so there is no blank/flash frame
+     while the async re-render is in flight (e.g. during zoom). */
+  useLayoutEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const prevCssW = parseFloat(canvas.style.width || "0");
+    const prevCssH = parseFloat(canvas.style.height || "0");
+    if (
+      prevCssW > 0 &&
+      prevCssH > 0 &&
+      canvas.width > 0 &&
+      (prevCssW !== cssWidth || prevCssH !== cssHeight)
+    ) {
+      canvas.style.transformOrigin = "top left";
+      canvas.style.transform = `scale(${cssWidth / prevCssW}, ${cssHeight / prevCssH})`;
+    }
+  }, [cssWidth, cssHeight]);
+
   /* Render canvas + text layer */
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -97,16 +116,6 @@ const PDFPage = React.memo(function PDFPage({
     let cancelled = false;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let renderTask: any = null;
-
-    // While re-rendering due to zoom/resize, scale the existing canvas content
-    // to the new target size so the user sees a stretched (but non-blank) version
-    // instead of a white flash. Only do this when the canvas already has content.
-    const prevCssW = parseFloat(canvas.style.width || "0");
-    const prevCssH = parseFloat(canvas.style.height || "0");
-    if (prevCssW > 0 && prevCssH > 0 && canvas.width > 0) {
-      canvas.style.transformOrigin = "top left";
-      canvas.style.transform = `scale(${cssWidth / prevCssW}, ${cssHeight / prevCssH})`;
-    }
 
     (async () => {
       const page = await pdf.getPage(pageNum);
@@ -643,17 +652,34 @@ export const PDFViewer: React.FC<Props> = ({
   const currentPageRef = useRef(currentPage);
   currentPageRef.current = currentPage;
 
+  /* ── Synchronously correct scroll + visible range on zoom (before paint) ─── */
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el || !pageMeta || prevZoomRef.current === zoom) return;
+    prevZoomRef.current = zoom;
+
+    const pageH = Math.floor(pageMeta.height * zoom) + PAGE_GAP;
+    const targetScroll = (currentPageRef.current - 1) * pageH;
+    el.scrollTop = targetScroll;
+
+    // Update visible range in the same synchronous flush so pageList renders
+    // correctly on the first paint — no intermediate wrong-range frame.
+    const viewportH = el.clientHeight;
+    const firstVisible = Math.max(
+      1,
+      Math.floor((targetScroll - BUFFER_PX) / pageH) + 1,
+    );
+    const lastVisible = Math.min(
+      numPages,
+      Math.ceil((targetScroll + viewportH + BUFFER_PX) / pageH),
+    );
+    setVisibleRange([firstVisible, lastVisible]);
+  }, [zoom, pageMeta, numPages]);
+
+  /* ── Scroll-based virtualization + page tracking ──────────────────────────── */
   useEffect(() => {
     const el = scrollRef.current;
     if (!el || !pageMeta) return;
-
-    // If zoom changed, scroll to keep the same page in view
-    if (prevZoomRef.current !== zoom) {
-      prevZoomRef.current = zoom;
-      const pageH = Math.floor(pageMeta.height * zoom) + PAGE_GAP;
-      const targetScroll = (currentPageRef.current - 1) * pageH;
-      el.scrollTop = targetScroll;
-    }
 
     const computeRange = () => {
       const scrollTop = el.scrollTop;
