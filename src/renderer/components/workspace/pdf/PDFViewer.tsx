@@ -64,6 +64,7 @@ const PDFPage = React.memo(function PDFPage({
   fontSize: propFontSize,
   textColor: propTextColor,
   zoom: propZoom,
+  renderNonce: _renderNonce,
 }: {
   pdf: PDFDocumentProxy;
   pageNum: number;
@@ -81,6 +82,7 @@ const PDFPage = React.memo(function PDFPage({
   fontSize: number;
   textColor: string;
   zoom: number;
+  renderNonce: number;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const textLayerRef = useRef<HTMLDivElement>(null);
@@ -219,7 +221,7 @@ const PDFPage = React.memo(function PDFPage({
         /* ignore */
       }
     };
-  }, [pdf, pageNum, scale, cssWidth, cssHeight]);
+  }, [pdf, pageNum, scale, cssWidth, cssHeight, _renderNonce]);
 
   return (
     <div
@@ -335,6 +337,7 @@ export const PDFViewer: React.FC<Props> = ({
   const [saving, setSaving] = useState(false);
   const [visibleRange, setVisibleRange] = useState<[number, number]>([1, 3]);
   const [pdfLoadNonce, setPdfLoadNonce] = useState(0);
+  const [renderNonce, setRenderNonce] = useState(0);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -368,7 +371,7 @@ export const PDFViewer: React.FC<Props> = ({
       // Use page 1 dimensions for all pages (fast — avoids N sequential getPage calls)
       const page1 = await doc.getPage(1);
       const vp1 = page1.getViewport({ scale: 1 });
-      const containerW = scrollRef.current?.clientWidth ?? 800;
+      const containerW = scrollRef.current?.clientWidth || 800;
       const baseScale = (containerW - 32) / vp1.width;
       baseScaleRef.current = baseScale;
 
@@ -682,6 +685,46 @@ export const PDFViewer: React.FC<Props> = ({
     return () => el.removeEventListener("scroll", computeRange);
   }, [pageMeta, zoom, numPages]);
 
+  /* ── Refit scale + force re-render when container goes hidden → visible ──── */
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || !pdf || loading) return;
+
+    let prevW = el.clientWidth;
+    let prevH = el.clientHeight;
+
+    const ro = new ResizeObserver(() => {
+      const w = el.clientWidth;
+      const h = el.clientHeight;
+      const wasHidden = prevW === 0 || prevH === 0;
+      const nowVisible = w > 0 && h > 0;
+
+      if (wasHidden && nowVisible) {
+        // Recompute the fit-scale with the real container width in case the
+        // PDF was loaded while the tab was hidden (display:none → clientWidth=0)
+        (async () => {
+          const page1 = await pdf.getPage(1);
+          const vp1 = page1.getViewport({ scale: 1 });
+          const newBase = (w - 32) / vp1.width;
+          baseScaleRef.current = newBase;
+          const vp = page1.getViewport({ scale: newBase });
+          setPageMeta({
+            width: Math.floor(vp.width),
+            height: Math.floor(vp.height),
+          });
+          // Force GPU-discarded canvases to re-render
+          setRenderNonce((n) => n + 1);
+        })().catch(console.error);
+      }
+
+      prevW = w;
+      prevH = h;
+    });
+
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [pdf, loading]);
+
   /* ── Build page list with virtualization ──────────────────────────────────── */
   const pageList = useMemo(() => {
     if (!pdf || !pageMeta) return null;
@@ -723,6 +766,7 @@ export const PDFViewer: React.FC<Props> = ({
           fontSize={fontSize}
           textColor={textColor}
           zoom={zoom}
+          renderNonce={renderNonce}
         />
       );
     });
@@ -740,6 +784,7 @@ export const PDFViewer: React.FC<Props> = ({
     mergedAnnotations,
     onAnnotationCreated,
     onAnnotationDeleted,
+    renderNonce,
   ]);
 
   /* ── Render ──────────────────────────────────────────────────────────────── */
