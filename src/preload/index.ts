@@ -151,6 +151,13 @@ const electronAPI = {
     return () => ipcRenderer.removeListener('pdf:fileChanged', listener);
   },
 
+  onFilePathChanged: (callback: (oldPath: string, newPath: string) => void): (() => void) => {
+    const listener = (_: unknown, { oldPath, newPath }: { oldPath: string; newPath: string }): void =>
+      callback(oldPath, newPath);
+    ipcRenderer.on('file:pathChanged', listener);
+    return () => ipcRenderer.removeListener('file:pathChanged', listener);
+  },
+
 
   // ── AI panel ─────────────────────────────────────────────────────────────
   getAIPreloadPath: (): Promise<string> =>

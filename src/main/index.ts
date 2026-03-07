@@ -96,6 +96,9 @@ const registerWindowIpcHandlers = (): void => {
     const dest = path.join(destDir, name);
     if (fs.existsSync(dest)) throw new Error(`File already exists: ${dest}`);
     fs.renameSync(src, dest);
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.send('file:pathChanged', { oldPath: src, newPath: dest });
+    }
     return dest;
   });
 
@@ -104,6 +107,9 @@ const registerWindowIpcHandlers = (): void => {
     const dest = path.join(dir, newName);
     if (fs.existsSync(dest)) throw new Error(`File already exists: ${dest}`);
     fs.renameSync(filePath, dest);
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.send('file:pathChanged', { oldPath: filePath, newPath: dest });
+    }
     return dest;
   });
 

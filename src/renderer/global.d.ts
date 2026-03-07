@@ -53,6 +53,7 @@ declare global {
       broadcastNoteSaved: (filePath: string) => void;
       onNoteSaved: (callback: (savedPath: string) => void) => () => void;
       onPdfFileChanged: (callback: (filePath: string) => void) => () => void;
+      onFilePathChanged: (callback: (oldPath: string, newPath: string) => void) => () => void;
       createFolder: (folderPath: string) => Promise<void>;
       saveImage: (dirPath: string, fileName: string, data: Uint8Array) => Promise<string>;
 

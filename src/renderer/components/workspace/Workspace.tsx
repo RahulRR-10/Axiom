@@ -336,6 +336,27 @@ export const Workspace: React.FC<WorkspaceProps> = ({ vaultPath }) => {
       window.removeEventListener("pdfDirtyChange", handler as EventListener);
   }, []);
 
+  // ── Update open tabs when a file is moved or renamed ───────────────────
+  useEffect(() => {
+    const unsub = window.electronAPI.onFilePathChanged((oldPath, newPath) => {
+      setOpenFiles((prev) =>
+        prev.map((f) =>
+          f.filePath === oldPath
+            ? { ...f, filePath: newPath, name: newPath.split(/[\\/]/).pop() ?? newPath }
+            : f,
+        ),
+      );
+      setActiveFilePath((prev) => (prev === oldPath ? newPath : prev));
+      setTabGroups((prev) =>
+        prev.map((g) => ({
+          ...g,
+          filePaths: g.filePaths.map((p) => (p === oldPath ? newPath : p)),
+        })),
+      );
+    });
+    return unsub;
+  }, []);
+
   // ── Close a tab ────────────────────────────────────────────────────────
   const closeTab = useCallback(
     (filePath: string, e?: React.MouseEvent) => {
