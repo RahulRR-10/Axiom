@@ -93,12 +93,16 @@ const PDFPage = React.memo(function PDFPage({
     mouseup: (() => void) | null;
     mousemove: ((e: MouseEvent) => void) | null;
     selectstart: ((e: Event) => void) | null;
+    keydown: ((e: KeyboardEvent) => void) | null;
+    dblclick: ((e: MouseEvent) => void) | null;
     div: HTMLDivElement | null;
   }>({
     mousedown: null,
     mouseup: null,
     mousemove: null,
     selectstart: null,
+    keydown: null,
+    dblclick: null,
     div: null,
   }).current;
 
@@ -234,6 +238,11 @@ const PDFPage = React.memo(function PDFPage({
       let lastPointerX = -1;
       let lastPointerY = -1;
 
+      // Reusable Range to avoid per-move allocations
+      const reusableRange = document.createRange();
+      // Cache the Selection object
+      const cachedSel = window.getSelection();
+
       type HitBand = { left: number; top: number; right: number; bottom: number };
       const strictBandCache = new WeakMap<HTMLElement, HitBand[]>();
       const looseBandCache = new WeakMap<HTMLElement, HitBand[]>();
@@ -316,30 +325,54 @@ const PDFPage = React.memo(function PDFPage({
         return false;
       };
 
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const caretRangeFromPoint: ((x: number, y: number) => Range | null) | undefined =
+        (document as any).caretRangeFromPoint?.bind(document);
+
       const getCaretRangeFromPoint = (
         clientX: number,
         clientY: number,
       ): Range | null => {
-        const docWithCaret = document as Document & {
-          caretPositionFromPoint?: (
-            x: number,
-            y: number,
-          ) => { offsetNode: Node; offset: number } | null;
-        };
-
-        if (typeof docWithCaret.caretPositionFromPoint === "function") {
-          const caretPosition = docWithCaret.caretPositionFromPoint(clientX, clientY);
-          if (caretPosition) {
-            const range = document.createRange();
-            range.setStart(caretPosition.offsetNode, caretPosition.offset);
-            range.collapse(true);
-            return range;
-          }
-        }
-
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        return (document as any).caretRangeFromPoint?.(clientX, clientY) ?? null;
+        return caretRangeFromPoint?.(clientX, clientY) ?? null;
       };
+
+      const selectWord = (textNode: Node, offset: number) => {
+        if (textNode.nodeType !== Node.TEXT_NODE || !cachedSel) return;
+        const text = textNode.textContent || "";
+        let start = offset;
+        let end = offset;
+        const isWordChar = (c: string) => /\w/.test(c);
+        if (offset < text.length && isWordChar(text[offset])) {
+          while (start > 0 && isWordChar(text[start - 1])) start--;
+          while (end < text.length && isWordChar(text[end])) end++;
+        } else if (offset > 0 && isWordChar(text[offset - 1])) {
+          while (start > 0 && isWordChar(text[start - 1])) start--;
+          while (end < text.length && isWordChar(text[end])) end++;
+        }
+        if (start !== end) {
+          reusableRange.setStart(textNode, start);
+          reusableRange.setEnd(textNode, end);
+          cachedSel.removeAllRanges();
+          cachedSel.addRange(reusableRange);
+        }
+      };
+
+      const selectLine = (span: HTMLElement) => {
+        if (!cachedSel) return;
+        reusableRange.selectNodeContents(span);
+        cachedSel.removeAllRanges();
+        cachedSel.addRange(reusableRange);
+      };
+
+      const onDblClick = (evt: MouseEvent) => {
+        const caretRange = getCaretRangeFromPoint(evt.clientX, evt.clientY);
+        if (!caretRange) return;
+        const caretSpan = getSelectableSpan(caretRange.startContainer);
+        if (!caretSpan) return;
+        evt.preventDefault();
+        selectWord(caretRange.startContainer, caretRange.startOffset);
+      };
+      textLayerDiv.addEventListener("dblclick", onDblClick);
 
       const onMouseDown = (evt: MouseEvent) => {
         if (evt.button !== 0) return;
@@ -351,6 +384,19 @@ const PDFPage = React.memo(function PDFPage({
 
         evt.preventDefault();
 
+        // Triple-click: select entire span/line
+        if (evt.detail >= 3) {
+          selectLine(caretSpan);
+          return;
+        }
+
+        // Double-click: select word
+        if (evt.detail === 2) {
+          selectWord(caretRange.startContainer, caretRange.startOffset);
+          return;
+        }
+
+        // Single click: start drag selection
         dragSelecting = true;
         anchorNode = caretRange.startContainer;
         anchorOffset = caretRange.startOffset;
@@ -359,36 +405,59 @@ const PDFPage = React.memo(function PDFPage({
         lastAppliedEndNode = anchorNode;
         lastAppliedEndOffset = anchorOffset;
 
-        const sel = window.getSelection();
-        if (!sel) return;
-        sel.removeAllRanges();
-        const collapsed = document.createRange();
-        collapsed.setStart(anchorNode, anchorOffset);
-        collapsed.collapse(true);
-        sel.addRange(collapsed);
+        if (!cachedSel) return;
+        reusableRange.setStart(anchorNode, anchorOffset);
+        reusableRange.collapse(true);
+        cachedSel.removeAllRanges();
+        cachedSel.addRange(reusableRange);
       };
       textLayerDiv.addEventListener("mousedown", onMouseDown);
 
+      const onKeyDown = (evt: KeyboardEvent) => {
+        if ((evt.ctrlKey || evt.metaKey) && evt.key === "a") {
+          // Only intercept if the text layer has any selected text or the
+          // pointer is inside the page wrapper (avoid hijacking other inputs)
+          const active = document.activeElement;
+          if (
+            active &&
+            (active.tagName === "INPUT" ||
+              active.tagName === "TEXTAREA" ||
+              (active as HTMLElement).isContentEditable)
+          ) {
+            return; // don't steal from input fields
+          }
+          if (!textLayerDiv.closest(".pdf-page-wrapper:hover")) return;
+          evt.preventDefault();
+          if (cachedSel) {
+            reusableRange.selectNodeContents(textLayerDiv);
+            cachedSel.removeAllRanges();
+            cachedSel.addRange(reusableRange);
+          }
+        }
+      };
+      document.addEventListener("keydown", onKeyDown);
+
       const applySelectionAtPoint = (clientX: number, clientY: number) => {
-        if (!dragSelecting || !anchorNode) return;
-        if (clientX === lastPointerX && clientY === lastPointerY) return;
+        if (!dragSelecting || !anchorNode || !cachedSel) return;
+
+        // Skip sub-pixel jitter
+        const dx = clientX - lastPointerX;
+        const dy = clientY - lastPointerY;
+        if (dx * dx + dy * dy < 1) return;
         lastPointerX = clientX;
         lastPointerY = clientY;
 
         const caretRange = getCaretRangeFromPoint(clientX, clientY);
         if (!caretRange) return;
-        const caretSpan = getSelectableSpan(caretRange.startContainer);
-        if (!caretSpan) return;
-        if (!isPointInsideSpanBand(caretSpan, clientX, clientY, true)) return;
-
         const endNode = caretRange.startContainer;
         const endOffset = caretRange.startOffset;
 
-        // Avoid expensive removeAllRanges/addRange when caret endpoint
-        // did not change since the previous frame.
-        if (endNode === lastAppliedEndNode && endOffset === lastAppliedEndOffset) {
-          return;
-        }
+        // Skip if caret didn't move
+        if (endNode === lastAppliedEndNode && endOffset === lastAppliedEndOffset) return;
+
+        const caretSpan = getSelectableSpan(endNode);
+        if (!caretSpan) return;
+        if (!isPointInsideSpanBand(caretSpan, clientX, clientY, true)) return;
 
         const cmp = anchorNode.compareDocumentPosition(endNode);
         const forward =
@@ -396,19 +465,16 @@ const PDFPage = React.memo(function PDFPage({
             ? anchorOffset <= endOffset
             : !!(cmp & Node.DOCUMENT_POSITION_FOLLOWING);
 
-        const range = document.createRange();
         if (forward) {
-          range.setStart(anchorNode, anchorOffset);
-          range.setEnd(endNode, endOffset);
+          reusableRange.setStart(anchorNode, anchorOffset);
+          reusableRange.setEnd(endNode, endOffset);
         } else {
-          range.setStart(endNode, endOffset);
-          range.setEnd(anchorNode, anchorOffset);
+          reusableRange.setStart(endNode, endOffset);
+          reusableRange.setEnd(anchorNode, anchorOffset);
         }
 
-        const sel = window.getSelection();
-        if (!sel) return;
-        sel.removeAllRanges();
-        sel.addRange(range);
+        cachedSel.removeAllRanges();
+        cachedSel.addRange(reusableRange);
 
         lastAppliedEndNode = endNode;
         lastAppliedEndOffset = endOffset;
@@ -436,6 +502,8 @@ const PDFPage = React.memo(function PDFPage({
       cleanupSelectionRef.mouseup = onMouseUp;
       cleanupSelectionRef.mousemove = onMouseMove;
       cleanupSelectionRef.selectstart = onSelectStart;
+      cleanupSelectionRef.keydown = onKeyDown;
+      cleanupSelectionRef.dblclick = onDblClick;
       cleanupSelectionRef.div = textLayerDiv;
 
       page.cleanup();
@@ -472,10 +540,21 @@ const PDFPage = React.memo(function PDFPage({
           cleanupSelectionRef.mousemove,
         );
       }
+      if (cleanupSelectionRef.keydown) {
+        document.removeEventListener("keydown", cleanupSelectionRef.keydown);
+      }
+      if (cleanupSelectionRef.div && cleanupSelectionRef.dblclick) {
+        cleanupSelectionRef.div.removeEventListener(
+          "dblclick",
+          cleanupSelectionRef.dblclick,
+        );
+      }
       cleanupSelectionRef.mousedown = null;
       cleanupSelectionRef.mouseup = null;
       cleanupSelectionRef.mousemove = null;
       cleanupSelectionRef.selectstart = null;
+      cleanupSelectionRef.keydown = null;
+      cleanupSelectionRef.dblclick = null;
       cleanupSelectionRef.div = null;
     };
   }, [pdf, pageNum, scale, cssWidth, cssHeight, _renderNonce]);
@@ -483,6 +562,7 @@ const PDFPage = React.memo(function PDFPage({
   return (
     <div
       ref={wrapRef}
+      className="pdf-page-wrapper"
       style={{
         position: "relative",
         width: cssWidth,
