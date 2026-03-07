@@ -396,6 +396,29 @@ const PDFPage = React.memo(function PDFPage({
           return;
         }
 
+        // Shift+Click: extend existing selection to the clicked point
+        if (evt.shiftKey && cachedSel && cachedSel.rangeCount > 0) {
+          const existing = cachedSel.getRangeAt(0);
+          const clickNode = caretRange.startContainer;
+          const clickOff = caretRange.startOffset;
+          // Keep the opposite end of the current selection as anchor
+          const cmp = existing.startContainer.compareDocumentPosition(clickNode);
+          const clickIsAfterStart =
+            cmp === 0
+              ? existing.startOffset <= clickOff
+              : !!(cmp & Node.DOCUMENT_POSITION_FOLLOWING);
+          if (clickIsAfterStart) {
+            reusableRange.setStart(existing.startContainer, existing.startOffset);
+            reusableRange.setEnd(clickNode, clickOff);
+          } else {
+            reusableRange.setStart(clickNode, clickOff);
+            reusableRange.setEnd(existing.endContainer, existing.endOffset);
+          }
+          cachedSel.removeAllRanges();
+          cachedSel.addRange(reusableRange);
+          return;
+        }
+
         // Single click: start drag selection
         dragSelecting = true;
         anchorNode = caretRange.startContainer;
@@ -413,19 +436,47 @@ const PDFPage = React.memo(function PDFPage({
       };
       textLayerDiv.addEventListener("mousedown", onMouseDown);
 
+      const isInputFocused = () => {
+        const active = document.activeElement;
+        return (
+          active &&
+          (active.tagName === "INPUT" ||
+            active.tagName === "TEXTAREA" ||
+            (active as HTMLElement).isContentEditable)
+        );
+      };
+
+      const hasSelectionInTextLayer = () => {
+        if (!cachedSel || cachedSel.rangeCount === 0) return false;
+        const r = cachedSel.getRangeAt(0);
+        return (
+          !r.collapsed &&
+          textLayerDiv.contains(r.startContainer)
+        );
+      };
+
       const onKeyDown = (evt: KeyboardEvent) => {
-        if ((evt.ctrlKey || evt.metaKey) && evt.key === "a") {
-          // Only intercept if the text layer has any selected text or the
-          // pointer is inside the page wrapper (avoid hijacking other inputs)
-          const active = document.activeElement;
-          if (
-            active &&
-            (active.tagName === "INPUT" ||
-              active.tagName === "TEXTAREA" ||
-              (active as HTMLElement).isContentEditable)
-          ) {
-            return; // don't steal from input fields
+        const ctrl = evt.ctrlKey || evt.metaKey;
+
+        // --- Escape: clear selection -----------------------------------------------
+        if (evt.key === "Escape" && hasSelectionInTextLayer()) {
+          cachedSel?.removeAllRanges();
+          return;
+        }
+
+        // --- Ctrl+C: copy selected text --------------------------------------------
+        if (ctrl && evt.key === "c" && hasSelectionInTextLayer()) {
+          const text = cachedSel!.toString();
+          if (text) {
+            evt.preventDefault();
+            navigator.clipboard.writeText(text);
           }
+          return;
+        }
+
+        // --- Ctrl+A: select all text in hovered page text layer --------------------
+        if (ctrl && evt.key === "a") {
+          if (isInputFocused()) return;
           if (!textLayerDiv.closest(".pdf-page-wrapper:hover")) return;
           evt.preventDefault();
           if (cachedSel) {
@@ -433,6 +484,58 @@ const PDFPage = React.memo(function PDFPage({
             cachedSel.removeAllRanges();
             cachedSel.addRange(reusableRange);
           }
+          return;
+        }
+
+        // --- Keyboard selection extension (Shift+Arrow, Shift+Home/End, etc.) ------
+        // Only act when there is already a selection inside this text layer,
+        // or a collapsed caret inside it.
+        if (!evt.shiftKey) return;
+        if (isInputFocused()) return;
+        if (!cachedSel || cachedSel.rangeCount === 0) return;
+        const curRange = cachedSel.getRangeAt(0);
+        if (!textLayerDiv.contains(curRange.startContainer)) return;
+
+        // Use Selection.modify() — non-standard but supported in all Chromium
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const sel = cachedSel as any;
+        if (typeof sel.modify !== "function") return;
+
+        let granularity: string | null = null;
+        let direction: "forward" | "backward" | null = null;
+
+        switch (evt.key) {
+          case "ArrowRight":
+            granularity = ctrl ? "word" : "character";
+            direction = "forward";
+            break;
+          case "ArrowLeft":
+            granularity = ctrl ? "word" : "character";
+            direction = "backward";
+            break;
+          case "ArrowDown":
+            granularity = "line";
+            direction = "forward";
+            break;
+          case "ArrowUp":
+            granularity = "line";
+            direction = "backward";
+            break;
+          case "Home":
+            granularity = ctrl ? "documentboundary" : "lineboundary";
+            direction = "backward";
+            break;
+          case "End":
+            granularity = ctrl ? "documentboundary" : "lineboundary";
+            direction = "forward";
+            break;
+          default:
+            return;
+        }
+
+        if (granularity && direction) {
+          evt.preventDefault();
+          sel.modify("extend", direction, granularity);
         }
       };
       document.addEventListener("keydown", onKeyDown);
