@@ -42,7 +42,14 @@ export async function injectPrompt(
 
       if (el.isContentEditable) {
         el.focus();
-        el.innerText = ${escaped};
+
+        // Clear existing content
+        const sel = window.getSelection();
+        sel.selectAllChildren(el);
+        sel.deleteFromDocument();
+
+        // Use insertText so ProseMirror / contentEditable frameworks pick it up
+        document.execCommand('insertText', false, ${escaped});
       } else {
         const nativeSetter = Object.getOwnPropertyDescriptor(
           window.HTMLTextAreaElement.prototype, 'value'
@@ -58,7 +65,15 @@ export async function injectPrompt(
           key: 'Enter', code: 'Enter', keyCode: 13,
           bubbles: true, cancelable: true
         }));
-      }, 100);
+        el.dispatchEvent(new KeyboardEvent('keypress', {
+          key: 'Enter', code: 'Enter', keyCode: 13,
+          bubbles: true, cancelable: true
+        }));
+        el.dispatchEvent(new KeyboardEvent('keyup', {
+          key: 'Enter', code: 'Enter', keyCode: 13,
+          bubbles: true, cancelable: true
+        }));
+      }, 200);
 
       return { ok: true };
     })()
