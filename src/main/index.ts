@@ -14,6 +14,14 @@ import type { VaultInjectRequest, VaultInjectResponse } from '../shared/ipc/cont
 declare const MAIN_WINDOW_WEBPACK_ENTRY: string;
 declare const MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY: string;
 
+const appIcon = path.join(
+  app.getAppPath(),
+  'assets',
+  process.platform === 'win32' ? 'axiom-logo.ico' :
+  process.platform === 'darwin' ? 'axiom-logo.icns' :
+  'axiom-logo.png'
+);
+
 if (require('electron-squirrel-startup')) {
   app.quit();
 }
@@ -143,6 +151,7 @@ const registerWindowIpcHandlers = (): void => {
       height: 700,
       frame: false,
       backgroundColor: '#1a1a1a',
+      icon: appIcon,
       show: false,
       webPreferences: {
         preload: MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY,
@@ -175,6 +184,7 @@ const createWindow = (): void => {
     minHeight: 600,
     frame: false,
     backgroundColor: '#1a1a1a',
+    icon: appIcon,
     show: false,
     webPreferences: {
       preload: MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY,

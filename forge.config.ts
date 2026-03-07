@@ -14,15 +14,16 @@ import { rendererConfig } from './webpack.renderer.config';
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
+    icon: './assets/axiom-logo',
   },
   rebuildConfig: {
     onlyModules: ['better-sqlite3', 'vectordb'],
   },
   makers: [
-    new MakerSquirrel({}),
+    new MakerSquirrel({ setupIcon: './assets/axiom-logo.ico' }),
     new MakerZIP({}, ['darwin']),
-    new MakerRpm({}),
-    new MakerDeb({}),
+    new MakerRpm({ options: { icon: './assets/axiom-logo.png' } }),
+    new MakerDeb({ options: { icon: './assets/axiom-logo.png' } }),
   ],
   plugins: [
     new AutoUnpackNativesPlugin({}),
