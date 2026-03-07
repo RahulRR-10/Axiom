@@ -248,6 +248,18 @@ const NewFolderModal: React.FC<NewFolderModalProps> = ({ targetFolder, onCancel,
   );
 };
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/** Flatten all file-type nodes from the tree into a depth-first ordered array of paths. */
+function flattenFilePaths(nodes: FileNode[]): string[] {
+  const result: string[] = [];
+  for (const node of nodes) {
+    if (node.type === 'file') result.push(node.path);
+    if (node.children) result.push(...flattenFilePaths(node.children));
+  }
+  return result;
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export const VaultSidebar: React.FC<VaultSidebarProps> = ({ onVaultOpen, onFileOpen }) => {
@@ -255,6 +267,8 @@ export const VaultSidebar: React.FC<VaultSidebarProps> = ({ onVaultOpen, onFileO
   const [files, setFiles] = useState<FileNode[]>([]);
   const [indexStatus, setIndexStatus] = useState<IndexStatus | null>(null);
   const [activeFile, setActiveFile] = useState<string | null>(null);
+  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
+  const [lastClickedPath, setLastClickedPath] = useState<string | null>(null);
   const [newNoteFolder, setNewNoteFolder] = useState<string | null>(null);
   const [newFolderParent, setNewFolderParent] = useState<string | null>(null);
   const [emptySpaceMenu, setEmptySpaceMenu] = useState<{ x: number; y: number } | null>(null);
@@ -292,13 +306,33 @@ export const VaultSidebar: React.FC<VaultSidebarProps> = ({ onVaultOpen, onFileO
     setFiles(tree);
   }
 
-  const handleFileClick = useCallback((node: FileNode) => {
-    setActiveFile(node.path);
-    onFileOpen?.(node.path, node.fileType ?? 'txt');
-    window.dispatchEvent(
-      new CustomEvent('openFile', { detail: { filePath: node.path, fileType: node.fileType } }),
-    );
-  }, [onFileOpen]);
+  const handleFileClick = useCallback((node: FileNode, shiftKey = false, ctrlKey = false) => {
+    if (shiftKey && lastClickedPath) {
+      const allPaths = flattenFilePaths(files);
+      const fromIdx = allPaths.indexOf(lastClickedPath);
+      const toIdx = allPaths.indexOf(node.path);
+      if (fromIdx !== -1 && toIdx !== -1) {
+        const [s, e] = fromIdx < toIdx ? [fromIdx, toIdx] : [toIdx, fromIdx];
+        setSelectedPaths(new Set(allPaths.slice(s, e + 1)));
+      }
+    } else if (ctrlKey) {
+      setSelectedPaths(prev => {
+        const next = new Set(prev);
+        if (next.has(node.path)) next.delete(node.path);
+        else next.add(node.path);
+        return next;
+      });
+      setLastClickedPath(node.path);
+    } else {
+      setSelectedPaths(new Set([node.path]));
+      setLastClickedPath(node.path);
+      setActiveFile(node.path);
+      onFileOpen?.(node.path, node.fileType ?? 'txt');
+      window.dispatchEvent(
+        new CustomEvent('openFile', { detail: { filePath: node.path, fileType: node.fileType } }),
+      );
+    }
+  }, [files, lastClickedPath, onFileOpen]);
 
   // ── New Note handler ──────────────────────────────────────────────────────
   const handleNewNote = useCallback(() => {
@@ -346,6 +380,31 @@ export const VaultSidebar: React.FC<VaultSidebarProps> = ({ onVaultOpen, onFileO
       setNewFolderParent(null);
     }
   }, [vaultPath, newFolderParent]);
+
+  // ── Delete key handler ─────────────────────────────────────────────────
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Delete') return;
+      const active = document.activeElement as HTMLElement;
+      if (active?.tagName === 'INPUT' || active?.tagName === 'TEXTAREA') return;
+      if (selectedPaths.size === 0) return;
+      const ok = window.confirm(`Move ${selectedPaths.size} item(s) to trash?`);
+      if (!ok) return;
+      void (async () => {
+        for (const path of Array.from(selectedPaths)) {
+          try {
+            await window.electronAPI.deleteFile(path);
+          } catch (err) {
+            console.error('[VaultSidebar] Delete failed:', path, err);
+          }
+        }
+        setSelectedPaths(new Set());
+        if (vaultPath) await refreshTree(vaultPath);
+      })();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedPaths, vaultPath]);
 
   // ── Empty space context menu dismiss ──────────────────────────────────
   useEffect(() => {
@@ -416,6 +475,11 @@ export const VaultSidebar: React.FC<VaultSidebarProps> = ({ onVaultOpen, onFileO
           window.dispatchEvent(new Event('dismissFileCtxMenu'));
           setEmptySpaceMenu({ x: e.clientX, y: e.clientY });
         }}
+        onClick={(e) => {
+          if (!(e.target as HTMLElement).closest('[data-tree-node]')) {
+            setSelectedPaths(new Set());
+          }
+        }}
         // Drop target for root vault area
         onDragOver={(e) => {
           e.preventDefault();
@@ -423,8 +487,25 @@ export const VaultSidebar: React.FC<VaultSidebarProps> = ({ onVaultOpen, onFileO
         }}
         onDrop={(e) => {
           e.preventDefault();
+          if (!vaultPath) return;
+          const multiPathsStr = e.dataTransfer.getData('text/vault-paths');
+          if (multiPathsStr) {
+            let paths: string[] = [];
+            try { paths = JSON.parse(multiPathsStr) as string[]; } catch { return; }
+            void (async () => {
+              for (const srcPath of paths) {
+                try {
+                  await window.electronAPI.moveFile(srcPath, vaultPath);
+                } catch (err) {
+                  console.error('[VaultSidebar] Multi-drop to root failed:', err);
+                }
+              }
+              await refreshTree(vaultPath);
+            })();
+            return;
+          }
           const srcPath = e.dataTransfer.getData('text/vault-path');
-          if (!srcPath || !vaultPath) return;
+          if (!srcPath) return;
           // Move to vault root
           void (async () => {
             try {
@@ -446,6 +527,7 @@ export const VaultSidebar: React.FC<VaultSidebarProps> = ({ onVaultOpen, onFileO
               depth={0}
               activeFile={activeFile}
               vaultPath={vaultPath}
+              selectedPaths={selectedPaths}
               onFileClick={handleFileClick}
               onNewNoteInFolder={(folderPath) => setNewNoteFolder(folderPath)}
               onNewFolderInFolder={(folderPath) => setNewFolderParent(folderPath)}
@@ -526,13 +608,14 @@ type TreeNodeProps = {
   depth: number;
   activeFile: string | null;
   vaultPath: string;
-  onFileClick: (node: FileNode) => void;
+  selectedPaths: Set<string>;
+  onFileClick: (node: FileNode, shiftKey: boolean, ctrlKey: boolean) => void;
   onNewNoteInFolder?: (folderPath: string) => void;
   onNewFolderInFolder?: (folderPath: string) => void;
   onTreeChanged?: () => void;
 };
 
-const TreeNode: React.FC<TreeNodeProps> = ({ node, depth, activeFile, vaultPath, onFileClick, onNewNoteInFolder, onNewFolderInFolder, onTreeChanged }) => {
+const TreeNode: React.FC<TreeNodeProps> = ({ node, depth, activeFile, vaultPath, selectedPaths, onFileClick, onNewNoteInFolder, onNewFolderInFolder, onTreeChanged }) => {
   const [open, setOpen] = useState<boolean>(true);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
   const [showCopyPathSub, setShowCopyPathSub] = useState(false);
@@ -576,7 +659,11 @@ const TreeNode: React.FC<TreeNodeProps> = ({ node, depth, activeFile, vaultPath,
 
   // ── Drag handlers ──────────────────────────────────────────────────────
   const handleDragStart = (e: React.DragEvent) => {
-    e.dataTransfer.setData('text/vault-path', node.path);
+    if (selectedPaths.has(node.path) && selectedPaths.size > 1) {
+      e.dataTransfer.setData('text/vault-paths', JSON.stringify(Array.from(selectedPaths)));
+    } else {
+      e.dataTransfer.setData('text/vault-path', node.path);
+    }
     e.dataTransfer.effectAllowed = 'move';
   };
 
@@ -595,6 +682,23 @@ const TreeNode: React.FC<TreeNodeProps> = ({ node, depth, activeFile, vaultPath,
     e.preventDefault();
     e.stopPropagation();
     setDropTarget(false);
+    const multiPathsStr = e.dataTransfer.getData('text/vault-paths');
+    if (multiPathsStr) {
+      let paths: string[] = [];
+      try { paths = JSON.parse(multiPathsStr) as string[]; } catch { return; }
+      void (async () => {
+        for (const srcPath of paths) {
+          if (srcPath === node.path || node.path.startsWith(srcPath)) continue;
+          try {
+            await window.electronAPI.moveFile(srcPath, node.path);
+          } catch (err) {
+            console.error('[VaultSidebar] Multi-drop failed:', err);
+          }
+        }
+        onTreeChanged?.();
+      })();
+      return;
+    }
     const srcPath = e.dataTransfer.getData('text/vault-path');
     if (!srcPath || srcPath === node.path) return;
     // Don't drop a folder into itself or its own subfolder
@@ -896,6 +1000,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({ node, depth, activeFile, vaultPath,
             depth={depth + 1}
             activeFile={activeFile}
             vaultPath={vaultPath}
+            selectedPaths={selectedPaths}
             onFileClick={onFileClick}
             onNewNoteInFolder={onNewNoteInFolder}
             onNewFolderInFolder={onNewFolderInFolder}
@@ -944,7 +1049,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({ node, depth, activeFile, vaultPath,
         data-tree-node
         draggable
         onDragStart={handleDragStart}
-        onClick={() => onFileClick(node)}
+        onClick={(e) => onFileClick(node, e.shiftKey, e.ctrlKey || e.metaKey)}
         onContextMenu={(e) => {
           e.preventDefault();
           e.stopPropagation();
@@ -952,8 +1057,9 @@ const TreeNode: React.FC<TreeNodeProps> = ({ node, depth, activeFile, vaultPath,
           setCtxMenu({ x: e.clientX, y: e.clientY });
         }}
         style={{ paddingLeft: depth * 12 + 20 }}
-        className={`w-full flex items-center gap-1.5 py-1 pr-2 text-left rounded transition-colors ${isActive ? 'bg-[#3a3a3a]' : 'hover:bg-[#2a2a2a]'
-          }`}
+        className={`w-full flex items-center gap-1.5 py-1 pr-2 text-left rounded transition-colors ${
+          selectedPaths.has(node.path) ? 'bg-[#1e3a5f]' : isActive ? 'bg-[#3a3a3a]' : 'hover:bg-[#2a2a2a]'
+        }`}
       >
         <FileIcon fileType={node.fileType ?? ''} />
         <span className="text-xs text-[#d4d4d4] truncate">{node.name}</span>

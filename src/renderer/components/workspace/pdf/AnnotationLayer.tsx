@@ -765,7 +765,7 @@ export const AnnotationLayer: React.FC<Props> = ({
             }}
             placeholder="Type here…"
             style={{
-              background: 'rgba(0,0,0,0.7)',
+              background: 'white',
               border: `1px solid ${propTextColor}`,
               borderRadius: '4px',
               color: propTextColor,
