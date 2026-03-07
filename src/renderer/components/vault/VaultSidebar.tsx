@@ -19,6 +19,18 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { FileNode, IndexStatus } from '../../../shared/types';
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/** Callback ref that keeps a fixed-position context menu within the viewport. */
+const clampMenuRef = (el: HTMLDivElement | null) => {
+  if (!el) return;
+  const rect = el.getBoundingClientRect();
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  if (rect.bottom > vh) el.style.top = `${Math.max(0, vh - rect.height)}px`;
+  if (rect.right > vw) el.style.left = `${Math.max(0, vw - rect.width)}px`;
+};
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type VaultSidebarProps = {
@@ -446,6 +458,7 @@ export const VaultSidebar: React.FC<VaultSidebarProps> = ({ onVaultOpen, onFileO
       {/* Empty space context menu */}
       {emptySpaceMenu && (
         <div
+          ref={clampMenuRef}
           style={{
             position: 'fixed',
             top: emptySpaceMenu.y,
@@ -671,6 +684,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({ node, depth, activeFile, vaultPath,
 
     return (
       <div
+        ref={clampMenuRef}
         style={{
           position: 'fixed',
           top: ctxMenu.y,
@@ -777,6 +791,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({ node, depth, activeFile, vaultPath,
         {/* Right-click context menu */}
         {ctxMenu && (
           <div
+            ref={clampMenuRef}
             style={{
               position: 'fixed',
               top: ctxMenu.y,
