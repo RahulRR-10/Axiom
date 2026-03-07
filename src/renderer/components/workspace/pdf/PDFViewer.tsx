@@ -96,6 +96,16 @@ const PDFPage = React.memo(function PDFPage({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let renderTask: any = null;
 
+    // While re-rendering due to zoom/resize, scale the existing canvas content
+    // to the new target size so the user sees a stretched (but non-blank) version
+    // instead of a white flash. Only do this when the canvas already has content.
+    const prevCssW = parseFloat(canvas.style.width || "0");
+    const prevCssH = parseFloat(canvas.style.height || "0");
+    if (prevCssW > 0 && prevCssH > 0 && canvas.width > 0) {
+      canvas.style.transformOrigin = "top left";
+      canvas.style.transform = `scale(${cssWidth / prevCssW}, ${cssHeight / prevCssH})`;
+    }
+
     (async () => {
       const page = await pdf.getPage(pageNum);
       if (cancelled) {
@@ -107,24 +117,19 @@ const PDFPage = React.memo(function PDFPage({
       const cssViewport = page.getViewport({ scale });
       const canvasViewport = page.getViewport({ scale: scale * dpr });
 
-      canvas.width = Math.floor(canvasViewport.width);
-      canvas.height = Math.floor(canvasViewport.height);
-      canvas.style.width = `${cssWidth}px`;
-      canvas.style.height = `${cssHeight}px`;
-
-      const ctx = canvas.getContext("2d");
-      if (!ctx || cancelled) {
+      // Render into an offscreen canvas so the visible canvas is never blank.
+      const offscreen = document.createElement("canvas");
+      offscreen.width = Math.floor(canvasViewport.width);
+      offscreen.height = Math.floor(canvasViewport.height);
+      const offCtx = offscreen.getContext("2d");
+      if (!offCtx || cancelled) {
         page.cleanup();
         return;
       }
 
-      // Reset transform & clear before rendering to avoid stale/mirrored content
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-
       const task = page.render({
-        canvas,
-        canvasContext: ctx,
+        canvas: offscreen,
+        canvasContext: offCtx,
         viewport: canvasViewport,
       });
       renderTask = task;
@@ -140,6 +145,23 @@ const PDFPage = React.memo(function PDFPage({
         page.cleanup();
         return;
       }
+
+      // Atomically copy the offscreen render to the visible canvas.
+      // Resizing canvas.width/height auto-clears it, but we immediately
+      // draw the finished offscreen content so there is no blank frame.
+      canvas.width = offscreen.width;
+      canvas.height = offscreen.height;
+      canvas.style.width = `${cssWidth}px`;
+      canvas.style.height = `${cssHeight}px`;
+      canvas.style.transform = "";
+      canvas.style.transformOrigin = "";
+
+      const ctx = canvas.getContext("2d");
+      if (!ctx || cancelled) {
+        page.cleanup();
+        return;
+      }
+      ctx.drawImage(offscreen, 0, 0);
 
       textLayerDiv.innerHTML = "";
       textLayerDiv.style.setProperty("--scale-factor", `${scale}`);
