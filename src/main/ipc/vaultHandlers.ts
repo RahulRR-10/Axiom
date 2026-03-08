@@ -33,6 +33,10 @@ function writeSetting(key: string, value: unknown): void {
   fs.writeFileSync(SETTINGS_PATH, JSON.stringify(settings), 'utf8');
 }
 
+// ── Active indexing abort ─────────────────────────────────────────────────────
+// Replaced each time handleOpen is called so the previous vault's loop stops.
+let activeIndexingAbort: { aborted: boolean } | null = null;
+
 // ── Registry ─────────────────────────────────────────────────────────────────
 
 export function registerVaultHandlers(): void {
@@ -67,6 +71,11 @@ async function handleSelect(): Promise<string | null> {
 }
 
 async function handleOpen(vaultPath: string): Promise<VaultOpenResponse> {
+  // Cancel any in-progress indexing from a previous vault
+  if (activeIndexingAbort) activeIndexingAbort.aborted = true;
+  const abort = { aborted: false };
+  activeIndexingAbort = abort;
+
   // 1. Init DB (runs migrations)
   const db = getDb(vaultPath);
 
@@ -82,6 +91,7 @@ async function handleOpen(vaultPath: string): Promise<VaultOpenResponse> {
   void (async () => {
     try {
       for (const filePath of allFiles) {
+        if (abort.aborted) break;
         try {
           await indexFile(filePath, vaultPath);
         } catch (err) {
@@ -93,14 +103,18 @@ async function handleOpen(vaultPath: string): Promise<VaultOpenResponse> {
           failed++;
         }
         indexed++;
-        broadcastProgress({ total, indexed, failed, inProgress: indexed < total }, vaultPath);
+        if (!abort.aborted) {
+          broadcastProgress({ total, indexed, failed, inProgress: indexed < total }, vaultPath);
+        }
         // Yield to event loop between files so the renderer stays responsive
         await new Promise((r) => setTimeout(r, 0));
       }
     } catch (fatal) {
       console.error('[vault:open] Fatal indexing error — aborting loop:', fatal);
     } finally {
-      broadcastProgress({ total, indexed, failed, inProgress: false }, vaultPath);
+      if (!abort.aborted) {
+        broadcastProgress({ total, indexed, failed, inProgress: false }, vaultPath);
+      }
     }
   })();
 

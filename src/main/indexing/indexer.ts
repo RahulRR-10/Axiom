@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { v4 as uuidv4 } from 'uuid';
+import { Worker } from 'worker_threads';
 
 import { embedBatch } from '../workers/embedder';
 import { addVectors, deleteVectorsByFileId } from '../database/vectorStore';
@@ -13,8 +14,8 @@ export const ENABLE_PDF_INDEXING = true;
 export const ENABLE_PPTX_INDEXING = false;
 
 // ── Safety limits ────────────────────────────────────────────────────────────
-const EMBED_SUB_BATCH = 32;             // chunks sent to embedder at a time
-const MAX_CHUNKS_PER_FILE = 500;        // cap chunks per file — prevents any single file from blocking the pipeline
+const EMBED_SUB_BATCH = 128;            // chunks sent to embedder worker at a time
+const MAX_CHUNKS_PER_FILE = 5000;       // cap chunks per file
 const PDF_PER_PAGE_TIMEOUT_MS = 2_000;  // 2 s per page — real text pages extract in <100ms
 const PDF_MIN_WORDS_PER_PAGE = 20;      // pages with fewer words are image-only / blank / OCR noise
 const PDF_SAMPLE_PAGES = 5;             // pages to probe before committing to full extraction
@@ -129,68 +130,79 @@ async function indexFileInner(filePath: string, vaultPath: string): Promise<void
   // inserted a row for this path between our purge and upsert.
   const fileId = (db.prepare('SELECT id FROM files WHERE path = ?').get(filePath) as { id: string }).id;
 
-  // ── Chunk text and insert into SQLite ────────────────────────────────────
-  const allChunks: Array<{ id: string; file_id: string; page_or_slide: number; text: string; chunk_index: number }> = [];
-
-  for (const { page, text } of pages) {
-    const pieces = chunkText(text, 300, 50);
-    pieces.forEach((piece, idx) => {
-      allChunks.push({
-        id: uuidv4(),
-        file_id: fileId,
-        page_or_slide: page,
-        text: piece,
-        chunk_index: idx,
-      });
-    });
-    // Stop chunking if we've reached the per-file cap
-    if (allChunks.length >= MAX_CHUNKS_PER_FILE) {
-      console.log(`[indexer] Chunk cap (${MAX_CHUNKS_PER_FILE}) reached at page ${page}/${pages.length}: ${path.basename(filePath)}`);
-      allChunks.length = MAX_CHUNKS_PER_FILE; // trim any excess from last page
-      break;
-    }
-  }
+  // ── Chunk, store, and embed in streaming batches ─────────────────────────
+  // Chunks are processed in batches: each batch is written to SQLite+FTS,
+  // then embedded in the worker thread. We await each batch before starting
+  // the next to avoid queuing up work with no progress feedback, and write
+  // vectors incrementally so progress is always visible.
 
   const insertChunk = db.prepare(`
     INSERT INTO chunks (id, file_id, page_or_slide, text, chunk_index, is_annotation)
     VALUES (?, ?, ?, ?, ?, 0)
   `);
-
-  const insertAllChunks = db.transaction(() => {
-    for (const c of allChunks) {
-      insertChunk.run(c.id, c.file_id, c.page_or_slide, c.text, c.chunk_index);
-    }
-  });
-  insertAllChunks();
-  console.log(`[indexer] ${allChunks.length} chunks stored, embedding: ${path.basename(filePath)}`);
-
-  // ── Populate FTS5 table ──────────────────────────────────────────────────
-  db.prepare(`
+  const insertFts = db.prepare(`
     INSERT INTO chunks_fts(rowid, text, file_id, page_or_slide)
-    SELECT rowid, text, file_id, page_or_slide FROM chunks WHERE file_id = ?
-  `).run(fileId);
+    SELECT rowid, text, file_id, page_or_slide FROM chunks WHERE id = ?
+  `);
 
-  // ── Generate embeddings and upsert vectors (in sub-batches to cap memory) ─
-  const vectors: number[][] = [];
-  for (let i = 0; i < allChunks.length; i += EMBED_SUB_BATCH) {
-    const batchTexts = allChunks.slice(i, i + EMBED_SUB_BATCH).map((c) => c.text);
-    const batchVecs = await embedBatch(batchTexts);
-    vectors.push(...batchVecs);
-    // Log progress every 100 chunks
-    if ((i + EMBED_SUB_BATCH) % 100 < EMBED_SUB_BATCH) {
-      console.log(`[indexer] Embedding ${Math.min(i + EMBED_SUB_BATCH, allChunks.length)}/${allChunks.length}: ${path.basename(filePath)}`);
+  let pendingBatch: Array<{ id: string; file_id: string; page_or_slide: number; text: string; chunk_index: number }> = [];
+  let totalChunks = 0;
+  let embeddedChunks = 0;
+  let batchNum = 0;
+  let hitCap = false;
+
+  const flushBatch = async () => {
+    if (pendingBatch.length === 0) return;
+    const batch = pendingBatch;
+    pendingBatch = [];
+    batchNum++;
+
+    // Write to SQLite + FTS synchronously (fast, main-thread-only)
+    db.transaction(() => {
+      for (const c of batch) {
+        insertChunk.run(c.id, c.file_id, c.page_or_slide, c.text, c.chunk_index);
+        insertFts.run(c.id);
+      }
+    })();
+
+    // Embed in worker thread and write vectors immediately
+    const texts = batch.map((c) => c.text);
+    const vectors = await embedBatch(texts);
+    const chunksWithVecs = batch.map((c, i) => ({ ...c, is_annotation: 0, vector: vectors[i] }));
+    await addVectors(vaultPath, chunksWithVecs);
+
+    embeddedChunks += batch.length;
+    console.log(`[indexer] Batch ${batchNum}: ${embeddedChunks}/${totalChunks} chunks indexed: ${path.basename(filePath)}`);
+  };
+
+  // First pass: build all chunks to know total count
+  const allChunks: typeof pendingBatch = [];
+  for (const { page, text } of pages) {
+    const pieces = chunkText(text, 1024, 128);
+    for (let idx = 0; idx < pieces.length; idx++) {
+      allChunks.push({
+        id: uuidv4(),
+        file_id: fileId,
+        page_or_slide: page,
+        text: pieces[idx],
+        chunk_index: idx,
+      });
+      if (allChunks.length >= MAX_CHUNKS_PER_FILE) { hitCap = true; break; }
     }
-    // Yield to event loop between sub-batches
-    if (i + EMBED_SUB_BATCH < allChunks.length) await new Promise((r) => setTimeout(r, 0));
+    if (hitCap) {
+      console.log(`[indexer] Chunk cap (${MAX_CHUNKS_PER_FILE}) reached at page ${page}/${pages.length}: ${path.basename(filePath)}`);
+      break;
+    }
+  }
+  totalChunks = allChunks.length;
+  console.log(`[indexer] ${totalChunks} chunks to index: ${path.basename(filePath)}`);
+
+  // Second pass: process in batches — store + embed + write vectors per batch
+  for (let i = 0; i < allChunks.length; i += EMBED_SUB_BATCH) {
+    pendingBatch = allChunks.slice(i, i + EMBED_SUB_BATCH);
+    await flushBatch();
   }
 
-  const chunksWithVecs = allChunks.map((c, i) => ({
-    ...c,
-    is_annotation: 0,
-    vector: vectors[i],
-  }));
-
-  await addVectors(vaultPath, chunksWithVecs);
   console.log(`[indexer] Done: ${path.basename(filePath)}`);
 
   // ── Mark as indexed ──────────────────────────────────────────────────────
@@ -248,97 +260,148 @@ async function extractPages(
   }
 }
 
-/** Extract text from a PDF, page by page. */
-async function extractPdfPages(filePath: string, raw: Buffer): Promise<PageText[]> {
-  const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs');
-  const uint8 = new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength);
+// ── PDF extraction worker code (runs in a separate thread) ───────────────────
+const PDF_WORKER_CODE = String.raw`
+'use strict';
+const { parentPort, workerData } = require('worker_threads');
+const { createRequire } = require('module');
+const { pathToFileURL } = require('url');
+const fs = require('fs');
 
-  let worker: any = null;
-  let doc: any = null;
+(async () => {
   try {
-    worker = new pdfjsLib.PDFWorker({ port: null });
-    doc = await pdfjsLib.getDocument({
-      data: uint8,
-      worker,
-      useSystemFonts: true,
-      isEvalSupported: false,
-    }).promise;
+    const localRequire = createRequire(workerData.resolveDir + '/package.json');
+    const pdfjsPath = localRequire.resolve('pdfjs-dist/legacy/build/pdf.mjs');
+    const pdfjsLib = await import(pathToFileURL(pdfjsPath).href);
 
-    const totalPages: number = doc.numPages;
+    const raw = fs.readFileSync(workerData.filePath);
+    const uint8 = new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength);
+    const cfg = workerData.config;
 
-    // ── Sample probe: quickly check a few pages with a tight timeout ─────────
-    // If a scanned/image PDF causes pdfjs to hang on every page, this lets us
-    // detect it upfront and bail before spending minutes on each page.
-    let sampleTextPages = 0;
-    const sampleEnd = Math.min(PDF_SAMPLE_PAGES, totalPages);
-    for (let s = 1; s <= sampleEnd; s++) {
-      const sample = await Promise.race([
-        (async () => {
-          const page = await doc.getPage(s);
-          const tc = await page.getTextContent();
-          return tc.items.map((item: any) => (item?.str ?? '')).join(' ').trim();
-        })(),
-        new Promise<null>((resolve) => setTimeout(() => resolve(null), PDF_SAMPLE_TIMEOUT_MS)),
-      ]).catch(() => null);
-      if (sample !== null && sample.split(/\s+/).filter(Boolean).length >= PDF_MIN_WORDS_PER_PAGE) {
-        sampleTextPages++;
-      }
-    }
-    if (sampleTextPages === 0) {
-      console.log(`[indexer] Skipping image-only/unreadable PDF (0/${sampleEnd} sample pages had text): ${filePath}`);
-      return [];
-    }
+    let pdfWorker = null;
+    let doc = null;
+    try {
+      pdfWorker = new pdfjsLib.PDFWorker({ port: null });
+      doc = await pdfjsLib.getDocument({
+        data: uint8,
+        worker: pdfWorker,
+        useSystemFonts: true,
+        isEvalSupported: false,
+      }).promise;
 
-    const pages: PageText[] = [];
-    let consecutiveTimeouts = 0;
-    for (let i = 1; i <= totalPages; i++) {
-      try {
-        // Per-page timeout: skip pages that hang (complex vector art, corrupt streams)
-        const text = await Promise.race([
+      const totalPages = doc.numPages;
+
+      // Sample probe
+      let sampleTextPages = 0;
+      const sampleEnd = Math.min(cfg.samplePages, totalPages);
+      for (let s = 1; s <= sampleEnd; s++) {
+        const sample = await Promise.race([
           (async () => {
-            const page = await doc.getPage(i);
-            const tc = await page.getTextContent();
-            return tc.items
-              .map((item: any) => (item?.str ?? ''))
-              .join(' ')
-              .trim();
+            const pg = await doc.getPage(s);
+            const tc = await pg.getTextContent();
+            return tc.items.map(function(it) { return (it && it.str) || ''; }).join(' ').trim();
           })(),
-          new Promise<null>((resolve) =>
-            setTimeout(() => resolve(null), PDF_PER_PAGE_TIMEOUT_MS),
-          ),
-        ]);
-
-        if (text === null) {
-          consecutiveTimeouts++;
-          if (consecutiveTimeouts >= PDF_MAX_CONSECUTIVE_TIMEOUTS) {
-            console.warn(`[indexer] ${PDF_MAX_CONSECUTIVE_TIMEOUTS} consecutive page timeouts — stopping extraction at page ${i}/${totalPages}: ${filePath}`);
-            break;
-          }
-          continue;
+          new Promise(function(r) { setTimeout(function() { r(null); }, cfg.sampleTimeoutMs); }),
+        ]).catch(function() { return null; });
+        if (sample !== null && sample.split(/\s+/).filter(Boolean).length >= cfg.minWordsPerPage) {
+          sampleTextPages++;
         }
-
-        consecutiveTimeouts = 0; // reset on successful extraction
-
-        // Skip image-only / blank pages (too few words to be useful)
-        const wordCount = text.split(/\s+/).filter(Boolean).length;
-        if (wordCount < PDF_MIN_WORDS_PER_PAGE) continue;
-
-        pages.push({ page: i, text });
-      } catch (pageErr) {
-        console.warn(`[indexer] Skipping page ${i} of ${filePath}:`, pageErr);
       }
-      // Yield to event loop every 10 pages so the main process stays responsive
-      if (i % 10 === 0) await new Promise((r) => setTimeout(r, 0));
-    }
 
-    return pages;
+      if (sampleTextPages === 0) {
+        parentPort.postMessage({ type: 'done', pages: [], skipped: true });
+        return;
+      }
+
+      const pages = [];
+      let consecutiveTimeouts = 0;
+      for (let i = 1; i <= totalPages; i++) {
+        try {
+          const text = await Promise.race([
+            (async () => {
+              const pg = await doc.getPage(i);
+              const tc = await pg.getTextContent();
+              return tc.items.map(function(it) { return (it && it.str) || ''; }).join(' ').trim();
+            })(),
+            new Promise(function(r) { setTimeout(function() { r(null); }, cfg.perPageTimeoutMs); }),
+          ]);
+
+          if (text === null) {
+            consecutiveTimeouts++;
+            if (consecutiveTimeouts >= cfg.maxConsecutiveTimeouts) break;
+            continue;
+          }
+
+          consecutiveTimeouts = 0;
+          const wordCount = text.split(/\s+/).filter(Boolean).length;
+          if (wordCount < cfg.minWordsPerPage) continue;
+
+          pages.push({ page: i, text: text });
+        } catch (e) {
+          // skip page
+        }
+      }
+
+      parentPort.postMessage({ type: 'done', pages: pages });
+    } finally {
+      try { if (doc) doc.destroy(); } catch (e) {}
+      try { if (pdfWorker) pdfWorker.destroy(); } catch (e) {}
+    }
   } catch (err) {
-    console.error(`[indexer] PDF extraction failed for ${filePath}:`, err);
-    return [];
-  } finally {
-    try { doc?.destroy(); } catch { /* ignore */ }
-    try { worker?.destroy(); } catch { /* ignore */ }
+    parentPort.postMessage({ type: 'error', error: String((err && err.message) || err) });
   }
+})();
+`;
+
+/**
+ * Extract text from a PDF in a worker thread so the main process stays responsive.
+ */
+async function extractPdfPages(filePath: string, _raw: Buffer): Promise<PageText[]> {
+  return new Promise<PageText[]>((resolve, reject) => {
+    let settled = false;
+
+    const w = new Worker(PDF_WORKER_CODE, {
+      eval: true,
+      workerData: {
+        filePath,
+        resolveDir: __dirname,
+        config: {
+          perPageTimeoutMs: PDF_PER_PAGE_TIMEOUT_MS,
+          minWordsPerPage: PDF_MIN_WORDS_PER_PAGE,
+          samplePages: PDF_SAMPLE_PAGES,
+          sampleTimeoutMs: PDF_SAMPLE_TIMEOUT_MS,
+          maxConsecutiveTimeouts: PDF_MAX_CONSECUTIVE_TIMEOUTS,
+        },
+      },
+    });
+
+    w.on('message', (msg: { type: string; pages?: PageText[]; error?: string; skipped?: boolean }) => {
+      if (settled) return;
+      settled = true;
+      if (msg.type === 'error') {
+        reject(new Error(msg.error));
+      } else {
+        if (msg.skipped) {
+          console.log(`[indexer] Skipping image-only/unreadable PDF: ${filePath}`);
+        }
+        resolve(msg.pages ?? []);
+      }
+      w.terminate();
+    });
+
+    w.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      reject(err);
+    });
+
+    w.on('exit', (code) => {
+      if (settled) return;
+      settled = true;
+      if (code !== 0) reject(new Error(`PDF worker exited with code ${code}`));
+      else resolve([]);
+    });
+  });
 }
 
 // ── Chunking utility ─────────────────────────────────────────────────────────
