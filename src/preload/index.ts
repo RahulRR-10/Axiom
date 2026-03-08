@@ -94,6 +94,24 @@ const electronAPI = {
     ipcRenderer.invoke(NOTES_CHANNELS.RENAME, vaultPath, noteId, newTitle),
   exportNotePdf: (html: string, mdFilePath: string, vaultPath: string): Promise<string> =>
     ipcRenderer.invoke(NOTES_CHANNELS.EXPORT_PDF, html, mdFilePath, vaultPath),
+
+  appendToNote: (
+    vaultPath: string,
+    noteId: string,
+    selectedText: string,
+    sourceFile: string,
+    sourcePage: number,
+  ): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(NOTES_CHANNELS.APPEND, vaultPath, noteId, selectedText, sourceFile, sourcePage),
+
+  recentNotes: (vaultPath: string): Promise<{ notes: import('../shared/types').NoteSummary[]; lastUsedNoteId: string | null }> =>
+    ipcRenderer.invoke(NOTES_CHANNELS.RECENT, vaultPath),
+
+  getLastUsedNoteId: (vaultPath: string): Promise<string | null> =>
+    ipcRenderer.invoke(NOTES_CHANNELS.GET_LAST_USED, vaultPath),
+
+  setLastUsedNoteId: (vaultPath: string, noteId: string): Promise<void> =>
+    ipcRenderer.invoke(NOTES_CHANNELS.SET_LAST_USED, vaultPath, noteId),
   // ── Misc ─────────────────────────────────────────────────────────────────
   openExternal: (url: string): void => {
     void ipcRenderer.invoke('shell:openExternal', url);

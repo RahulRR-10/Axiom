@@ -28,6 +28,10 @@ export const NOTES_CHANNELS = {
   MOVE: 'notes:move',
   RENAME: 'notes:rename',
   EXPORT_PDF: 'notes:exportPdf',
+  APPEND: 'notes:append',
+  RECENT: 'notes:recent',
+  GET_LAST_USED: 'notes:getLastUsed',
+  SET_LAST_USED: 'notes:setLastUsed',
 } as const;
 
 export const ANNOTATION_CHANNELS = {

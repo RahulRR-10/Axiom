@@ -135,4 +135,13 @@ export const MIGRATIONS: Array<{ version: string; sql: string }> = [
         SELECT rowid, text, file_id, page_or_slide FROM chunks;
     `,
   },
+  {
+    version: '006_settings',
+    sql: `
+      CREATE TABLE IF NOT EXISTS settings (
+        key   TEXT PRIMARY KEY,
+        value TEXT
+      );
+    `,
+  },
 ];

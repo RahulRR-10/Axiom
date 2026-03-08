@@ -303,6 +303,7 @@ export const NotesEditor: React.FC<NotesEditorProps> = ({ filePath, noteId, vaul
                     setContent(note.content);
                     lastLoadedAtRef.current = Math.floor(Date.now() / 1000);
                     setLoaded(true);
+                    window.dispatchEvent(new CustomEvent('noteOpened', { detail: { noteId } }));
                 }
             } catch (err) {
                 console.error('[NotesEditor] Failed to load note:', err);
@@ -527,6 +528,33 @@ export const NotesEditor: React.FC<NotesEditorProps> = ({ filePath, noteId, vaul
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [loaded, mode, extensions, triggerSave, insertImageIntoEditor]);
+
+    // ── Refresh editor when content is appended from FloatingActionBar ─────
+    useEffect(() => {
+        const handler = async (e: Event) => {
+            const { noteId: appendedId } = (e as CustomEvent<{ noteId: string }>).detail;
+            if (appendedId !== noteId) return;
+            try {
+                const note = await window.electronAPI.readNote(vaultPath, noteId);
+                setContent(note.content);
+                lastLoadedAtRef.current = Math.floor(Date.now() / 1000);
+                // Update CodeMirror editor if it's active
+                const view = viewRef.current;
+                if (view) {
+                    const currentDoc = view.state.doc.toString();
+                    if (currentDoc !== note.content) {
+                        view.dispatch({
+                            changes: { from: 0, to: currentDoc.length, insert: note.content },
+                        });
+                    }
+                }
+            } catch (err) {
+                console.error('[NotesEditor] Failed to refresh after append:', err);
+            }
+        };
+        window.addEventListener('noteContentAppended', handler);
+        return () => window.removeEventListener('noteContentAppended', handler);
+    }, [noteId, vaultPath]);
 
     // ── Keyboard shortcut: Ctrl+E toggles modes ────────────────────────────
     useEffect(() => {

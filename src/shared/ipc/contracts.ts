@@ -84,7 +84,27 @@ export type NotesExportPdfResponse = string; // absolute path of the written PDF
 // ── ai:vault-inject ─────────────────────────────────────────────────────────
 export type VaultInjectRequest = { provider: string; prompt: string };
 export type VaultInjectResponse = { success: boolean; error?: string };
+// ── notes:append ─────────────────────────────────────────────────────────
+export type NotesAppendRequest = {
+  vaultPath: string;
+  noteId: string;
+  selectedText: string;
+  sourceFile: string;
+  sourcePage: number;
+};
+export type NotesAppendResponse = { ok: boolean };
 
+// ── notes:recent ─────────────────────────────────────────────────────────
+export type NotesRecentRequest = { vaultPath: string };
+export type NotesRecentResponse = { notes: NoteSummary[]; lastUsedNoteId: string | null };
+
+// ── notes:getLastUsed ────────────────────────────────────────────────────
+export type NotesGetLastUsedRequest = { vaultPath: string };
+export type NotesGetLastUsedResponse = string | null;
+
+// ── notes:setLastUsed ────────────────────────────────────────────────────
+export type NotesSetLastUsedRequest = { vaultPath: string; noteId: string };
+export type NotesSetLastUsedResponse = void;
 // ── annotation:save ──────────────────────────────────────────────────────────
 export type AnnotationSaveRequest = { vaultPath: string; annotation: Annotation };
 export type AnnotationSaveResponse = void;

@@ -38,6 +38,10 @@ declare global {
       moveNote: (vaultPath: string, noteId: string, newDirectory: string) => Promise<NoteSummary>;
       renameNote: (vaultPath: string, noteId: string, newTitle: string) => Promise<NoteSummary>;
       exportNotePdf: (html: string, mdFilePath: string, vaultPath: string) => Promise<string>;
+      appendToNote: (vaultPath: string, noteId: string, selectedText: string, sourceFile: string, sourcePage: number) => Promise<{ ok: boolean }>;
+      recentNotes: (vaultPath: string) => Promise<{ notes: NoteSummary[]; lastUsedNoteId: string | null }>;
+      getLastUsedNoteId: (vaultPath: string) => Promise<string | null>;
+      setLastUsedNoteId: (vaultPath: string, noteId: string) => Promise<void>;
 
       // ── Misc ───────────────────────────────────────────────────────────
       openExternal: (url: string) => void;

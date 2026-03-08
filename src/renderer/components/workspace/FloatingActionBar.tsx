@@ -1,9 +1,12 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { ChevronDown, Highlighter } from 'lucide-react';
+import { Check, ChevronDown, FileText, Highlighter } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
-import type { Annotation, HighlightAnnotation } from '../../../shared/types';
+import type { Annotation, HighlightAnnotation, NoteSummary } from '../../../shared/types';
 
 type Position = { top: number; left: number };
+
+// Session-scoped: resets on app restart, shared across all instances
+let sessionLastUsedNoteId: string | null = null;
 
 const HL_COLORS = [
   { label: 'Yellow', value: '#fde68a' },
@@ -91,6 +94,10 @@ export const FloatingActionBar: React.FC<Props> = ({
   const [selectedText, setSelectedText] = useState('');
   const [hlOpen, setHlOpen]             = useState(false);
   const [defaultColor, setDefaultColor] = useState('#fde68a');
+  const [noteDropdownOpen, setNoteDropdownOpen] = useState(false);
+  const [allNotes, setAllNotes]         = useState<NoteSummary[] | null>(null);
+  const [lastUsedNoteId, setLastUsedNoteId] = useState<string | null>(sessionLastUsedNoteId);
+  const [saving, setSaving]             = useState(false);
   const barRef                          = useRef<HTMLDivElement>(null);
 
   // ── Calculate bar position relative to the scrollable container ─────────
@@ -148,6 +155,7 @@ export const FloatingActionBar: React.FC<Props> = ({
       if (barRef.current && !barRef.current.contains(e.target as Node)) {
         setPos(null);
         setHlOpen(false);
+        setNoteDropdownOpen(false);
       }
     };
     document.addEventListener('mousedown', onMouseDown);
@@ -171,12 +179,74 @@ export const FloatingActionBar: React.FC<Props> = ({
     window.dispatchEvent(new CustomEvent('sendToAI', { detail: { text: selectedText } }));
     setPos(null);
   };
-  const dispatchSaveToNotes = () => {
-    window.dispatchEvent(new CustomEvent('saveToNotes', {
-      detail: { text: selectedText, sourcePage: currentPage, sourceFile: filePath },
-    }));
-    setPos(null);
-  };
+
+  // ── Save to Note helpers ──────────────────────────────────────────────
+  const sourceFileName = filePath.split(/[\\/]/).pop() ?? filePath;
+
+  const doSaveToNote = useCallback(async (noteId: string) => {
+    if (!vaultPath || saving) return;
+    setSaving(true);
+    try {
+      await window.electronAPI.appendToNote(vaultPath, noteId, selectedText, sourceFileName, currentPage);
+      setLastUsedNoteId(noteId);
+      sessionLastUsedNoteId = noteId;
+      // Notify any open NotesEditor to refresh its content
+      window.dispatchEvent(new CustomEvent('noteContentAppended', { detail: { noteId } }));
+      setPos(null);
+      setNoteDropdownOpen(false);
+      setAllNotes(null);
+    } catch (err) {
+      console.error('[FloatingActionBar] Failed to save to note:', err);
+    } finally {
+      setSaving(false);
+    }
+  }, [vaultPath, selectedText, sourceFileName, currentPage, saving]);
+
+  // Load all notes into the dropdown
+  const loadNotes = useCallback(async () => {
+    if (!vaultPath) return;
+    try {
+      const notes = await window.electronAPI.listNotes(vaultPath);
+      setAllNotes(notes);
+    } catch (err) {
+      console.error('[FloatingActionBar] Failed to list notes:', err);
+    }
+  }, [vaultPath]);
+
+  const handleSaveClick = useCallback(() => {
+    if (lastUsedNoteId) {
+      void doSaveToNote(lastUsedNoteId);
+    } else {
+      // No last-used note — open the dropdown and load notes
+      setNoteDropdownOpen(true);
+      setHlOpen(false);
+      void loadNotes();
+    }
+  }, [lastUsedNoteId, doSaveToNote, loadNotes]);
+
+  const openNoteDropdown = useCallback(() => {
+    const willOpen = !noteDropdownOpen;
+    setNoteDropdownOpen(willOpen);
+    setHlOpen(false);
+    if (!willOpen) {
+      setAllNotes(null);
+      return;
+    }
+    void loadNotes();
+  }, [noteDropdownOpen, loadNotes]);
+
+  // Listen for note opens in this session
+  useEffect(() => {
+    const onNoteOpened = (e: Event) => {
+      const { noteId } = (e as CustomEvent).detail;
+      if (noteId) {
+        setLastUsedNoteId(noteId);
+        sessionLastUsedNoteId = noteId;
+      }
+    };
+    window.addEventListener('noteOpened', onNoteOpened);
+    return () => window.removeEventListener('noteOpened', onNoteOpened);
+  }, []);
 
   if (!pos) return null;
 
@@ -271,14 +341,70 @@ export const FloatingActionBar: React.FC<Props> = ({
 
       <span className="w-px h-4 bg-[#444]" />
 
-      {/* Save to Notes */}
-      <button
-        type="button"
-        onClick={dispatchSaveToNotes}
-        className="px-2 py-1 text-xs text-[#d4d4d4] rounded hover:bg-[#3a3a3a] transition-colors"
-      >
-        Save to Notes
-      </button>
+      {/* Save to Note — split button with dropdown */}
+      <div className="relative flex items-center">
+        <button
+          type="button"
+          onClick={handleSaveClick}
+          disabled={saving}
+          className="flex items-center gap-1 px-2 py-1 text-xs text-[#d4d4d4] rounded-l hover:bg-[#3a3a3a] transition-colors disabled:opacity-50"
+          title={lastUsedNoteId
+            ? `Save to ${allNotes?.find(n => n.id === lastUsedNoteId)?.title ?? 'last note'}`
+            : 'Save to Note'}
+        >
+          <FileText size={13} />
+          Save to Note
+        </button>
+        <button
+          type="button"
+          onClick={openNoteDropdown}
+          className="px-1 py-1 text-xs text-[#8a8a8a] rounded-r hover:bg-[#3a3a3a] transition-colors"
+          title="Pick target note"
+        >
+          <ChevronDown size={12} />
+        </button>
+
+        {noteDropdownOpen && (
+          <div
+            style={{
+              position: 'absolute',
+              top: '100%',
+              right: 0,
+              marginTop: 4,
+              background: '#2d2d2d',
+              border: '1px solid #444',
+              borderRadius: '8px',
+              padding: '4px 0',
+              minWidth: 180,
+              maxWidth: 260,
+              maxHeight: 240,
+              overflowY: 'auto',
+              zIndex: 1001,
+              boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+            }}
+          >
+            {allNotes === null && (
+              <div className="px-3 py-2 text-xs text-[#888]">Loading…</div>
+            )}
+            {allNotes !== null && allNotes.length === 0 && (
+              <div className="px-3 py-2 text-xs text-[#888]">No notes in vault</div>
+            )}
+            {allNotes?.map(note => (
+              <button
+                key={note.id}
+                type="button"
+                onClick={() => void doSaveToNote(note.id)}
+                className="flex items-center gap-2 w-full px-3 py-1.5 text-xs text-[#d4d4d4] hover:bg-[#3a3a3a] transition-colors text-left"
+              >
+                {note.id === lastUsedNoteId
+                  ? <Check size={12} className="text-[#4ade80] shrink-0" />
+                  : <span className="w-3 shrink-0" />}
+                <span className="truncate">{note.title}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 };

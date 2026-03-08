@@ -147,6 +147,14 @@ export function registerNotesHandlers(): void {
                 content = fs.readFileSync(row.file_path, 'utf-8');
             }
 
+            // Track this as the last-used note so "Save to Note" defaults here
+            try {
+                db.prepare(
+                    `INSERT INTO settings (key, value) VALUES ('lastUsedNoteId', ?)
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+                ).run(row.id);
+            } catch { /* settings table may not exist yet */ }
+
             const detail: NoteDetail = {
                 ...rowToSummary(row),
                 content,
@@ -238,10 +246,33 @@ export function registerNotesHandlers(): void {
         NOTES_CHANNELS.LIST,
         async (_event, vaultPath: string) => {
             const db = getDb(vaultPath);
-            const rows = db.prepare(
+            const noteRows = db.prepare(
                 'SELECT * FROM notes ORDER BY updated_at DESC',
             ).all() as NoteRow[];
-            return rows.map(rowToSummary);
+
+            // Also include .md files from the files table that don't have notes entries yet
+            const noteFilePaths = new Set(noteRows.map(r => r.file_path).filter(Boolean));
+            const mdFiles = db.prepare(
+                "SELECT id, path, name, created_at FROM files WHERE type = 'md' ORDER BY name ASC",
+            ).all() as Array<{ id: string; path: string; name: string; created_at: number }>;
+
+            const extraNotes: NoteSummary[] = [];
+            for (const f of mdFiles) {
+                if (!noteFilePaths.has(f.path)) {
+                    extraNotes.push({
+                        id: f.id,
+                        title: f.name.replace(/\.md$/i, ''),
+                        file_path: f.path,
+                        subject: null,
+                        source_file_id: null,
+                        source_page: null,
+                        created_at: f.created_at,
+                        updated_at: f.created_at,
+                    });
+                }
+            }
+
+            return [...noteRows.map(rowToSummary), ...extraNotes];
         },
     );
 
@@ -356,6 +387,127 @@ export function registerNotesHandlers(): void {
                 win.destroy();
                 try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
             }
+        },
+    );
+
+    // ── notes:append ─────────────────────────────────────────────────────────
+    ipcMain.handle(
+        NOTES_CHANNELS.APPEND,
+        async (
+            _event,
+            vaultPath: string,
+            noteId: string,
+            selectedText: string,
+            sourceFile: string,
+            sourcePage: number,
+        ): Promise<{ ok: boolean }> => {
+            const db = getDb(vaultPath);
+            let row = db.prepare('SELECT * FROM notes WHERE id = ?').get(noteId) as NoteRow | undefined;
+
+            // noteId might be a files.id — resolve and create notes entry on the fly
+            if (!row) {
+                const fileRow = db.prepare('SELECT id, path, name FROM files WHERE id = ?').get(noteId) as { id: string; path: string; name: string } | undefined;
+                if (fileRow && fileRow.path.endsWith('.md')) {
+                    const content = fs.existsSync(fileRow.path) ? fs.readFileSync(fileRow.path, 'utf-8') : '';
+                    const title = path.basename(fileRow.path, '.md');
+                    const subject = path.relative(vaultPath, path.dirname(fileRow.path)).split(path.sep)[0] || null;
+                    const now = Math.floor(Date.now() / 1000);
+                    db.prepare(`
+                        INSERT OR IGNORE INTO notes (id, title, content, file_path, subject, source_file_id, source_page, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?)
+                    `).run(noteId, title, content, fileRow.path, subject, now, now);
+                    row = db.prepare('SELECT * FROM notes WHERE id = ?').get(noteId) as NoteRow | undefined;
+                }
+            }
+
+            if (!row || !row.file_path) throw new Error(`Note ${noteId} not found`);
+
+            assertInsideVault(vaultPath, row.file_path);
+
+            // Clean the selected text: normalize whitespace, remove hyphenation, join broken lines
+            const cleaned = selectedText
+                .replace(/(\w)-\n(\w)/g, '$1$2')   // join hyphenated line breaks
+                .replace(/\n+/g, ' ')               // join broken lines
+                .replace(/\s+/g, ' ')               // normalize whitespace
+                .trim();
+
+            // Format the block exactly per spec
+            const block = `> ${cleaned}\n\n*From: ${sourceFile}, p.${sourcePage}*\n\n---\n`;
+
+            // Read existing content and append with proper spacing
+            let existing = '';
+            if (fs.existsSync(row.file_path)) {
+                existing = fs.readFileSync(row.file_path, 'utf-8');
+            }
+            // Ensure at least two newlines before the new block so it doesn't merge
+            const separator = existing.length === 0 ? '' : existing.endsWith('\n\n') ? '' : existing.endsWith('\n') ? '\n' : '\n\n';
+            const newContent = existing + separator + block;
+            fs.writeFileSync(row.file_path, newContent, 'utf-8');
+
+            // Update DB
+            const now = Math.floor(Date.now() / 1000);
+            db.prepare('UPDATE notes SET content = ?, updated_at = ? WHERE id = ?')
+                .run(newContent, now, noteId);
+
+            // Update lastUsedNoteId
+            db.prepare(
+                `INSERT INTO settings (key, value) VALUES ('lastUsedNoteId', ?)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+            ).run(noteId);
+
+            // Broadcast to other windows (not the sender — avoids closing the note tab)
+            const normalizedPath = path.normalize(row.file_path).toLowerCase();
+            for (const win of BrowserWindow.getAllWindows()) {
+                if (win.webContents.id !== _event.sender.id) {
+                    win.webContents.send('notes:saved', normalizedPath);
+                }
+            }
+
+            return { ok: true };
+        },
+    );
+
+    // ── notes:recent ─────────────────────────────────────────────────────────
+    ipcMain.handle(
+        NOTES_CHANNELS.RECENT,
+        async (_event, vaultPath: string) => {
+            const db = getDb(vaultPath);
+            const rows = db.prepare(
+                'SELECT * FROM notes ORDER BY updated_at DESC LIMIT 5',
+            ).all() as NoteRow[];
+
+            const lastUsedRow = db.prepare(
+                "SELECT value FROM settings WHERE key = 'lastUsedNoteId'",
+            ).get() as { value: string } | undefined;
+
+            return {
+                notes: rows.map(rowToSummary),
+                lastUsedNoteId: lastUsedRow?.value ?? null,
+            };
+        },
+    );
+
+    // ── notes:getLastUsed ────────────────────────────────────────────────────
+    ipcMain.handle(
+        NOTES_CHANNELS.GET_LAST_USED,
+        async (_event, vaultPath: string) => {
+            const db = getDb(vaultPath);
+            const row = db.prepare(
+                "SELECT value FROM settings WHERE key = 'lastUsedNoteId'",
+            ).get() as { value: string } | undefined;
+            return row?.value ?? null;
+        },
+    );
+
+    // ── notes:setLastUsed ────────────────────────────────────────────────────
+    ipcMain.handle(
+        NOTES_CHANNELS.SET_LAST_USED,
+        async (_event, vaultPath: string, noteId: string) => {
+            const db = getDb(vaultPath);
+            db.prepare(
+                `INSERT INTO settings (key, value) VALUES ('lastUsedNoteId', ?)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+            ).run(noteId);
         },
     );
 }
