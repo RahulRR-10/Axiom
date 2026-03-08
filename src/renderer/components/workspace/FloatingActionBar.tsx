@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { Check, ChevronDown, FileText, Highlighter } from 'lucide-react';
+import { Check, ChevronDown, FileText, Highlighter, Send } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import type { Annotation, HighlightAnnotation, NoteSummary } from '../../../shared/types';
 
@@ -98,7 +98,17 @@ export const FloatingActionBar: React.FC<Props> = ({
   const [allNotes, setAllNotes]         = useState<NoteSummary[] | null>(null);
   const [lastUsedNoteId, setLastUsedNoteId] = useState<string | null>(sessionLastUsedNoteId);
   const [saving, setSaving]             = useState(false);
+  const [aiDropdownOpen, setAiDropdownOpen] = useState(false);
+  const [customPrompt, setCustomPrompt]     = useState('');
   const barRef                          = useRef<HTMLDivElement>(null);
+  const textareaRef                     = useRef<HTMLTextAreaElement>(null);
+
+  // Focus the textarea whenever the AI dropdown opens
+  useEffect(() => {
+    if (aiDropdownOpen) {
+      setTimeout(() => textareaRef.current?.focus(), 0);
+    }
+  }, [aiDropdownOpen]);
 
   // ── Calculate bar position relative to the scrollable container ─────────
   const computePosition = useCallback(() => {
@@ -156,6 +166,8 @@ export const FloatingActionBar: React.FC<Props> = ({
         setPos(null);
         setHlOpen(false);
         setNoteDropdownOpen(false);
+        setAiDropdownOpen(false);
+        setCustomPrompt('');
       }
     };
     document.addEventListener('mousedown', onMouseDown);
@@ -175,9 +187,11 @@ export const FloatingActionBar: React.FC<Props> = ({
   }, [fileId, onAnnotationCreated]);
 
   // Dispatch helpers
-  const dispatchSendToAI = () => {
-    window.dispatchEvent(new CustomEvent('sendToAI', { detail: { text: selectedText } }));
+  const dispatchSendToAI = (prompt?: string) => {
+    window.dispatchEvent(new CustomEvent('sendToAI', { detail: { text: selectedText, customPrompt: prompt || undefined } }));
     setPos(null);
+    setAiDropdownOpen(false);
+    setCustomPrompt('');
   };
 
   // ── Save to Note helpers ──────────────────────────────────────────────
@@ -192,6 +206,9 @@ export const FloatingActionBar: React.FC<Props> = ({
       sessionLastUsedNoteId = noteId;
       // Notify any open NotesEditor to refresh its content
       window.dispatchEvent(new CustomEvent('noteContentAppended', { detail: { noteId } }));
+      // Dispatch toast notification with the note title
+      const noteTitle = allNotes?.find(n => n.id === noteId)?.title ?? noteId;
+      window.dispatchEvent(new CustomEvent('noteSavedToast', { detail: { noteTitle } }));
       setPos(null);
       setNoteDropdownOpen(false);
       setAllNotes(null);
@@ -213,8 +230,10 @@ export const FloatingActionBar: React.FC<Props> = ({
     }
   }, [vaultPath]);
 
-  const handleSaveClick = useCallback(() => {
+  const handleSaveClick = useCallback(async () => {
     if (lastUsedNoteId) {
+      // Pre-load notes so we can find the title for the toast
+      if (!allNotes) await loadNotes();
       void doSaveToNote(lastUsedNoteId);
     } else {
       // No last-used note — open the dropdown and load notes
@@ -222,7 +241,7 @@ export const FloatingActionBar: React.FC<Props> = ({
       setHlOpen(false);
       void loadNotes();
     }
-  }, [lastUsedNoteId, doSaveToNote, loadNotes]);
+  }, [lastUsedNoteId, doSaveToNote, loadNotes, allNotes]);
 
   const openNoteDropdown = useCallback(() => {
     const willOpen = !noteDropdownOpen;
@@ -330,14 +349,101 @@ export const FloatingActionBar: React.FC<Props> = ({
 
       <span className="w-px h-4 bg-[#444]" />
 
-      {/* Send to AI */}
-      <button
-        type="button"
-        onClick={dispatchSendToAI}
-        className="px-2 py-1 text-xs text-[#d4d4d4] rounded hover:bg-[#3a3a3a] transition-colors"
-      >
-        Send to AI
-      </button>
+      {/* Send to AI — split button with custom prompt dropdown */}
+      <div className="relative flex items-center">
+        <button
+          type="button"
+          onClick={() => dispatchSendToAI()}
+          className="flex items-center gap-1 px-2 py-1 text-xs text-[#d4d4d4] rounded-l hover:bg-[#3a3a3a] transition-colors"
+        >
+          <Send size={13} />
+          Send to AI
+        </button>
+        <button
+          type="button"
+          onClick={() => { setAiDropdownOpen(o => !o); setHlOpen(false); setNoteDropdownOpen(false); }}
+          className="px-1 py-1 text-xs text-[#8a8a8a] rounded-r hover:bg-[#3a3a3a] transition-colors"
+          title="Add custom prompt"
+        >
+          <ChevronDown size={12} />
+        </button>
+
+        {aiDropdownOpen && (
+          <div
+            style={{
+              position: 'absolute',
+              top: '100%',
+              left: 0,
+              marginTop: 6,
+              background: '#252525',
+              border: '1px solid #3a3a3a',
+              borderRadius: '10px',
+              padding: '10px',
+              width: 280,
+              zIndex: 1001,
+              boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '8px',
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+            onMouseUp={(e) => e.stopPropagation()}
+          >
+            <label style={{ fontSize: 10, color: '#7a7a7a', letterSpacing: '0.03em' }}>Custom prompt (optional)</label>
+            <textarea
+              ref={textareaRef}
+              value={customPrompt}
+              onChange={(e) => setCustomPrompt(e.target.value)}
+              placeholder="Add instructions for the AI…"
+              style={{
+                background: '#1a1a1a',
+                color: '#d4d4d4',
+                fontSize: 12,
+                border: '1px solid #3a3a3a',
+                borderRadius: 6,
+                padding: '8px',
+                outline: 'none',
+                resize: 'none',
+                minHeight: 80,
+                maxHeight: 160,
+                overflowY: 'auto',
+                width: '100%',
+                boxSizing: 'border-box',
+                lineHeight: 1.5,
+                fontFamily: 'inherit',
+              }}
+              onKeyDown={(e) => {
+                e.stopPropagation();
+                if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                  e.preventDefault();
+                  dispatchSendToAI(customPrompt);
+                }
+              }}
+              onFocus={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
+            />
+            <button
+              type="button"
+              onClick={() => dispatchSendToAI(customPrompt)}
+              style={{
+                background: '#3a3a3a',
+                color: '#d4d4d4',
+                fontSize: 12,
+                border: 'none',
+                borderRadius: 6,
+                padding: '7px 12px',
+                cursor: 'pointer',
+                width: '100%',
+                transition: 'background 0.15s',
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = '#4a4a4a')}
+              onMouseLeave={(e) => (e.currentTarget.style.background = '#3a3a3a')}
+            >
+              Send with prompt
+            </button>
+          </div>
+        )}
+      </div>
 
       <span className="w-px h-4 bg-[#444]" />
 

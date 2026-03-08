@@ -780,6 +780,24 @@ export const PDFViewer: React.FC<Props> = ({
   const [pdfLoadNonce, setPdfLoadNonce] = useState(0);
   const [renderNonce, setRenderNonce] = useState(0);
 
+  /* ── Toast state for "Note saved" notification ───────────────────────────── */
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { noteTitle } = (e as CustomEvent<{ noteTitle: string }>).detail;
+      setToastMessage(`Note saved to ${noteTitle}`);
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+      toastTimerRef.current = setTimeout(() => setToastMessage(null), 5000);
+    };
+    window.addEventListener('noteSavedToast', handler);
+    return () => {
+      window.removeEventListener('noteSavedToast', handler);
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    };
+  }, []);
+
   /* ── Search state ────────────────────────────────────────────────────────── */
   const [showSearch, setShowSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -1331,16 +1349,24 @@ export const PDFViewer: React.FC<Props> = ({
   /* ── Escape to deactivate tool / Ctrl+S to save / Ctrl+F to search ──────── */
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      // Don't intercept shortcuts when user is typing in an input/textarea
+      const active = document.activeElement;
+      const isTyping = active && (
+        active.tagName === 'INPUT' ||
+        active.tagName === 'TEXTAREA' ||
+        (active as HTMLElement).isContentEditable
+      );
+
       if (e.key === "Escape") {
         if (showSearch) { closeSearch(); return; }
-        setActiveTool("none");
+        if (!isTyping) setActiveTool("none");
       }
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
+      if (!isTyping && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
         e.preventDefault();
         setShowSearch(true);
         setTimeout(() => searchInputRef.current?.focus(), 50);
       }
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+      if (!isTyping && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
         e.preventDefault();
         savePdf();
       }
@@ -1617,6 +1643,7 @@ export const PDFViewer: React.FC<Props> = ({
         flexDirection: "column",
         overflow: "hidden",
         background: "#141414",
+        position: "relative",
       }}
     >
       <PDFToolbar
@@ -1637,6 +1664,26 @@ export const PDFViewer: React.FC<Props> = ({
         onPageChange={scrollToPage}
         onSearchToggle={() => { setShowSearch((s) => !s); setTimeout(() => searchInputRef.current?.focus(), 50); }}
       />
+
+      {/* ── Toast notification ── */}
+      {toastMessage && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 52,
+            right: 16,
+            background: '#1e1e1e',
+            border: '1px solid #3a3a3a',
+            borderRadius: '8px',
+            padding: '8px 14px',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+            zIndex: 1100,
+            animation: 'fadeInOut 5s ease-in-out forwards',
+          }}
+        >
+          <span style={{ color: '#4ade80', fontSize: '12px', fontWeight: 500 }}>{toastMessage}</span>
+        </div>
+      )}
 
       {/* ── PDF Search Bar ── */}
       {showSearch && (

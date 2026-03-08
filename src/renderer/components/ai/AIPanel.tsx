@@ -91,15 +91,19 @@ export const AIPanel: React.FC<AIPanelProps> = ({ vaultPath }) => {
 
   useEffect(() => {
     const handler = async (e: Event): Promise<void> => {
-      const { text } = (e as CustomEvent<{ text: string }>).detail;
+      const { text, customPrompt } = (e as CustomEvent<{ text: string; customPrompt?: string }>).detail;
       if (!text.trim() || loading) return;
 
       setLoading(true);
       setError(null);
 
       try {
+        const instruction = customPrompt?.trim()
+          ? customPrompt.trim()
+          : 'Explain the following text clearly and concisely.';
+
         const prompt = [
-          'Explain the following text clearly and concisely.',
+          instruction,
           '',
           'TEXT',
           '----',
