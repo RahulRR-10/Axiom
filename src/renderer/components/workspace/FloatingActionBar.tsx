@@ -1,12 +1,9 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { Check, ChevronDown, FileText, Highlighter, Send } from 'lucide-react';
+import { ChevronDown, FileText, Highlighter, Send } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import type { Annotation, HighlightAnnotation, NoteSummary } from '../../../shared/types';
 
 type Position = { top: number; left: number };
-
-// Session-scoped: resets on app restart, shared across all instances
-let sessionLastUsedNoteId: string | null = null;
 
 const HL_COLORS = [
   { label: 'Yellow', value: '#fde68a' },
@@ -96,7 +93,6 @@ export const FloatingActionBar: React.FC<Props> = ({
   const [defaultColor, setDefaultColor] = useState('#fde68a');
   const [noteDropdownOpen, setNoteDropdownOpen] = useState(false);
   const [allNotes, setAllNotes]         = useState<NoteSummary[] | null>(null);
-  const [lastUsedNoteId, setLastUsedNoteId] = useState<string | null>(sessionLastUsedNoteId);
   const [saving, setSaving]             = useState(false);
   const [aiDropdownOpen, setAiDropdownOpen] = useState(false);
   const [customPrompt, setCustomPrompt]     = useState('');
@@ -197,17 +193,45 @@ export const FloatingActionBar: React.FC<Props> = ({
   // ── Save to Note helpers ──────────────────────────────────────────────
   const sourceFileName = filePath.split(/[\\/]/).pop() ?? filePath;
 
+  // Load all notes into the dropdown — always sorted alphabetically by title
+  const loadNotes = useCallback(async () => {
+    if (!vaultPath) return;
+    try {
+      const notes = await window.electronAPI.listNotes(vaultPath);
+      const sorted = notes.slice().sort((a, b) =>
+        a.title.localeCompare(b.title, undefined, { sensitivity: 'base' })
+      );
+      setAllNotes(sorted);
+    } catch (err) {
+      console.error('[FloatingActionBar] Failed to list notes:', err);
+    }
+  }, [vaultPath]);
+
   const doSaveToNote = useCallback(async (noteId: string) => {
     if (!vaultPath || saving) return;
     setSaving(true);
     try {
-      await window.electronAPI.appendToNote(vaultPath, noteId, selectedText, sourceFileName, currentPage);
-      setLastUsedNoteId(noteId);
-      sessionLastUsedNoteId = noteId;
+      const result = await window.electronAPI.appendToNote(vaultPath, noteId, selectedText, sourceFileName, currentPage);
+
+      // The file was deleted — re-query the backend for the next best existing note
+      if (!result.ok && result.reason === 'file_deleted') {
+        const nextId = await window.electronAPI.getLastUsedNoteId(vaultPath);
+        if (nextId && nextId !== noteId) {
+          setSaving(false);
+          void doSaveToNote(nextId);
+        } else {
+          // No notes left — open the dropdown so user can pick
+          setSaving(false);
+          setNoteDropdownOpen(true);
+          void loadNotes();
+        }
+        return;
+      }
+
       // Notify any open NotesEditor to refresh its content
       window.dispatchEvent(new CustomEvent('noteContentAppended', { detail: { noteId } }));
-      // Dispatch toast notification with the note title
-      const noteTitle = allNotes?.find(n => n.id === noteId)?.title ?? noteId;
+      // Use the clean basename returned by the backend — never shows a raw ID
+      const noteTitle = result.noteTitle ?? noteId;
       window.dispatchEvent(new CustomEvent('noteSavedToast', { detail: { noteTitle } }));
       setPos(null);
       setNoteDropdownOpen(false);
@@ -217,31 +241,20 @@ export const FloatingActionBar: React.FC<Props> = ({
     } finally {
       setSaving(false);
     }
-  }, [vaultPath, selectedText, sourceFileName, currentPage, saving]);
-
-  // Load all notes into the dropdown
-  const loadNotes = useCallback(async () => {
-    if (!vaultPath) return;
-    try {
-      const notes = await window.electronAPI.listNotes(vaultPath);
-      setAllNotes(notes);
-    } catch (err) {
-      console.error('[FloatingActionBar] Failed to list notes:', err);
-    }
-  }, [vaultPath]);
+  }, [vaultPath, selectedText, sourceFileName, currentPage, saving, loadNotes]);
 
   const handleSaveClick = useCallback(async () => {
-    if (lastUsedNoteId) {
-      // Pre-load notes so we can find the title for the toast
-      if (!allNotes) await loadNotes();
-      void doSaveToNote(lastUsedNoteId);
+    if (!vaultPath) return;
+    const noteId = await window.electronAPI.getLastUsedNoteId(vaultPath);
+    if (noteId) {
+      void doSaveToNote(noteId);
     } else {
-      // No last-used note — open the dropdown and load notes
+      // No notes yet — open the dropdown so user can pick
       setNoteDropdownOpen(true);
       setHlOpen(false);
       void loadNotes();
     }
-  }, [lastUsedNoteId, doSaveToNote, loadNotes, allNotes]);
+  }, [vaultPath, doSaveToNote, loadNotes]);
 
   const openNoteDropdown = useCallback(() => {
     const willOpen = !noteDropdownOpen;
@@ -253,19 +266,6 @@ export const FloatingActionBar: React.FC<Props> = ({
     }
     void loadNotes();
   }, [noteDropdownOpen, loadNotes]);
-
-  // Listen for note opens in this session
-  useEffect(() => {
-    const onNoteOpened = (e: Event) => {
-      const { noteId } = (e as CustomEvent).detail;
-      if (noteId) {
-        setLastUsedNoteId(noteId);
-        sessionLastUsedNoteId = noteId;
-      }
-    };
-    window.addEventListener('noteOpened', onNoteOpened);
-    return () => window.removeEventListener('noteOpened', onNoteOpened);
-  }, []);
 
   if (!pos) return null;
 
@@ -454,9 +454,7 @@ export const FloatingActionBar: React.FC<Props> = ({
           onClick={handleSaveClick}
           disabled={saving}
           className="flex items-center gap-1 px-2 py-1 text-xs text-[#d4d4d4] rounded-l hover:bg-[#3a3a3a] transition-colors disabled:opacity-50"
-          title={lastUsedNoteId
-            ? `Save to ${allNotes?.find(n => n.id === lastUsedNoteId)?.title ?? 'last note'}`
-            : 'Save to Note'}
+          title="Save to last edited note"
         >
           <FileText size={13} />
           Save to Note
@@ -500,11 +498,8 @@ export const FloatingActionBar: React.FC<Props> = ({
                 key={note.id}
                 type="button"
                 onClick={() => void doSaveToNote(note.id)}
-                className="flex items-center gap-2 w-full px-3 py-1.5 text-xs text-[#d4d4d4] hover:bg-[#3a3a3a] transition-colors text-left"
+                className="flex items-center w-full px-3 py-1.5 text-xs text-[#d4d4d4] hover:bg-[#3a3a3a] transition-colors text-left"
               >
-                {note.id === lastUsedNoteId
-                  ? <Check size={12} className="text-[#4ade80] shrink-0" />
-                  : <span className="w-3 shrink-0" />}
                 <span className="truncate">{note.title}</span>
               </button>
             ))}

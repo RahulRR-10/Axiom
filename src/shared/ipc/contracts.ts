@@ -92,7 +92,7 @@ export type NotesAppendRequest = {
   sourceFile: string;
   sourcePage: number;
 };
-export type NotesAppendResponse = { ok: boolean };
+export type NotesAppendResponse = { ok: boolean; noteTitle?: string; reason?: string };
 
 // ── notes:recent ─────────────────────────────────────────────────────────
 export type NotesRecentRequest = { vaultPath: string };
