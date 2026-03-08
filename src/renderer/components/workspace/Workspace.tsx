@@ -957,7 +957,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ vaultPath }) => {
             borderBottom: "1px solid #2a2a2a",
             flexShrink: 0,
           }}
-          className="flex items-stretch overflow-x-auto"
+          className="flex items-stretch overflow-hidden"
         >
           {tabOrder.map((slot) => {
             if (slot.kind === "group") {
@@ -1027,12 +1027,14 @@ export const Workspace: React.FC<WorkspaceProps> = ({ vaultPath }) => {
                 onDragOver={(e) => handleDragOver(e, f.filePath)}
                 onDrop={(e) => handleDrop(e, f.filePath)}
                 onDragEnd={handleDragEnd}
-                className={`group flex items-center gap-1.5 px-3 text-xs border-r border-[#2a2a2a] whitespace-nowrap transition-all ${
+                className={`group flex items-center gap-1.5 px-3 text-xs border-r border-[#2a2a2a] overflow-hidden transition-all ${
                   isActive
                     ? "bg-[#1e1e1e] text-[#e4e4e4]"
                     : "text-[#6e6e6e] hover:bg-[#222] hover:text-[#aaa]"
                 }`}
                 style={{
+                  flex: "1 1 0",
+                  minWidth: "80px",
                   maxWidth: "200px",
                   cursor: "grab",
                   borderLeft:
