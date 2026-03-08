@@ -4,7 +4,6 @@ import {
   StickyNote,
   Type,
   Pencil,
-  Image,
   Eraser,
   ZoomIn,
   ZoomOut,
@@ -18,7 +17,6 @@ export type PDFTool =
   | 'sticky'
   | 'textbox'
   | 'draw'
-  | 'image'
   | 'eraser';
 
 export const HIGHLIGHT_COLORS = [
@@ -248,7 +246,6 @@ export const PDFToolbar: React.FC<Props> = ({
           </div>
         </div>
         <button type="button" onClick={() => toggle('draw')}     className={btnClass('draw')}    title="Draw"><Pencil size={16} /></button>
-        <button type="button" onClick={() => toggle('image')}    className={btnClass('image')}   title="Image Stamp"><Image size={16} /></button>
         <button type="button" onClick={() => toggle('eraser')}   className={btnClass('eraser')}  title="Eraser"><Eraser size={16} /></button>
       </div>
 

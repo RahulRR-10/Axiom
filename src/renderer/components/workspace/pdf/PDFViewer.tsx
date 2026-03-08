@@ -681,15 +681,13 @@ const PDFPage = React.memo(function PDFPage({
             ? "crosshair"
             : activeTool === "draw"
               ? "crosshair"
-              : activeTool === "image"
+              : activeTool === "eraser"
                 ? "crosshair"
-                : activeTool === "eraser"
-                  ? "crosshair"
-                  : activeTool === "highlight"
-                    ? "text"
-                    : activeTool === "textbox"
-                      ? "crosshair"
-                      : "default",
+                : activeTool === "highlight"
+                  ? "text"
+                  : activeTool === "textbox"
+                    ? "crosshair"
+                    : "default",
       }}
     >
       <canvas
@@ -1158,7 +1156,8 @@ export const PDFViewer: React.FC<Props> = ({
   // Run search whenever query changes
   useEffect(() => { doSearch(searchQuery); }, [searchQuery, doSearch]);
 
-  // Scroll to current match's page
+  // Scroll to current match's page first (brings it into the viewport so the
+  // text layer renders); applySearchHighlights will then refine the position.
   useEffect(() => {
     if (searchMatches.length === 0 || !scrollRef.current || !pageMeta) return;
     const match = searchMatches[currentMatchIdx];
@@ -1166,11 +1165,9 @@ export const PDFViewer: React.FC<Props> = ({
     const el = scrollRef.current;
     const pageH = Math.floor(pageMeta.height * zoom) + PAGE_GAP;
     const target = (match.page - 1) * pageH;
-    const viewportH = el.clientHeight;
-    // Only scroll if the match page isn't already visible
-    if (target < el.scrollTop || target + pageH > el.scrollTop + viewportH) {
-      el.scrollTop = target;
-    }
+    // Always scroll to top-of-page so the text layer is guaranteed to render;
+    // applySearchHighlights will adjust to the exact match position afterward.
+    el.scrollTop = target;
   }, [currentMatchIdx, searchMatches, pageMeta, zoom]);
 
   // Apply CSS Custom Highlight API to visible text layers
@@ -1276,6 +1273,16 @@ export const PDFViewer: React.FC<Props> = ({
     if (currentRanges.length > 0) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       cssHighlights.set("pdf-search-current", new (window as any).Highlight(...currentRanges));
+
+      // Scroll to the precise position of the match within the page
+      if (scrollRef.current) {
+        const el = scrollRef.current;
+        const rect = currentRanges[0].getBoundingClientRect();
+        const containerRect = el.getBoundingClientRect();
+        const relativeTop = rect.top - containerRect.top + el.scrollTop;
+        // Center the match vertically in the viewport
+        el.scrollTop = Math.max(0, relativeTop - el.clientHeight / 2 + rect.height / 2);
+      }
     }
   }, [showSearch, searchQuery, searchMatches, currentMatchIdx, numPages]);
 

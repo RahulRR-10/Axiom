@@ -88,7 +88,6 @@ const config: ForgeConfig = {
   makers: [
     new MakerSquirrel({
       setupIcon: path.join(__dirname, 'assets', 'axiom-logo.ico'),
-      iconUrl: 'https://raw.githubusercontent.com/RahulRR-10/Axiom/main/assets/axiom-logo.ico',
     }),
     new MakerZIP({}, ['darwin']),
     new MakerRpm({ options: { icon: './assets/axiom-logo.png' } }),

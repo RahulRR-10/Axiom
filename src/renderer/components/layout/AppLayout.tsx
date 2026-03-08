@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect, useRef } from "react";
 
-import { Settings, Search } from "lucide-react";
+import { Search } from "lucide-react";
 import { AIPanel } from "../ai/AIPanel";
 import { SearchPanel } from "../search/SearchPanel";
 import { VaultSidebar } from "../vault/VaultSidebar";
@@ -149,15 +149,8 @@ export const AppLayout: React.FC = () => {
         {/* Spacer to push right section */}
         <div className="flex-1" />
 
-        {/* Right: Settings + window controls */}
+        {/* Right: window controls */}
         <div className="flex items-center shrink-0 ml-4" style={noDragStyle}>
-          <button
-            type="button"
-            aria-label="Settings"
-            className="h-8 w-8 rounded-md text-[#9a9a9a] hover:bg-[#2a2a2a] hover:text-[#d4d4d4] flex items-center justify-center"
-          >
-            <Settings size={16} />
-          </button>
           <WindowControlsToolbar />
         </div>
       </header>
