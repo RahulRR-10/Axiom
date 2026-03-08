@@ -11,6 +11,8 @@ export const VAULT_CHANNELS = {
   WRITE_FILE: 'vault:writeFile',
   GET_INDEX_STATUS: 'vault:getIndexStatus',
   GET_FILE_ID: 'vault:getFileId',
+  GET_LAST_VAULT: 'vault:getLastVault',
+  SET_LAST_VAULT: 'vault:setLastVault',
   INDEX_PROGRESS: 'vault:indexProgress',   // main → renderer push event
   FILE_CHANGED: 'vault:fileChanged',     // main → renderer push event
 } as const;

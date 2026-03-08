@@ -29,6 +29,12 @@ const electronAPI = {
   getFileId: (vaultPath: string, filePath: string): Promise<string | null> =>
     ipcRenderer.invoke(VAULT_CHANNELS.GET_FILE_ID, vaultPath, filePath),
 
+  getLastVault: (): Promise<string | null> =>
+    ipcRenderer.invoke(VAULT_CHANNELS.GET_LAST_VAULT),
+
+  setLastVault: (vaultPath: string): Promise<void> =>
+    ipcRenderer.invoke(VAULT_CHANNELS.SET_LAST_VAULT, vaultPath),
+
   onIndexProgress: (
     callback: (payload: VaultIndexProgressPayload) => void,
   ): (() => void) => {

@@ -7,17 +7,75 @@ import { AutoUnpackNativesPlugin } from '@electron-forge/plugin-auto-unpack-nati
 import { WebpackPlugin } from '@electron-forge/plugin-webpack';
 import { FusesPlugin } from '@electron-forge/plugin-fuses';
 import { FuseV1Options, FuseVersion } from '@electron/fuses';
+import * as path from 'path';
+import * as fs from 'fs';
 
 import { mainConfig } from './webpack.main.config';
 import { rendererConfig } from './webpack.renderer.config';
 
+// Top-level modules that webpack treats as externals.
+// copyModuleWithDeps will recursively pull in ALL their transitive
+// dependencies (production, peer, and installed optional), so we only
+// need to list the roots here.
+const EXTERNAL_MODULES = [
+  'better-sqlite3',
+  'vectordb',
+  '@xenova/transformers',
+  'onnxruntime-node',
+  'pdfjs-dist',
+];
+
+/**
+ * Recursively copy a module and every production / peer / installed-optional
+ * dependency from the project node_modules into the packaged build path.
+ */
+function copyModuleWithDeps(mod: string, buildPath: string, visited = new Set<string>()): void {
+  if (visited.has(mod)) return;
+  visited.add(mod);
+
+  const src = path.join(__dirname, 'node_modules', mod);
+  const dst = path.join(buildPath, 'node_modules', mod);
+  if (!fs.existsSync(src)) return;
+  if (!fs.existsSync(dst)) {
+    fs.mkdirSync(path.dirname(dst), { recursive: true });
+    fs.cpSync(src, dst, { recursive: true });
+  }
+
+  const pkgPath = path.join(src, 'package.json');
+  if (!fs.existsSync(pkgPath)) return;
+  try {
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+    const allDeps = [
+      ...Object.keys(pkg.dependencies ?? {}),
+      ...Object.keys(pkg.peerDependencies ?? {}),
+      // Only copy optional deps that are actually installed
+      ...Object.keys(pkg.optionalDependencies ?? {}).filter(
+        (d: string) => fs.existsSync(path.join(__dirname, 'node_modules', d)),
+      ),
+    ];
+    for (const dep of allDeps) {
+      copyModuleWithDeps(dep, buildPath, visited);
+    }
+  } catch { /* ignore parse errors */ }
+}
+
 const config: ForgeConfig = {
   packagerConfig: {
-    asar: true,
+    asar: {
+      unpack: '**/*.{node,dll}',
+    },
     icon: './assets/axiom-logo',
   },
   rebuildConfig: {
     onlyModules: ['better-sqlite3', 'vectordb'],
+  },
+  hooks: {
+    packageAfterCopy: async (_forgeConfig, buildPath) => {
+      const visited = new Set<string>();
+      for (const mod of EXTERNAL_MODULES) {
+        copyModuleWithDeps(mod, buildPath, visited);
+      }
+    },
   },
   makers: [
     new MakerSquirrel({ setupIcon: './assets/axiom-logo.ico' }),

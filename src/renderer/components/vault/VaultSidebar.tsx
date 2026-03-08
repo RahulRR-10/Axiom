@@ -292,6 +292,7 @@ export const VaultSidebar: React.FC<VaultSidebarProps> = ({ onVaultOpen, onFileO
     setFiles(tree);
     setIndexStatus(status);
     onVaultOpen?.(selected);
+    window.electronAPI.setLastVault(selected);
   }, [onVaultOpen]);
 
   // Allow external trigger (e.g. header "Open Vault" button) via custom event
@@ -300,6 +301,23 @@ export const VaultSidebar: React.FC<VaultSidebarProps> = ({ onVaultOpen, onFileO
     window.addEventListener('triggerOpenVault', handler);
     return () => window.removeEventListener('triggerOpenVault', handler);
   }, [handleOpenVault]);
+
+  // Auto-open last vault on startup
+  useEffect(() => {
+    void (async () => {
+      const lastVault = await window.electronAPI.getLastVault();
+      if (!lastVault) return;
+      try {
+        const { files: tree, status } = await window.electronAPI.openVault(lastVault);
+        setVaultPath(lastVault);
+        setFiles(tree);
+        setIndexStatus(status);
+        onVaultOpen?.(lastVault);
+      } catch {
+        // Vault directory may have been deleted — ignore and let user pick a new one
+      }
+    })();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function refreshTree(vp: string): Promise<void> {
     const tree = await window.electronAPI.readDirectory(vp);

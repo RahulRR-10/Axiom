@@ -12,6 +12,8 @@ declare global {
       writeFile: (filePath: string, data: Uint8Array) => Promise<void>;
       getIndexStatus: (vaultPath: string) => Promise<IndexStatus>;
       getFileId: (vaultPath: string, filePath: string) => Promise<string | null>;
+      getLastVault: () => Promise<string | null>;
+      setLastVault: (vaultPath: string) => Promise<void>;
       onIndexProgress: (callback: (payload: VaultIndexProgressPayload) => void) => () => void;
       onFileChanged: (callback: (payload: { vaultPath: string }) => void) => () => void;
 

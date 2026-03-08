@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
-import { BrowserWindow, dialog, ipcMain } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 
 import { VAULT_CHANNELS } from '../../shared/ipc/channels';
 import type {
@@ -14,6 +14,24 @@ import type { FileNode, IndexStatus } from '../../shared/types';
 import { getDb } from '../database/schema';
 import { indexFile } from '../indexing/indexer';
 import { startWatching } from '../vault/vaultWatcher';
+
+// Simple JSON file for persisting app settings (vault path, etc.)
+// Stored in the app's userData directory so it survives updates.
+const SETTINGS_PATH = path.join(app.getPath('userData'), 'axiom-settings.json');
+
+function readSettings(): Record<string, unknown> {
+  try {
+    return JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf8'));
+  } catch {
+    return {};
+  }
+}
+
+function writeSetting(key: string, value: unknown): void {
+  const settings = readSettings();
+  settings[key] = value;
+  fs.writeFileSync(SETTINGS_PATH, JSON.stringify(settings), 'utf8');
+}
 
 // ── Registry ─────────────────────────────────────────────────────────────────
 
@@ -28,6 +46,12 @@ export function registerVaultHandlers(): void {
     const db = getDb(vaultPath);
     const row = db.prepare('SELECT id FROM files WHERE path = ?').get(filePath) as { id: string } | undefined;
     return row?.id ?? null;
+  });
+  ipcMain.handle(VAULT_CHANNELS.GET_LAST_VAULT, () => {
+    return (readSettings().lastVaultPath as string) || null;
+  });
+  ipcMain.handle(VAULT_CHANNELS.SET_LAST_VAULT, (_e, vaultPath: string) => {
+    writeSetting('lastVaultPath', vaultPath);
   });
 }
 
