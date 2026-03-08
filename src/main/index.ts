@@ -15,6 +15,30 @@ import type { VaultInjectRequest, VaultInjectResponse } from '../shared/ipc/cont
 declare const MAIN_WINDOW_WEBPACK_ENTRY: string;
 declare const MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY: string;
 
+/* ── Crash logging ─────────────────────────────────────────────────────────── */
+const logFile = path.join(app.getPath('userData'), 'crash.log');
+
+function writeLog(label: string, err: unknown): void {
+  const msg = err instanceof Error
+    ? `${err.message}\n${err.stack ?? ''}`
+    : String(err);
+  const line = `[${new Date().toISOString()}] ${label}: ${msg}\n`;
+  try { fs.appendFileSync(logFile, line); } catch { /* ignore */ }
+  console.error(line);
+}
+
+// Catch unhandled promise rejections (most common silent crash cause)
+process.on('unhandledRejection', (reason) => {
+  writeLog('unhandledRejection', reason);
+});
+
+// Catch synchronous exceptions that escape all other handlers
+process.on('uncaughtException', (err) => {
+  writeLog('uncaughtException', err);
+  dialog.showErrorBox('Axiom crashed', `${err.message}\n\nSee crash.log in:\n${logFile}`);
+  app.exit(1);
+});
+
 const appIcon = path.join(
   app.getAppPath(),
   'assets',
