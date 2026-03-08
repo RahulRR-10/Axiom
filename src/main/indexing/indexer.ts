@@ -13,13 +13,12 @@ export const ENABLE_PDF_INDEXING = true;
 export const ENABLE_PPTX_INDEXING = false;
 
 // ── Safety limits ────────────────────────────────────────────────────────────
+const EXTRACT_TIMEOUT_MS = 30_000;      // 30 s per file
 const EMBED_SUB_BATCH = 32;             // chunks sent to embedder at a time
-const PDF_PAGE_BATCH = 20;              // pages extracted + embedded at a time for large PDFs
-const PDF_LARGE_THRESHOLD = 50;         // page count above which we stream in batches
-const PDF_PER_PAGE_TIMEOUT_MS = 3_000;  // 3 s per page — skip if it takes longer
-const PDF_MIN_WORDS_PER_PAGE = 10;      // pages with fewer words are treated as image-only
-const PDF_SAMPLE_PAGES = 5;             // sample this many pages for early image-only detection
-const PDF_SAMPLE_MIN_TEXT_PAGES = 1;    // need at least 1 text page in sample to continue
+const PDF_PER_PAGE_TIMEOUT_MS = 5_000;  // 5 s per page — skip if it hangs
+const PDF_MIN_WORDS_PER_PAGE = 3;       // pages with fewer words are image-only / blank
+const PDF_SAMPLE_PAGES = 5;             // pages to probe before committing to full extraction
+const PDF_SAMPLE_TIMEOUT_MS = 1_500;    // tight timeout used only during the sample probe
 
 // ── Per-file lock to prevent concurrent indexing of the same path ────────────
 const indexLocks = new Map<string, Promise<void>>();
@@ -92,9 +91,8 @@ async function indexFileInner(filePath: string, vaultPath: string): Promise<void
   }
 
   // ── Extract text ─────────────────────────────────────────────────────────
-  // For large PDFs we stream page-batches to avoid holding all text + vectors
-  // in memory at once. For everything else, extract all pages upfront.
-  const isLargePdf = fileType === 'pdf' && await getPdfPageCount(raw) > PDF_LARGE_THRESHOLD;
+  const pages = await extractPages(filePath, fileType, raw);
+  if (pages.length === 0) return;
 
   // ── Determine subject from parent folder name ────────────────────────────
   const subject = path.relative(vaultPath, path.dirname(filePath)).split(path.sep)[0] || null;
@@ -128,34 +126,7 @@ async function indexFileInner(filePath: string, vaultPath: string): Promise<void
   // inserted a row for this path between our purge and upsert.
   const fileId = (db.prepare('SELECT id FROM files WHERE path = ?').get(filePath) as { id: string }).id;
 
-  if (isLargePdf) {
-    // ── Streamed path: process PDF in page batches ─────────────────────────
-    await indexPdfStreamed(filePath, raw, fileId, vaultPath, db);
-  } else {
-    // ── Standard path: extract all, chunk all, embed all ───────────────────
-    const pages = await extractPages(filePath, fileType, raw);
-    if (pages.length === 0) {
-      // No extractable text — still keep the file record but mark indexed
-      db.prepare("UPDATE files SET indexed_at = unixepoch() WHERE id = ?").run(fileId);
-      return;
-    }
-
-    await insertPagesAndEmbed(pages, fileId, vaultPath, db);
-  }
-
-  // ── Mark as indexed ──────────────────────────────────────────────────────
-  db.prepare("UPDATE files SET indexed_at = unixepoch() WHERE id = ?").run(fileId);
-}
-
-/**
- * Insert extracted pages: chunk text → write to SQLite → embed → write to LanceDB.
- */
-async function insertPagesAndEmbed(
-  pages: PageText[],
-  fileId: string,
-  vaultPath: string,
-  db: ReturnType<typeof getDb>,
-): Promise<void> {
+  // ── Chunk text and insert into SQLite ────────────────────────────────────
   const allChunks: Array<{ id: string; file_id: string; page_or_slide: number; text: string; chunk_index: number }> = [];
 
   for (const { page, text } of pages) {
@@ -171,8 +142,6 @@ async function insertPagesAndEmbed(
     });
   }
 
-  if (allChunks.length === 0) return;
-
   const insertChunk = db.prepare(`
     INSERT INTO chunks (id, file_id, page_or_slide, text, chunk_index, is_annotation)
     VALUES (?, ?, ?, ?, ?, 0)
@@ -185,6 +154,7 @@ async function insertPagesAndEmbed(
   });
   insertAllChunks();
 
+  // ── Populate FTS5 table ──────────────────────────────────────────────────
   db.prepare(`
     INSERT INTO chunks_fts(rowid, text, file_id, page_or_slide)
     SELECT rowid, text, file_id, page_or_slide FROM chunks WHERE file_id = ?
@@ -196,6 +166,7 @@ async function insertPagesAndEmbed(
     const batchTexts = allChunks.slice(i, i + EMBED_SUB_BATCH).map((c) => c.text);
     const batchVecs = await embedBatch(batchTexts);
     vectors.push(...batchVecs);
+    // Yield to event loop between sub-batches
     if (i + EMBED_SUB_BATCH < allChunks.length) await new Promise((r) => setTimeout(r, 0));
   }
 
@@ -206,65 +177,9 @@ async function insertPagesAndEmbed(
   }));
 
   await addVectors(vaultPath, chunksWithVecs);
-}
 
-/**
- * Stream-index a large PDF in batches of PDF_PAGE_BATCH pages.
- * Each batch: extract pages → chunk → embed → store, then release memory.
- */
-async function indexPdfStreamed(
-  filePath: string,
-  raw: Buffer,
-  fileId: string,
-  vaultPath: string,
-  db: ReturnType<typeof getDb>,
-): Promise<void> {
-  const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs');
-  const uint8 = new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength);
-
-  let worker: any = null;
-  let doc: any = null;
-  try {
-    worker = new pdfjsLib.PDFWorker({ port: null });
-    doc = await pdfjsLib.getDocument({
-      data: uint8,
-      worker,
-      useSystemFonts: true,
-      isEvalSupported: false,
-    }).promise;
-
-    const totalPages: number = doc.numPages;
-    console.log(`[indexer] Streaming large PDF (${totalPages} pages): ${filePath}`);
-
-    // ── Early bail-out: sample first pages for image-only detection ─────────
-    const sampleEnd = Math.min(PDF_SAMPLE_PAGES, totalPages);
-    const samplePages = await extractPageRange(doc, 1, sampleEnd, filePath);
-    if (samplePages.length < PDF_SAMPLE_MIN_TEXT_PAGES) {
-      console.log(`[indexer] Skipping image-only PDF (0/${sampleEnd} sample pages had text): ${filePath}`);
-      return;
-    }
-
-    // Store the sample pages we already extracted
-    await insertPagesAndEmbed(samplePages, fileId, vaultPath, db);
-
-    // ── Process remaining pages in batches ──────────────────────────────────
-    let batchStart = sampleEnd + 1;
-    while (batchStart <= totalPages) {
-      const batchEnd = Math.min(batchStart + PDF_PAGE_BATCH - 1, totalPages);
-      const pages = await extractPageRange(doc, batchStart, batchEnd, filePath);
-      if (pages.length > 0) {
-        await insertPagesAndEmbed(pages, fileId, vaultPath, db);
-      }
-      // Yield to event loop between batches
-      await new Promise((r) => setTimeout(r, 0));
-      batchStart = batchEnd + 1;
-    }
-  } catch (err) {
-    console.error(`[indexer] Streamed PDF indexing failed for ${filePath}:`, err);
-  } finally {
-    try { doc?.destroy(); } catch { /* ignore */ }
-    try { worker?.destroy(); } catch { /* ignore */ }
-  }
+  // ── Mark as indexed ──────────────────────────────────────────────────────
+  db.prepare("UPDATE files SET indexed_at = unixepoch() WHERE id = ?").run(fileId);
 }
 
 /**
@@ -298,9 +213,11 @@ async function extractPages(
     case 'pdf': {
       if (!ENABLE_PDF_INDEXING) return [];
 
-      // Large PDFs are handled by the streamed path in indexFileInner;
-      // this branch only runs for small PDFs (< PDF_LARGE_THRESHOLD pages).
-      return extractPdfPages(filePath, raw);
+      // Race against a timeout so a corrupted / huge PDF can't stall forever
+      return Promise.race([
+        extractPdfPages(filePath, raw),
+        rejectAfterTimeout(EXTRACT_TIMEOUT_MS, filePath),
+      ]);
     }
 
     case 'pptx': {
@@ -321,93 +238,7 @@ async function extractPages(
   }
 }
 
-/** Quick page-count check without extracting text (used for large-PDF detection). */
-async function getPdfPageCount(raw: Buffer): Promise<number> {
-  try {
-    const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs');
-    const uint8 = new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength);
-    const worker = new pdfjsLib.PDFWorker({ port: null });
-    try {
-      const doc = await pdfjsLib.getDocument({
-        data: uint8,
-        worker,
-        useSystemFonts: true,
-        isEvalSupported: false,
-      }).promise;
-      const count = doc.numPages;
-      doc.destroy();
-      return count;
-    } finally {
-      worker.destroy();
-    }
-  } catch {
-    return 0;
-  }
-}
-
-/**
- * Extract text from a single PDF page with a per-page timeout.
- * Returns null if the page is image-only (< PDF_MIN_WORDS_PER_PAGE words)
- * or if extraction times out.
- */
-async function extractSinglePage(
-  doc: any,
-  pageNum: number,
-  filePath: string,
-): Promise<PageText | null> {
-  try {
-    const result = await Promise.race([
-      (async () => {
-        const page = await doc.getPage(pageNum);
-        const tc = await page.getTextContent();
-        const text = tc.items
-          .map((item: any) => (item?.str ?? ''))
-          .join(' ')
-          .trim();
-        return text;
-      })(),
-      new Promise<null>((resolve) =>
-        setTimeout(() => {
-          console.warn(`[indexer] Page ${pageNum} timed out (${PDF_PER_PAGE_TIMEOUT_MS}ms), skipping: ${filePath}`);
-          resolve(null);
-        }, PDF_PER_PAGE_TIMEOUT_MS),
-      ),
-    ]);
-
-    if (result === null) return null;
-
-    // Skip image-only pages: too few words means no real text content
-    const wordCount = result.split(/\s+/).filter(Boolean).length;
-    if (wordCount < PDF_MIN_WORDS_PER_PAGE) return null;
-
-    return { page: pageNum, text: result };
-  } catch (pageErr) {
-    console.warn(`[indexer] Skipping page ${pageNum} of ${filePath}:`, pageErr);
-    return null;
-  }
-}
-
-/**
- * Extract text from a range of PDF pages [startPage, endPage] (inclusive).
- * Skips image-only and timed-out pages. Yields to event loop every 10 pages.
- */
-async function extractPageRange(
-  doc: any,
-  startPage: number,
-  endPage: number,
-  filePath: string,
-): Promise<PageText[]> {
-  const pages: PageText[] = [];
-  for (let i = startPage; i <= endPage; i++) {
-    const result = await extractSinglePage(doc, i, filePath);
-    if (result) pages.push(result);
-    // Yield to event loop every 10 pages so the main process stays responsive
-    if ((i - startPage + 1) % 10 === 0) await new Promise((r) => setTimeout(r, 0));
-  }
-  return pages;
-}
-
-/** Extract text from a PDF, page by page (for small PDFs). */
+/** Extract text from a PDF, page by page. */
 async function extractPdfPages(filePath: string, raw: Buffer): Promise<PageText[]> {
   const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs');
   const uint8 = new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength);
@@ -425,21 +256,65 @@ async function extractPdfPages(filePath: string, raw: Buffer): Promise<PageText[
 
     const totalPages: number = doc.numPages;
 
-    // ── Early bail-out: sample first pages for image-only detection ─────────
+    // ── Sample probe: quickly check a few pages with a tight timeout ─────────
+    // If a scanned/image PDF causes pdfjs to hang on every page, this lets us
+    // detect it upfront and bail before spending minutes on each page.
+    let sampleTextPages = 0;
     const sampleEnd = Math.min(PDF_SAMPLE_PAGES, totalPages);
-    const samplePages = await extractPageRange(doc, 1, sampleEnd, filePath);
-    if (samplePages.length < PDF_SAMPLE_MIN_TEXT_PAGES) {
-      console.log(`[indexer] Skipping image-only PDF (0/${sampleEnd} sample pages had text): ${filePath}`);
+    for (let s = 1; s <= sampleEnd; s++) {
+      const sample = await Promise.race([
+        (async () => {
+          const page = await doc.getPage(s);
+          const tc = await page.getTextContent();
+          return tc.items.map((item: any) => (item?.str ?? '')).join(' ').trim();
+        })(),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), PDF_SAMPLE_TIMEOUT_MS)),
+      ]).catch(() => null);
+      if (sample !== null && sample.split(/\s+/).filter(Boolean).length >= PDF_MIN_WORDS_PER_PAGE) {
+        sampleTextPages++;
+      }
+    }
+    if (sampleTextPages === 0) {
+      console.log(`[indexer] Skipping image-only/unreadable PDF (0/${sampleEnd} sample pages had text): ${filePath}`);
       return [];
     }
 
-    // Extract remaining pages
-    if (sampleEnd < totalPages) {
-      const rest = await extractPageRange(doc, sampleEnd + 1, totalPages, filePath);
-      return [...samplePages, ...rest];
+    const pages: PageText[] = [];
+    for (let i = 1; i <= totalPages; i++) {
+      try {
+        // Per-page timeout: skip pages that hang (complex vector art, corrupt streams)
+        const text = await Promise.race([
+          (async () => {
+            const page = await doc.getPage(i);
+            const tc = await page.getTextContent();
+            return tc.items
+              .map((item: any) => (item?.str ?? ''))
+              .join(' ')
+              .trim();
+          })(),
+          new Promise<null>((resolve) =>
+            setTimeout(() => {
+              console.warn(`[indexer] Page ${i} timed out (${PDF_PER_PAGE_TIMEOUT_MS}ms), skipping: ${filePath}`);
+              resolve(null);
+            }, PDF_PER_PAGE_TIMEOUT_MS),
+          ),
+        ]);
+
+        if (text === null) continue; // timed out
+
+        // Skip image-only / blank pages (too few words to be useful)
+        const wordCount = text.split(/\s+/).filter(Boolean).length;
+        if (wordCount < PDF_MIN_WORDS_PER_PAGE) continue;
+
+        pages.push({ page: i, text });
+      } catch (pageErr) {
+        console.warn(`[indexer] Skipping page ${i} of ${filePath}:`, pageErr);
+      }
+      // Yield to event loop every 10 pages so the main process stays responsive
+      if (i % 10 === 0) await new Promise((r) => setTimeout(r, 0));
     }
 
-    return samplePages;
+    return pages;
   } catch (err) {
     console.error(`[indexer] PDF extraction failed for ${filePath}:`, err);
     return [];
@@ -447,6 +322,13 @@ async function extractPdfPages(filePath: string, raw: Buffer): Promise<PageText[
     try { doc?.destroy(); } catch { /* ignore */ }
     try { worker?.destroy(); } catch { /* ignore */ }
   }
+}
+
+/** Returns a promise that rejects after `ms` milliseconds — used with Promise.race. */
+function rejectAfterTimeout(ms: number, filePath: string): Promise<never> {
+  return new Promise((_resolve, reject) => {
+    setTimeout(() => reject(new Error(`[indexer] Timed out after ${ms}ms: ${filePath}`)), ms);
+  });
 }
 
 // ── Chunking utility ─────────────────────────────────────────────────────────
