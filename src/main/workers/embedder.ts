@@ -6,7 +6,7 @@ import { Worker } from 'worker_threads';
 // All ONNX model inference runs off the main thread so the UI never blocks.
 // The worker loads the model once and processes batched requests via messages.
 
-const DIM = 384; // all-MiniLM-L6-v2 output dimension
+const DIM = 768; // multi-qa-mpnet-base-cos-v1 output dimension
 const ZERO_VEC: number[] = new Array(DIM).fill(0);
 
 let worker: Worker | null = null;
@@ -28,7 +28,7 @@ async function init() {
   const pipeline = transformers.pipeline;
   const env = transformers.env;
   if (env) env.cacheDir = workerData.modelsDir;
-  extractor = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2', {
+  extractor = await pipeline('feature-extraction', 'Xenova/multi-qa-mpnet-base-cos-v1', {
     quantized: true,
     progress_callback: function() {},
   });

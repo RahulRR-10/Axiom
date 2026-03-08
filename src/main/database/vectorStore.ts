@@ -9,7 +9,7 @@ const lancedb = require('vectordb') as typeof import('vectordb');
 
 type LanceTable = Awaited<ReturnType<Awaited<ReturnType<typeof lancedb.connect>>['openTable']>>;
 
-const VECTOR_DIM = 384;
+const VECTOR_DIM = 768;
 const TABLE_NAME = 'chunk_vectors';
 
 // ── Connection cache ─────────────────────────────────────────────────────────
@@ -65,10 +65,14 @@ export async function searchVectors(
     const table = await getTable(vaultPath);
     const results = await (
       table as unknown as {
-        search: (v: number[]) => { limit: (n: number) => { execute: () => Promise<unknown[]> } };
+        search: (v: number[]) => {
+          metricType: (d: string) => { limit: (n: number) => { execute: () => Promise<unknown[]> } };
+          limit: (n: number) => { execute: () => Promise<unknown[]> };
+        };
       }
     )
       .search(queryVector)
+      .metricType('cosine')
       .limit(limit)
       .execute();
 

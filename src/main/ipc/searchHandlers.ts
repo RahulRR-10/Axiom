@@ -30,12 +30,38 @@ async function handleSearch(
   const db = getDb(vaultPath);
   const resultMap = new Map<string, SearchResult>();
 
+  // ── Intent-based weight tuning ──────────────────────────────────────────
+  const intent = classifyQueryIntent(query);
+  const ftsWeight = intent === 'keyword' ? 0.6 : 0.25;
+  const semWeight = intent === 'keyword' ? 0.4 : 0.75;
+  const COSINE_THRESHOLD = 0.2;
+
   const subjectFilter = subject ? 'AND f.subject = ?' : '';
   const typeFilter = fileType ? 'AND f.type = ?' : '';
 
-  // ── 1. FTS5 keyword pass ────────────────────────────────────────────────
+  // ── Start semantic embedding in background (parallel with FTS5) ────────
+  const expandedQuery = expandQuery(query);
+  type SemRow = { id: string; file_id: string; page_or_slide: number | null; text: string; score: number };
+  const semanticPromise: Promise<SemRow[]> = embed(expandedQuery)
+    .then((vec) => searchVectors(vaultPath, vec, 30))
+    .then((rows) => {
+      if (rows.length > 0) {
+        console.log(`[search] Semantic: ${rows.length} raw results, top score=${rows[0].score.toFixed(3)}, bottom=${rows[rows.length - 1].score.toFixed(3)}`);
+      } else {
+        console.log('[search] Semantic: 0 raw results from vector search');
+      }
+      return rows.filter((r) => r.score >= COSINE_THRESHOLD);
+    })
+    .catch((err) => {
+      console.warn('[search] Semantic error:', err);
+      return [] as SemRow[];
+    });
+
+  // ── 1. FTS5 keyword pass (sync — runs while embedding computes) ────────
   try {
-    const params: unknown[] = [query];
+    const ftsQuery = sanitizeFtsQuery(query);
+    if (!ftsQuery) throw new Error('empty FTS query after sanitization');
+    const params: unknown[] = [ftsQuery];
     if (subject) params.push(subject);
     if (fileType) params.push(fileType);
 
@@ -60,7 +86,7 @@ async function handleSearch(
 
     for (const r of rows) {
       const bm25Score = r.bm25 / maxBm25;
-      let score = 0.4 * bm25Score;
+      let score = ftsWeight * bm25Score;
       if (r.is_annotation) score *= 1.3;
       resultMap.set(r.id, {
         id: r.id,
@@ -81,14 +107,13 @@ async function handleSearch(
     console.warn('[search] FTS5 error:', err);
   }
 
-  // ── 2. Semantic pass ────────────────────────────────────────────────────
-  try {
-    const queryVec = await embed(query);
-    const semRows = await searchVectors(vaultPath, queryVec, 30);
+  // ── 2. Await semantic results and merge ─────────────────────────────────
+  {
+    const semRows = await semanticPromise;
 
     for (const r of semRows) {
       const existing = resultMap.get(r.id);
-      const semScore = 0.6 * r.score;
+      const semScore = semWeight * r.score;
 
       if (existing) {
         existing.score += semScore;
@@ -126,8 +151,6 @@ async function handleSearch(
         }
       }
     }
-  } catch (err) {
-    console.warn('[search] Semantic error (FTS5-only):', err);
   }
 
   // ── 3. Notes search ────────────────────────────────────────────────────
@@ -219,6 +242,65 @@ async function handleSearch(
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+type QueryIntent = 'keyword' | 'conceptual';
+
+/** Classify whether the query is a keyword lookup or a conceptual question. */
+function classifyQueryIntent(query: string): QueryIntent {
+  const trimmed = query.trim();
+  const words = trimmed.split(/\s+/);
+  const isQuestion =
+    /^(what|how|why|when|where|who|which|explain|describe|compare|define)\b/i.test(trimmed) ||
+    trimmed.endsWith('?');
+  if (isQuestion) return 'conceptual';
+  if (words.length >= 5) return 'conceptual';
+  return 'keyword';
+}
+
+/**
+ * Rewrite the query into a richer sentence for better embedding.
+ * The raw keywords still go to FTS5; this expanded form is only used for
+ * the vector-similarity branch so the embedding captures related concepts.
+ */
+function expandQuery(query: string): string {
+  const trimmed = query.trim().replace(/\?+$/, '');
+
+  const patterns: Array<[RegExp, string]> = [
+    [/^what\s+(?:is|are)\s+(.+)/i,                    '$1 — definition, meaning, concept, explanation, overview'],
+    [/^how\s+(?:does|do|can|could|should|to)\s+(.+)/i, '$1 — process, method, mechanism, steps, technique, procedure'],
+    [/^why\s+(?:does|do|is|are|did)\s+(.+)/i,          '$1 — reason, cause, explanation, because, purpose'],
+    [/^explain\s+(.+)/i,                                '$1 — explanation, concept, overview, description, meaning'],
+    [/^describe\s+(.+)/i,                               '$1 — description, characteristics, properties, features, overview'],
+    [/^compare\s+(.+)/i,                                '$1 — comparison, differences, similarities, versus, contrast'],
+    [/^define\s+(.+)/i,                                 '$1 — definition, meaning, terminology, concept'],
+    [/^when\s+(?:does|do|did|is|was)\s+(.+)/i,          '$1 — timing, date, period, occurrence, event'],
+    [/^where\s+(?:does|do|did|is|was)\s+(.+)/i,         '$1 — location, place, position, context, setting'],
+    [/^who\s+(?:is|are|was|were)\s+(.+)/i,              '$1 — person, identity, role, biography, background'],
+  ];
+
+  for (const [pattern, replacement] of patterns) {
+    if (pattern.test(trimmed)) return trimmed.replace(pattern, replacement);
+  }
+
+  // Generic expansion: add related-concept hints for the embedding model
+  return `${trimmed} — related concepts, explanation, context, overview`;
+}
+
+/**
+ * Sanitize a user query for SQLite FTS5 MATCH syntax.
+ * Strips operators (-/NOT/OR/AND/NEAR), quotes each token so hyphens and
+ * special chars inside words are treated as literals, not operators.
+ */
+function sanitizeFtsQuery(query: string): string {
+  const tokens = query
+    .replace(/["():^*{}~\\]/g, ' ')   // strip FTS5 syntax chars
+    .split(/\s+/)
+    .filter(Boolean)
+    .filter((t) => !/^(AND|OR|NOT|NEAR)$/i.test(t));
+  if (tokens.length === 0) return '';
+  // Quote each token so hyphens etc. are literal
+  return tokens.map((t) => `"${t.replace(/"/g, '""')}"`).join(' ');
+}
 
 function categorize(r: {
   is_annotation: number;

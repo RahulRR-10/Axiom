@@ -867,9 +867,20 @@ export const PDFViewer: React.FC<Props> = ({
   /* ── Scroll to initialPage after load ───────────────────────────────────── */
   useEffect(() => {
     if (!initialPage || !pageMeta || !scrollRef.current || loading) return;
-    const pageHeight = pageMeta.height * zoom;
-    const target = (initialPage - 1) * (pageHeight + PAGE_GAP);
-    scrollRef.current.scrollTop = target;
+    const el = scrollRef.current;
+    // Use the same floored page height as computeRange() so scroll position
+    // and visible-range boundaries are always in sync.
+    const pageH = Math.floor(pageMeta.height * zoom) + PAGE_GAP;
+    const target = (initialPage - 1) * pageH;
+    el.scrollTop = target;
+
+    // Update visibleRange now — setting scrollTop fires the scroll event
+    // asynchronously, so without this the first render after a jump still
+    // shows the old range and the target page renders as a blank placeholder.
+    const viewportH = el.clientHeight || 600;
+    const firstVisible = Math.max(1, Math.floor((target - BUFFER_PX) / pageH) + 1);
+    const lastVisible = Math.min(numPages, Math.ceil((target + viewportH + BUFFER_PX) / pageH));
+    setVisibleRange([firstVisible, lastVisible]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialPage, scrollNonce, pageMeta, loading]);
 
