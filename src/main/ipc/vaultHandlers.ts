@@ -59,7 +59,6 @@ async function handleOpen(vaultPath: string): Promise<VaultOpenResponse> {
     try {
       for (const filePath of allFiles) {
         try {
-          console.log(`[vault:open] Indexing ${indexed + 1}/${total}: ${path.basename(filePath)}`);
           await indexFile(filePath, vaultPath);
         } catch (err) {
           console.error('[vault:open] Failed to index:', filePath, err);

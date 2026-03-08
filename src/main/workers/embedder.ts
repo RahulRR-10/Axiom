@@ -19,7 +19,6 @@ export async function initEmbedder(): Promise<void> {
   if (extractor) return;
 
   const modelsDir = path.join(app.getPath('userData'), 'models');
-  console.log('[embedder] Loading model, cache dir:', modelsDir);
 
   // Dynamic import allows webpack to tree-shake ESM interop at build time
   const { pipeline, env } = await import('@xenova/transformers');
@@ -30,11 +29,7 @@ export async function initEmbedder(): Promise<void> {
     'Xenova/all-MiniLM-L6-v2',
     {
       progress_callback: (p: { status: string; progress?: number }) => {
-        if (p.status === 'progress') {
-          process.stdout.write(`\r[embedder] Downloading model: ${(p.progress ?? 0).toFixed(1)}%`);
-        } else if (p.status === 'done') {
-          console.log('\n[embedder] Model ready.');
-        }
+        // progress callback intentionally left empty for production
       },
     },
   );

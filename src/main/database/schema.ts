@@ -70,7 +70,6 @@ function runMigrations(db: Database.Database): void {
 
   for (const migration of MIGRATIONS) {
     if (!applied.has(migration.version)) {
-      console.log(`[schema] Applying migration ${migration.version}`);
       applyMigration(migration.version, migration.sql);
     }
   }

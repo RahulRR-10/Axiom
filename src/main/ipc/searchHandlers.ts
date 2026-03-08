@@ -29,7 +29,6 @@ async function handleSearch(
 
   const db = getDb(vaultPath);
   const resultMap = new Map<string, SearchResult>();
-  const t0 = Date.now();
 
   const subjectFilter = subject ? 'AND f.subject = ?' : '';
   const typeFilter = fileType ? 'AND f.type = ?' : '';
@@ -57,8 +56,6 @@ async function handleSearch(
       subject: string | null; bm25: number;
     }>;
 
-    console.log(`[search] FTS5: ${rows.length} results in ${Date.now() - t0}ms`);
-
     const maxBm25 = Math.max(...rows.map((r) => r.bm25), 1);
 
     for (const r of rows) {
@@ -85,11 +82,9 @@ async function handleSearch(
   }
 
   // ── 2. Semantic pass ────────────────────────────────────────────────────
-  const t1 = Date.now();
   try {
     const queryVec = await embed(query);
     const semRows = await searchVectors(vaultPath, queryVec, 30);
-    console.log(`[search] semantic: ${semRows.length} results in ${Date.now() - t1}ms`);
 
     for (const r of semRows) {
       const existing = resultMap.get(r.id);
@@ -217,8 +212,6 @@ async function handleSearch(
   } catch (err) {
     console.warn('[search] File-name fallback error:', err);
   }
-
-  console.log(`[search] Total: ${resultMap.size} results in ${Date.now() - t0}ms`);
 
   return Array.from(resultMap.values())
     .sort((a, b) => b.score - a.score)

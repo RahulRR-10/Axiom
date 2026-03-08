@@ -43,8 +43,6 @@ export function startWatching(vaultPath: string): void {
     .on('change', (abs) => void handleChange(abs, vaultPath))
     .on('unlink', (abs) => void handleUnlink(abs, vaultPath))
     .on('error', (err) => console.error('[watcher] Error:', err));
-
-  console.log('[watcher] Watching', vaultPath);
 }
 
 export function stopWatching(): void {
@@ -57,10 +55,8 @@ export function stopWatching(): void {
 // ── Event handlers ────────────────────────────────────────────────────────────
 
 async function handleAdd(filePath: string, vaultPath: string): Promise<void> {
-  console.log('[watcher] New file detected:', filePath);
   try {
     await indexFile(filePath, vaultPath);
-    console.log('[watcher] Indexed new file:', filePath);
   } catch (err) {
     console.error('[watcher] Failed to index new file:', filePath, err);
   }
@@ -69,10 +65,8 @@ async function handleAdd(filePath: string, vaultPath: string): Promise<void> {
 }
 
 async function handleChange(filePath: string, vaultPath: string): Promise<void> {
-  console.log('[watcher] File changed:', filePath);
   try {
     await indexFile(filePath, vaultPath);
-    console.log('[watcher] Re-indexed changed file:', filePath);
   } catch (err) {
     console.error('[watcher] Failed to re-index changed file:', filePath, err);
   }
