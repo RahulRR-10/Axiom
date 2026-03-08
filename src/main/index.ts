@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, shell, webContents } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell, webContents } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -217,6 +217,10 @@ const createWindow = (): void => {
 const webviewMap = new Map<string, Electron.WebContents>();
 
 app.whenReady().then(() => {
+  // Remove default menu so Electron's built-in Ctrl+W accelerator doesn't close the window.
+  // The renderer handles Ctrl+W itself to close workspace tabs.
+  Menu.setApplicationMenu(null);
+
   registerWindowIpcHandlers();
   registerVaultHandlers();
   registerSearchHandlers();

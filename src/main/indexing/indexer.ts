@@ -13,12 +13,13 @@ export const ENABLE_PDF_INDEXING = true;
 export const ENABLE_PPTX_INDEXING = false;
 
 // ── Safety limits ────────────────────────────────────────────────────────────
-const EXTRACT_TIMEOUT_MS = 30_000;      // 30 s per file
 const EMBED_SUB_BATCH = 32;             // chunks sent to embedder at a time
-const PDF_PER_PAGE_TIMEOUT_MS = 5_000;  // 5 s per page — skip if it hangs
-const PDF_MIN_WORDS_PER_PAGE = 3;       // pages with fewer words are image-only / blank
+const MAX_CHUNKS_PER_FILE = 500;        // cap chunks per file — prevents any single file from blocking the pipeline
+const PDF_PER_PAGE_TIMEOUT_MS = 2_000;  // 2 s per page — real text pages extract in <100ms
+const PDF_MIN_WORDS_PER_PAGE = 20;      // pages with fewer words are image-only / blank / OCR noise
 const PDF_SAMPLE_PAGES = 5;             // pages to probe before committing to full extraction
 const PDF_SAMPLE_TIMEOUT_MS = 1_500;    // tight timeout used only during the sample probe
+const PDF_MAX_CONSECUTIVE_TIMEOUTS = 5; // stop processing if this many pages in a row time out
 
 // ── Per-file lock to prevent concurrent indexing of the same path ────────────
 const indexLocks = new Map<string, Promise<void>>();
@@ -91,8 +92,10 @@ async function indexFileInner(filePath: string, vaultPath: string): Promise<void
   }
 
   // ── Extract text ─────────────────────────────────────────────────────────
+  console.log(`[indexer] Starting: ${path.basename(filePath)}`);
   const pages = await extractPages(filePath, fileType, raw);
   if (pages.length === 0) return;
+  console.log(`[indexer] Extracted ${pages.length} pages, chunking: ${path.basename(filePath)}`);
 
   // ── Determine subject from parent folder name ────────────────────────────
   const subject = path.relative(vaultPath, path.dirname(filePath)).split(path.sep)[0] || null;
@@ -140,6 +143,12 @@ async function indexFileInner(filePath: string, vaultPath: string): Promise<void
         chunk_index: idx,
       });
     });
+    // Stop chunking if we've reached the per-file cap
+    if (allChunks.length >= MAX_CHUNKS_PER_FILE) {
+      console.log(`[indexer] Chunk cap (${MAX_CHUNKS_PER_FILE}) reached at page ${page}/${pages.length}: ${path.basename(filePath)}`);
+      allChunks.length = MAX_CHUNKS_PER_FILE; // trim any excess from last page
+      break;
+    }
   }
 
   const insertChunk = db.prepare(`
@@ -153,6 +162,7 @@ async function indexFileInner(filePath: string, vaultPath: string): Promise<void
     }
   });
   insertAllChunks();
+  console.log(`[indexer] ${allChunks.length} chunks stored, embedding: ${path.basename(filePath)}`);
 
   // ── Populate FTS5 table ──────────────────────────────────────────────────
   db.prepare(`
@@ -166,6 +176,10 @@ async function indexFileInner(filePath: string, vaultPath: string): Promise<void
     const batchTexts = allChunks.slice(i, i + EMBED_SUB_BATCH).map((c) => c.text);
     const batchVecs = await embedBatch(batchTexts);
     vectors.push(...batchVecs);
+    // Log progress every 100 chunks
+    if ((i + EMBED_SUB_BATCH) % 100 < EMBED_SUB_BATCH) {
+      console.log(`[indexer] Embedding ${Math.min(i + EMBED_SUB_BATCH, allChunks.length)}/${allChunks.length}: ${path.basename(filePath)}`);
+    }
     // Yield to event loop between sub-batches
     if (i + EMBED_SUB_BATCH < allChunks.length) await new Promise((r) => setTimeout(r, 0));
   }
@@ -177,6 +191,7 @@ async function indexFileInner(filePath: string, vaultPath: string): Promise<void
   }));
 
   await addVectors(vaultPath, chunksWithVecs);
+  console.log(`[indexer] Done: ${path.basename(filePath)}`);
 
   // ── Mark as indexed ──────────────────────────────────────────────────────
   db.prepare("UPDATE files SET indexed_at = unixepoch() WHERE id = ?").run(fileId);
@@ -212,12 +227,7 @@ async function extractPages(
 
     case 'pdf': {
       if (!ENABLE_PDF_INDEXING) return [];
-
-      // Race against a timeout so a corrupted / huge PDF can't stall forever
-      return Promise.race([
-        extractPdfPages(filePath, raw),
-        rejectAfterTimeout(EXTRACT_TIMEOUT_MS, filePath),
-      ]);
+      return extractPdfPages(filePath, raw);
     }
 
     case 'pptx': {
@@ -280,6 +290,7 @@ async function extractPdfPages(filePath: string, raw: Buffer): Promise<PageText[
     }
 
     const pages: PageText[] = [];
+    let consecutiveTimeouts = 0;
     for (let i = 1; i <= totalPages; i++) {
       try {
         // Per-page timeout: skip pages that hang (complex vector art, corrupt streams)
@@ -293,14 +304,20 @@ async function extractPdfPages(filePath: string, raw: Buffer): Promise<PageText[
               .trim();
           })(),
           new Promise<null>((resolve) =>
-            setTimeout(() => {
-              console.warn(`[indexer] Page ${i} timed out (${PDF_PER_PAGE_TIMEOUT_MS}ms), skipping: ${filePath}`);
-              resolve(null);
-            }, PDF_PER_PAGE_TIMEOUT_MS),
+            setTimeout(() => resolve(null), PDF_PER_PAGE_TIMEOUT_MS),
           ),
         ]);
 
-        if (text === null) continue; // timed out
+        if (text === null) {
+          consecutiveTimeouts++;
+          if (consecutiveTimeouts >= PDF_MAX_CONSECUTIVE_TIMEOUTS) {
+            console.warn(`[indexer] ${PDF_MAX_CONSECUTIVE_TIMEOUTS} consecutive page timeouts — stopping extraction at page ${i}/${totalPages}: ${filePath}`);
+            break;
+          }
+          continue;
+        }
+
+        consecutiveTimeouts = 0; // reset on successful extraction
 
         // Skip image-only / blank pages (too few words to be useful)
         const wordCount = text.split(/\s+/).filter(Boolean).length;
@@ -322,13 +339,6 @@ async function extractPdfPages(filePath: string, raw: Buffer): Promise<PageText[
     try { doc?.destroy(); } catch { /* ignore */ }
     try { worker?.destroy(); } catch { /* ignore */ }
   }
-}
-
-/** Returns a promise that rejects after `ms` milliseconds — used with Promise.race. */
-function rejectAfterTimeout(ms: number, filePath: string): Promise<never> {
-  return new Promise((_resolve, reject) => {
-    setTimeout(() => reject(new Error(`[indexer] Timed out after ${ms}ms: ${filePath}`)), ms);
-  });
 }
 
 // ── Chunking utility ─────────────────────────────────────────────────────────

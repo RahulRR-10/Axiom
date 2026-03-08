@@ -28,9 +28,8 @@ export function buildVaultPrompt(
     return [
         'You are a study assistant.',
         '',
-        'Answer the question using ONLY the provided study material below.',
-        'If the material does not contain the answer, say:',
-        '"I could not find this in the study material."',
+        'Answer based on the study material provided below.',
+        'If the material does not contain enough information, make it clear which parts of your answer come from the material and which are from general knowledge.',
         '',
         ...(material
             ? ['STUDY MATERIAL', '--------------', material, '']
