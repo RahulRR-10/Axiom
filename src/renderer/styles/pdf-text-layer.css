@@ -94,3 +94,13 @@
 .textLayer br::selection {
   background: transparent;
 }
+
+/* ── Ctrl+F search highlights (CSS Custom Highlight API) ───────────────────── */
+::highlight(pdf-search) {
+  background-color: rgba(253, 230, 138, 0.45);
+  color: transparent;
+}
+::highlight(pdf-search-current) {
+  background-color: rgba(249, 115, 22, 0.6);
+  color: transparent;
+}

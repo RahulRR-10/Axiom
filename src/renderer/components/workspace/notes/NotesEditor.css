@@ -307,3 +307,84 @@
 .notes-save-indicator.saved {
     color: #98c379;
 }
+
+/* ── CodeMirror search panel (Ctrl+F / Ctrl+H) ───────────────────────────── */
+
+.notes-editor-area .cm-editor .cm-panels {
+    background: #1e1e1e;
+    border-bottom: 1px solid #2a2a2a;
+}
+
+.notes-editor-area .cm-editor .cm-panels.cm-panels-top {
+    border-bottom: 1px solid #2a2a2a;
+}
+
+.notes-editor-area .cm-editor .cm-search {
+    background: #1e1e1e;
+    padding: 6px 8px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    color: #c4c4c4;
+}
+
+.notes-editor-area .cm-editor .cm-search label {
+    color: #999;
+    font-size: 11px;
+    display: flex;
+    align-items: center;
+    gap: 3px;
+}
+
+.notes-editor-area .cm-editor .cm-search input[type="text"],
+.notes-editor-area .cm-editor .cm-search .cm-textfield {
+    background: #2a2a2a;
+    color: #e4e4e4;
+    border: 1px solid #444;
+    border-radius: 4px;
+    padding: 3px 8px;
+    font-size: 12px;
+    outline: none;
+    min-width: 140px;
+}
+
+.notes-editor-area .cm-editor .cm-search input[type="text"]:focus,
+.notes-editor-area .cm-editor .cm-search .cm-textfield:focus {
+    border-color: #4a9eff;
+}
+
+.notes-editor-area .cm-editor .cm-search input[type="checkbox"] {
+    accent-color: #4a9eff;
+}
+
+.notes-editor-area .cm-editor .cm-search button {
+    background: #2a2a2a;
+    color: #c4c4c4;
+    border: 1px solid #444;
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 120ms ease;
+}
+
+.notes-editor-area .cm-editor .cm-search button:hover {
+    background: #3a3a3a;
+    color: #e4e4e4;
+}
+
+.notes-editor-area .cm-editor .cm-search button[name="close"] {
+    padding: 2px 6px;
+}
+
+.notes-editor-area .cm-editor .cm-searchMatch {
+    background-color: rgba(253, 230, 138, 0.35);
+    border-radius: 2px;
+}
+
+.notes-editor-area .cm-editor .cm-searchMatch-selected {
+    background-color: rgba(249, 115, 22, 0.5);
+    border-radius: 2px;
+}

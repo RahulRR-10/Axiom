@@ -9,6 +9,7 @@ import {
   ZoomIn,
   ZoomOut,
   Save,
+  Search,
 } from 'lucide-react';
 
 export type PDFTool =
@@ -54,6 +55,8 @@ type Props = {
   onFontSizeChange:  (s: number) => void;
   textColor:         string;
   onTextColorChange: (c: string) => void;
+  onPageChange?:     (page: number) => void;
+  onSearchToggle?:   () => void;
 };
 
 export const PDFToolbar: React.FC<Props> = ({
@@ -71,8 +74,13 @@ export const PDFToolbar: React.FC<Props> = ({
   onFontSizeChange,
   textColor,
   onTextColorChange,
+  onPageChange,
+  onSearchToggle,
 }) => {
   const [colorOpen, setColorOpen]       = useState(false);
+  const [editingPage, setEditingPage]   = useState(false);
+  const [pageInput, setPageInput]       = useState('');
+  const pageInputRef = useRef<HTMLInputElement>(null);
   const [fontSizeOpen, setFontSizeOpen] = useState(false);
   const [textColorOpen, setTextColorOpen] = useState(false);
   const colorRef    = useRef<HTMLDivElement>(null);
@@ -247,11 +255,54 @@ export const PDFToolbar: React.FC<Props> = ({
       {/* ── Center: page indicator ── */}
       <div className="flex-1 flex items-center justify-center">
         {numPages > 0 && (
-          <span className="text-xs text-[#8a8a8a] select-none">
-            Page {currentPage} / {numPages}
+          <span className="text-xs text-[#8a8a8a] select-none flex items-center gap-0.5">
+            Page{' '}
+            {editingPage ? (
+              <input
+                ref={pageInputRef}
+                type="text"
+                inputMode="numeric"
+                value={pageInput}
+                onChange={(e) => setPageInput(e.target.value.replace(/[^0-9]/g, ''))}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    const page = parseInt(pageInput, 10);
+                    if (page >= 1 && page <= numPages) onPageChange?.(page);
+                    setEditingPage(false);
+                  }
+                  if (e.key === 'Escape') setEditingPage(false);
+                  e.stopPropagation();
+                }}
+                onBlur={() => setEditingPage(false)}
+                autoFocus
+                className="w-8 text-center text-xs bg-[#2a2a2a] text-[#e4e4e4] border border-[#555] rounded px-0.5 py-0 outline-none focus:border-[#4a9eff]"
+                style={{ appearance: 'textfield', MozAppearance: 'textfield', WebkitAppearance: 'none' } as React.CSSProperties}
+              />
+            ) : (
+              <span
+                onClick={() => { setEditingPage(true); setPageInput(String(currentPage)); }}
+                className="cursor-pointer hover:text-[#d4d4d4] hover:underline transition-colors"
+                title="Click to jump to a page"
+              >
+                {currentPage}
+              </span>
+            )}
+            {' '}/ {numPages}
           </span>
         )}
       </div>
+
+      {/* ── Search button ── */}
+      {onSearchToggle && (
+        <button
+          type="button"
+          onClick={onSearchToggle}
+          className="h-8 w-8 flex items-center justify-center rounded text-[#8a8a8a] hover:bg-[#2a2a2a] hover:text-[#d4d4d4] transition-colors mr-1"
+          title="Find in PDF (Ctrl+F)"
+        >
+          <Search size={14} />
+        </button>
+      )}
 
       {/* ── Right: save + zoom controls ── */}
       <div className="flex items-center gap-1">

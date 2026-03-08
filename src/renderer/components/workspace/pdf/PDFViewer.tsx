@@ -782,6 +782,15 @@ export const PDFViewer: React.FC<Props> = ({
   const [pdfLoadNonce, setPdfLoadNonce] = useState(0);
   const [renderNonce, setRenderNonce] = useState(0);
 
+  /* ── Search state ────────────────────────────────────────────────────────── */
+  const [showSearch, setShowSearch] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchMatches, setSearchMatches] = useState<Array<{ page: number; indexInPage: number }>>([]); 
+  const [currentMatchIdx, setCurrentMatchIdx] = useState(0);
+  const pageTextsRef = useRef<Map<number, { items: string[]; fullText: string }>>(new Map());
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const highlightTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const containerRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const visiblePages = useRef(new Set<number>());
@@ -1094,10 +1103,236 @@ export const PDFViewer: React.FC<Props> = ({
     loadAnnotations,
   ]);
 
-  /* ── Escape to deactivate tool / Ctrl+S to save ──────────────────────────── */
+  /* ── PDF text search ──────────────────────────────────────────────────────── */
+
+  // Extract text from all pages when search is opened
+  useEffect(() => {
+    if (!showSearch || !pdf || pageTextsRef.current.size === numPages) return;
+    let cancelled = false;
+    (async () => {
+      const texts = new Map<number, { items: string[]; fullText: string }>();
+      for (let i = 1; i <= numPages; i++) {
+        if (cancelled) return;
+        const page = await pdf.getPage(i);
+        const content = await page.getTextContent();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const items = content.items
+          .filter((item: any) => "str" in item)
+          .map((item: any) => item.str as string);
+        texts.set(i, { items, fullText: items.join("") });
+        page.cleanup();
+      }
+      if (!cancelled) pageTextsRef.current = texts;
+      // trigger match recomputation
+      if (!cancelled) setSearchQuery((q) => q);
+    })();
+    return () => { cancelled = true; };
+  }, [showSearch, pdf, numPages]);
+
+  // Clear cached page texts when PDF changes
+  useEffect(() => {
+    pageTextsRef.current = new Map();
+  }, [filePath, pdfLoadNonce]);
+
+  // Find matches when query changes
+  const doSearch = useCallback((query: string) => {
+    if (!query) { setSearchMatches([]); return; }
+    const lowerQ = query.toLowerCase();
+    const matches: Array<{ page: number; indexInPage: number }> = [];
+    for (let p = 1; p <= numPages; p++) {
+      const info = pageTextsRef.current.get(p);
+      if (!info) continue;
+      const lowerText = info.fullText.toLowerCase();
+      let idx = 0;
+      let matchIndex = 0;
+      while ((idx = lowerText.indexOf(lowerQ, idx)) !== -1) {
+        matches.push({ page: p, indexInPage: matchIndex });
+        idx += lowerQ.length;
+        matchIndex++;
+      }
+    }
+    setSearchMatches(matches);
+    setCurrentMatchIdx((prev) => (prev >= matches.length ? 0 : prev));
+  }, [numPages]);
+
+  // Run search whenever query changes
+  useEffect(() => { doSearch(searchQuery); }, [searchQuery, doSearch]);
+
+  // Scroll to current match's page
+  useEffect(() => {
+    if (searchMatches.length === 0 || !scrollRef.current || !pageMeta) return;
+    const match = searchMatches[currentMatchIdx];
+    if (!match) return;
+    const el = scrollRef.current;
+    const pageH = Math.floor(pageMeta.height * zoom) + PAGE_GAP;
+    const target = (match.page - 1) * pageH;
+    const viewportH = el.clientHeight;
+    // Only scroll if the match page isn't already visible
+    if (target < el.scrollTop || target + pageH > el.scrollTop + viewportH) {
+      el.scrollTop = target;
+    }
+  }, [currentMatchIdx, searchMatches, pageMeta, zoom]);
+
+  // Apply CSS Custom Highlight API to visible text layers
+  const applySearchHighlights = useCallback(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const cssHighlights = (CSS as any).highlights;
+    if (!cssHighlights) return;
+    cssHighlights.delete("pdf-search");
+    cssHighlights.delete("pdf-search-current");
+    if (!showSearch || !searchQuery || searchMatches.length === 0) return;
+
+    const container = scrollRef.current;
+    if (!container) return;
+    const lowerQ = searchQuery.toLowerCase();
+    const allRanges: Range[] = [];
+    const currentRanges: Range[] = [];
+
+    // Determine which match index is current for each page
+    let matchCounter = 0;
+    const pageMatchOffsets = new Map<number, number>(); // page -> global offset of first match on this page
+    for (let p = 1; p <= numPages; p++) {
+      pageMatchOffsets.set(p, matchCounter);
+      const info = pageTextsRef.current.get(p);
+      if (!info) continue;
+      const lowerText = info.fullText.toLowerCase();
+      let idx = 0;
+      while ((idx = lowerText.indexOf(lowerQ, idx)) !== -1) {
+        matchCounter++;
+        idx += lowerQ.length;
+      }
+    }
+
+    // Find all text layers in the scroll container
+    const scrollInner = container.querySelector(".pdf-scroll-inner");
+    if (!scrollInner) return;
+    const pageWrappers = scrollInner.children;
+
+    for (let pIdx = 0; pIdx < pageWrappers.length; pIdx++) {
+      const pageNum = pIdx + 1;
+      const info = pageTextsRef.current.get(pageNum);
+      if (!info) continue;
+      const wrapper = pageWrappers[pIdx];
+      const textLayer = wrapper.querySelector(".textLayer");
+      if (!textLayer) continue;
+
+      // Get all text spans
+      const spans = Array.from(textLayer.querySelectorAll("span"))
+        .filter((s) => !s.querySelector("span") && s.textContent);
+
+      // Map character positions to spans
+      let charPos = 0;
+      const spanMap: Array<{ node: Text; start: number; end: number }> = [];
+      for (const span of spans) {
+        const walker = document.createTreeWalker(span, NodeFilter.SHOW_TEXT);
+        let textNode: Text | null;
+        while ((textNode = walker.nextNode() as Text | null)) {
+          const len = textNode.textContent?.length || 0;
+          if (len > 0) {
+            spanMap.push({ node: textNode, start: charPos, end: charPos + len });
+            charPos += len;
+          }
+        }
+      }
+
+      // Find matches on this page and create ranges
+      const lowerText = info.fullText.toLowerCase();
+      let searchIdx = 0;
+      let localMatchIdx = 0;
+      const globalOffset = pageMatchOffsets.get(pageNum) ?? 0;
+
+      while ((searchIdx = lowerText.indexOf(lowerQ, searchIdx)) !== -1) {
+        const matchStart = searchIdx;
+        const matchEnd = searchIdx + lowerQ.length;
+        const globalIdx = globalOffset + localMatchIdx;
+
+        // Find the spans covering this match
+        for (const sm of spanMap) {
+          const rangeStart = Math.max(matchStart, sm.start);
+          const rangeEnd = Math.min(matchEnd, sm.end);
+          if (rangeStart >= rangeEnd) continue;
+
+          try {
+            const range = document.createRange();
+            range.setStart(sm.node, rangeStart - sm.start);
+            range.setEnd(sm.node, rangeEnd - sm.start);
+            allRanges.push(range);
+            if (globalIdx === currentMatchIdx) {
+              currentRanges.push(range);
+            }
+          } catch {
+            /* offset out of bounds — skip */
+          }
+        }
+        searchIdx += lowerQ.length;
+        localMatchIdx++;
+      }
+    }
+
+    if (allRanges.length > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      cssHighlights.set("pdf-search", new (window as any).Highlight(...allRanges));
+    }
+    if (currentRanges.length > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      cssHighlights.set("pdf-search-current", new (window as any).Highlight(...currentRanges));
+    }
+  }, [showSearch, searchQuery, searchMatches, currentMatchIdx, numPages]);
+
+  // Re-apply highlights when search state or visible range changes
+  useEffect(() => {
+    if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
+    highlightTimeoutRef.current = setTimeout(applySearchHighlights, 150);
+    return () => { if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current); };
+  }, [applySearchHighlights, visibleRange, renderNonce]);
+
+  // Clean up highlights when search is dismissed
+  useEffect(() => {
+    if (!showSearch) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (CSS as any).highlights?.delete("pdf-search");
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (CSS as any).highlights?.delete("pdf-search-current");
+    }
+  }, [showSearch]);
+
+  // Search navigation helpers
+  const searchNext = useCallback(() => {
+    if (searchMatches.length === 0) return;
+    setCurrentMatchIdx((prev) => (prev + 1) % searchMatches.length);
+  }, [searchMatches.length]);
+
+  const searchPrev = useCallback(() => {
+    if (searchMatches.length === 0) return;
+    setCurrentMatchIdx((prev) => (prev - 1 + searchMatches.length) % searchMatches.length);
+  }, [searchMatches.length]);
+
+  const closeSearch = useCallback(() => {
+    setShowSearch(false);
+    setSearchQuery("");
+    setSearchMatches([]);
+    setCurrentMatchIdx(0);
+  }, []);
+
+  const scrollToPage = useCallback((page: number) => {
+    if (!scrollRef.current || !pageMeta) return;
+    const pageH = Math.floor(pageMeta.height * zoom) + PAGE_GAP;
+    const target = (page - 1) * pageH;
+    scrollRef.current.scrollTop = target;
+  }, [pageMeta, zoom]);
+
+  /* ── Escape to deactivate tool / Ctrl+S to save / Ctrl+F to search ──────── */
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setActiveTool("none");
+      if (e.key === "Escape") {
+        if (showSearch) { closeSearch(); return; }
+        setActiveTool("none");
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        setShowSearch(true);
+        setTimeout(() => searchInputRef.current?.focus(), 50);
+      }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
         e.preventDefault();
         savePdf();
@@ -1105,7 +1340,7 @@ export const PDFViewer: React.FC<Props> = ({
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [savePdf]);
+  }, [savePdf, showSearch, closeSearch]);
 
   /* ── Grab-to-pan (drag to scroll when zoomed in) ─────────────────────────── */
   useEffect(() => {
@@ -1392,7 +1627,72 @@ export const PDFViewer: React.FC<Props> = ({
         onFontSizeChange={setFontSize}
         textColor={textColor}
         onTextColorChange={setTextColor}
+        onPageChange={scrollToPage}
+        onSearchToggle={() => { setShowSearch((s) => !s); setTimeout(() => searchInputRef.current?.focus(), 50); }}
       />
+
+      {/* ── PDF Search Bar ── */}
+      {showSearch && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+            padding: "6px 12px",
+            background: "#1e1e1e",
+            borderBottom: "1px solid #2a2a2a",
+            flexShrink: 0,
+          }}
+        >
+          <input
+            ref={searchInputRef}
+            type="text"
+            value={searchQuery}
+            onChange={(e) => { setSearchQuery(e.target.value); setCurrentMatchIdx(0); }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") { e.shiftKey ? searchPrev() : searchNext(); e.preventDefault(); }
+              if (e.key === "Escape") { closeSearch(); e.preventDefault(); }
+              e.stopPropagation();
+            }}
+            placeholder="Find in PDF…"
+            autoFocus
+            className="bg-[#2a2a2a] text-[#e4e4e4] text-xs border border-[#444] rounded px-2 py-1 outline-none focus:border-[#4a9eff] w-52"
+          />
+          <span className="text-xs text-[#8a8a8a] select-none min-w-[60px]">
+            {searchQuery
+              ? searchMatches.length > 0
+                ? `${currentMatchIdx + 1} of ${searchMatches.length}`
+                : "No results"
+              : ""}
+          </span>
+          <button
+            type="button"
+            onClick={searchPrev}
+            disabled={searchMatches.length === 0}
+            className="h-6 w-6 flex items-center justify-center rounded text-[#8a8a8a] hover:bg-[#2a2a2a] hover:text-[#d4d4d4] transition-colors disabled:opacity-30"
+            title="Previous (Shift+Enter)"
+          >
+            ▲
+          </button>
+          <button
+            type="button"
+            onClick={searchNext}
+            disabled={searchMatches.length === 0}
+            className="h-6 w-6 flex items-center justify-center rounded text-[#8a8a8a] hover:bg-[#2a2a2a] hover:text-[#d4d4d4] transition-colors disabled:opacity-30"
+            title="Next (Enter)"
+          >
+            ▼
+          </button>
+          <button
+            type="button"
+            onClick={closeSearch}
+            className="h-6 w-6 flex items-center justify-center rounded text-[#8a8a8a] hover:bg-[#2a2a2a] hover:text-[#d4d4d4] transition-colors"
+            title="Close (Escape)"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       <div
         ref={scrollRef}
