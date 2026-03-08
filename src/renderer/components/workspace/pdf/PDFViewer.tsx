@@ -45,6 +45,8 @@ type Props = {
   initialPage?: number;
   /** Increment to force re-scroll to the same page */
   scrollNonce?: number;
+  /** Whether this viewer's tab is currently active/visible */
+  isActive?: boolean;
 };
 
 /* ─── Single page renderer ─────────────────────────────────────────────────── */
@@ -753,6 +755,7 @@ export const PDFViewer: React.FC<Props> = ({
   vaultPath = null,
   initialPage,
   scrollNonce,
+  isActive = true,
 }) => {
   const effectiveFileId = fileId || filePath;
 
@@ -783,6 +786,9 @@ export const PDFViewer: React.FC<Props> = ({
   const scrollRef = useRef<HTMLDivElement>(null);
   const visiblePages = useRef(new Set<number>());
   const baseScaleRef = useRef(1);
+  const isPanning = useRef(false);
+  const panStart = useRef({ x: 0, y: 0, scrollLeft: 0, scrollTop: 0 });
+  const prevActiveRef = useRef(isActive);
 
   /* ── Load PDF (fast — only reads page 1 for sizing) ──────────────────────── */
   useEffect(() => {
@@ -827,6 +833,36 @@ export const PDFViewer: React.FC<Props> = ({
       setLoading(false);
     });
   }, [filePath, pdfLoadNonce]);
+
+  /* ── Force canvas repaint when tab becomes active again ──────────────────── */
+  useEffect(() => {
+    const wasActive = prevActiveRef.current;
+    prevActiveRef.current = isActive;
+    if (!wasActive && isActive && pageMeta && !loading) {
+      // Recompute visible range — it may have been frozen at [1,2] while
+      // the container was display:none (clientHeight was 0).
+      const el = scrollRef.current;
+      if (el) {
+        const scrollTop = el.scrollTop;
+        const viewportH = el.clientHeight;
+        const pageH = Math.floor(pageMeta.height * zoom) + PAGE_GAP;
+        if (pageH > 0 && viewportH > 0) {
+          const firstVisible = Math.max(
+            1,
+            Math.floor((scrollTop - BUFFER_PX) / pageH) + 1,
+          );
+          const lastVisible = Math.min(
+            numPages,
+            Math.ceil((scrollTop + viewportH + BUFFER_PX) / pageH),
+          );
+          setVisibleRange([firstVisible, lastVisible]);
+        }
+      }
+      // Canvas backing stores may have been discarded by the GPU while hidden.
+      // Bump renderNonce so every visible PDFPage re-paints its canvas.
+      setRenderNonce((n) => n + 1);
+    }
+  }, [isActive, pageMeta, loading, zoom, numPages]);
 
   /* ── Scroll to initialPage after load ───────────────────────────────────── */
   useEffect(() => {
@@ -1060,6 +1096,60 @@ export const PDFViewer: React.FC<Props> = ({
     return () => document.removeEventListener("keydown", handler);
   }, [savePdf]);
 
+  /* ── Grab-to-pan (drag to scroll when zoomed in) ─────────────────────────── */
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+
+    const onPointerDown = (e: PointerEvent) => {
+      // Middle-click always pans; left-click pans only with "none" tool
+      // and only on the background / scroll area (not on text or annotations)
+      const isMiddle = e.button === 1;
+      const isLeftOnBg =
+        e.button === 0 &&
+        activeTool === "none" &&
+        (e.target === el || (e.target as HTMLElement).classList?.contains("pdf-scroll-inner"));
+      if (!isMiddle && !isLeftOnBg) return;
+
+      e.preventDefault();
+      isPanning.current = true;
+      panStart.current = {
+        x: e.clientX,
+        y: e.clientY,
+        scrollLeft: el.scrollLeft,
+        scrollTop: el.scrollTop,
+      };
+      el.style.cursor = "grabbing";
+      el.setPointerCapture(e.pointerId);
+    };
+
+    const onPointerMove = (e: PointerEvent) => {
+      if (!isPanning.current) return;
+      const dx = e.clientX - panStart.current.x;
+      const dy = e.clientY - panStart.current.y;
+      el.scrollLeft = panStart.current.scrollLeft - dx;
+      el.scrollTop = panStart.current.scrollTop - dy;
+    };
+
+    const onPointerUp = (e: PointerEvent) => {
+      if (!isPanning.current) return;
+      isPanning.current = false;
+      el.style.cursor = "";
+      el.releasePointerCapture(e.pointerId);
+    };
+
+    el.addEventListener("pointerdown", onPointerDown);
+    el.addEventListener("pointermove", onPointerMove);
+    el.addEventListener("pointerup", onPointerUp);
+    el.addEventListener("pointercancel", onPointerUp);
+    return () => {
+      el.removeEventListener("pointerdown", onPointerDown);
+      el.removeEventListener("pointermove", onPointerMove);
+      el.removeEventListener("pointerup", onPointerUp);
+      el.removeEventListener("pointercancel", onPointerUp);
+    };
+  }, [activeTool]);
+
   /* ── Touchpad pinch-to-zoom ──────────────────────────────────────────────── */
   useEffect(() => {
     const el = scrollRef.current;
@@ -1135,7 +1225,7 @@ export const PDFViewer: React.FC<Props> = ({
       const scrollTop = el.scrollTop;
       const viewportH = el.clientHeight;
       const pageH = Math.floor(pageMeta.height * zoom) + PAGE_GAP;
-      if (pageH <= 0) return;
+      if (pageH <= 0 || viewportH <= 0) return; // skip when hidden (display:none)
 
       // Current page = which page is at the center of the viewport
       const centerY = scrollTop + viewportH / 2;
@@ -1321,12 +1411,14 @@ export const PDFViewer: React.FC<Props> = ({
         )}
         {!loading && !error && (
           <div
+            className="pdf-scroll-inner"
             style={{
               display: "flex",
               flexDirection: "column",
               alignItems: "center",
               padding: "16px",
               minHeight: "100%",
+              minWidth: "fit-content",
             }}
           >
             {pageList}

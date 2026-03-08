@@ -841,6 +841,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ vaultPath }) => {
                   vaultPath={vaultPath}
                   initialPage={f.initialPage}
                   scrollNonce={f.scrollNonce}
+                  isActive={isActive}
                 />
               </div>
             );
