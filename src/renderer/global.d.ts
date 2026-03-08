@@ -75,6 +75,10 @@ declare global {
       closeWindow: () => Promise<void>;
       isWindowMaximized: () => Promise<boolean>;
       onWindowMaximizedChange: (callback: (isMaximized: boolean) => void) => () => void;
+
+      // ── Auto-updater ──────────────────────────────────────────────────
+      onUpdateDownloaded: (callback: () => void) => () => void;
+      installAndRestart: () => Promise<void>;
     };
   }
 }

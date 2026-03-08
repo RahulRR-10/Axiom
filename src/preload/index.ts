@@ -211,6 +211,16 @@ const electronAPI = {
     ipcRenderer.on(WINDOW_CHANNELS.MAXIMIZED_CHANGED, listener);
     return () => ipcRenderer.removeListener(WINDOW_CHANNELS.MAXIMIZED_CHANGED, listener);
   },
+
+  // ── Auto-updater ─────────────────────────────────────────────────────────
+  onUpdateDownloaded: (callback: () => void): (() => void) => {
+    const listener = (): void => callback();
+    ipcRenderer.on('updater:update-downloaded', listener);
+    return () => ipcRenderer.removeListener('updater:update-downloaded', listener);
+  },
+
+  installAndRestart: (): Promise<void> =>
+    ipcRenderer.invoke('updater:install-and-restart'),
 };
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI);

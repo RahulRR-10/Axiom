@@ -15,6 +15,7 @@ export const AppLayout: React.FC = () => {
   const [aiCollapsed, setAiCollapsed] = useState<boolean>(false);
   const [vaultPath, setVaultPath] = useState<string | null>(null);
   const [aiWidth, setAiWidth] = useState<number>(340);
+  const [updateReady, setUpdateReady] = useState<boolean>(false);
   const [isResizingAI, setIsResizingAI] = useState<boolean>(false);
   const [aiQuestion, setAiQuestion] = useState<string>('');
   const isDraggingAI = useRef<boolean>(false);
@@ -58,6 +59,9 @@ export const AppLayout: React.FC = () => {
     window.dispatchEvent(new CustomEvent("triggerOpenVault"));
   }, []);
 
+  /* ── Auto-updater: listen for downloaded update ── */
+  useEffect(() => window.electronAPI.onUpdateDownloaded(() => setUpdateReady(true)), []);
+
   /* ── sendToAI → auto-expand AI panel ── */
   useEffect(() => {
     const handler = (): void => setAiCollapsed(false);
@@ -82,6 +86,28 @@ export const AppLayout: React.FC = () => {
 
   return (
     <div className="h-screen w-screen overflow-hidden flex flex-col bg-[#141414] text-[#d4d4d4]">
+      {/* ── Update-ready banner ── */}
+      {updateReady && (
+        <div className="shrink-0 flex items-center justify-between px-4 py-1.5 bg-[#1a3a2a] border-b border-[#2a5a3a] text-xs text-[#7fcf9f]">
+          <span>A new version of Axiom has been downloaded and is ready to install.</span>
+          <div className="flex items-center gap-2 ml-4">
+            <button
+              type="button"
+              onClick={() => void window.electronAPI.installAndRestart()}
+              className="px-2.5 py-1 rounded bg-[#2a6a4a] hover:bg-[#3a7a5a] text-[#a0dfbf] font-medium transition-colors"
+            >
+              Restart &amp; Update
+            </button>
+            <button
+              type="button"
+              onClick={() => setUpdateReady(false)}
+              className="px-2.5 py-1 rounded hover:bg-[#2a4a3a] text-[#7fcf9f] transition-colors"
+            >
+              Later
+            </button>
+          </div>
+        </div>
+      )}
       {/* ── Global title bar ── search, Axiom, settings, window controls */}
       <header
         style={

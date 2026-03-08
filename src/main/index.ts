@@ -8,6 +8,7 @@ import { registerAnnotationHandlers } from './ipc/annotationHandlers';
 import { registerNotesHandlers } from './ipc/notesHandlers';
 import { setupAISessions, writeWebviewPreload } from './ai/spoofing';
 import { injectPrompt } from './ai/vaultInject';
+import { initAutoUpdater } from './updater';
 import { AI_CHANNELS } from '../shared/ipc/channels';
 import type { VaultInjectRequest, VaultInjectResponse } from '../shared/ipc/contracts';
 
@@ -247,6 +248,7 @@ app.whenReady().then(() => {
   });
 
   createWindow();
+  initAutoUpdater(() => mainWindow);
 });
 
 app.on('window-all-closed', () => {

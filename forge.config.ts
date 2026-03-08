@@ -6,6 +6,7 @@ import { MakerRpm } from '@electron-forge/maker-rpm';
 import { AutoUnpackNativesPlugin } from '@electron-forge/plugin-auto-unpack-natives';
 import { WebpackPlugin } from '@electron-forge/plugin-webpack';
 import { FusesPlugin } from '@electron-forge/plugin-fuses';
+import { PublisherGithub } from '@electron-forge/publisher-github';
 import { FuseV1Options, FuseVersion } from '@electron/fuses';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -77,6 +78,13 @@ const config: ForgeConfig = {
       }
     },
   },
+  publishers: [
+    new PublisherGithub({
+      repository: { owner: 'RahulRR-10', name: 'Axiom' },
+      prerelease: false,
+      draft: true,
+    }),
+  ],
   makers: [
     new MakerSquirrel({ setupIcon: './assets/axiom-logo.ico' }),
     new MakerZIP({}, ['darwin']),
