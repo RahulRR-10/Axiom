@@ -65,7 +65,7 @@ const config: ForgeConfig = {
     asar: {
       unpack: '**/*.{node,dll}',
     },
-    icon: './assets/axiom-logo',
+    icon: path.join(__dirname, 'assets', 'axiom-logo'),
   },
   rebuildConfig: {
     onlyModules: ['better-sqlite3', 'vectordb'],
@@ -86,7 +86,10 @@ const config: ForgeConfig = {
     }),
   ],
   makers: [
-    new MakerSquirrel({ setupIcon: './assets/axiom-logo.ico' }),
+    new MakerSquirrel({
+      setupIcon: path.join(__dirname, 'assets', 'axiom-logo.ico'),
+      iconUrl: 'https://raw.githubusercontent.com/RahulRR-10/Axiom/main/assets/axiom-logo.ico',
+    }),
     new MakerZIP({}, ['darwin']),
     new MakerRpm({ options: { icon: './assets/axiom-logo.png' } }),
     new MakerDeb({ options: { icon: './assets/axiom-logo.png' } }),
