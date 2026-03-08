@@ -12,6 +12,8 @@ const ImageViewer: React.FC<{ filePath: string; name: string }> = ({ filePath, n
   const [zoom, setZoom] = useState(1);
   const [naturalSize, setNaturalSize] = useState<{ w: number; h: number } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const isPanning = useRef(false);
+  const panStart = useRef({ x: 0, y: 0, scrollLeft: 0, scrollTop: 0 });
 
   useEffect(() => {
     window.electronAPI.readFile(filePath)
@@ -45,6 +47,45 @@ const ImageViewer: React.FC<{ filePath: string; name: string }> = ({ filePath, n
     return () => el.removeEventListener('wheel', handler);
   }, [src]);
 
+  // Grab-to-pan — left-click drag or middle-click drag scrolls in all directions
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+
+    const onPointerDown = (e: PointerEvent) => {
+      if (e.button !== 0 && e.button !== 1) return;
+      e.preventDefault();
+      isPanning.current = true;
+      panStart.current = { x: e.clientX, y: e.clientY, scrollLeft: el.scrollLeft, scrollTop: el.scrollTop };
+      el.style.cursor = 'grabbing';
+      el.setPointerCapture(e.pointerId);
+    };
+
+    const onPointerMove = (e: PointerEvent) => {
+      if (!isPanning.current) return;
+      el.scrollLeft = panStart.current.scrollLeft - (e.clientX - panStart.current.x);
+      el.scrollTop  = panStart.current.scrollTop  - (e.clientY - panStart.current.y);
+    };
+
+    const onPointerUp = (e: PointerEvent) => {
+      if (!isPanning.current) return;
+      isPanning.current = false;
+      el.style.cursor = 'grab';
+      el.releasePointerCapture(e.pointerId);
+    };
+
+    el.addEventListener('pointerdown', onPointerDown);
+    el.addEventListener('pointermove', onPointerMove);
+    el.addEventListener('pointerup', onPointerUp);
+    el.addEventListener('pointercancel', onPointerUp);
+    return () => {
+      el.removeEventListener('pointerdown', onPointerDown);
+      el.removeEventListener('pointermove', onPointerMove);
+      el.removeEventListener('pointerup', onPointerUp);
+      el.removeEventListener('pointercancel', onPointerUp);
+    };
+  }, [src]);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%' }}>
       {/* Image toolbar with zoom controls */}
@@ -73,7 +114,7 @@ const ImageViewer: React.FC<{ filePath: string; name: string }> = ({ filePath, n
       {/* Scroll container */}
       <div
         ref={scrollRef}
-        style={{ flex: 1, overflow: 'auto', background: '#141414' }}
+        style={{ flex: 1, overflow: 'auto', background: '#141414', cursor: 'grab' }}
       >
         {error && (
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
@@ -86,7 +127,7 @@ const ImageViewer: React.FC<{ filePath: string; name: string }> = ({ filePath, n
           </div>
         )}
         {src && (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100%', minWidth: '100%', padding: 24 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100%', minWidth: 'max-content', padding: 24 }}>
             <img
               src={src}
               alt={name}
@@ -97,7 +138,7 @@ const ImageViewer: React.FC<{ filePath: string; name: string }> = ({ filePath, n
                 setNaturalSize({ w: img.naturalWidth, h: img.naturalHeight });
               }}
               style={naturalSize
-                ? { width: naturalSize.w * zoom, height: naturalSize.h * zoom }
+                ? { width: naturalSize.w * zoom, height: naturalSize.h * zoom, maxWidth: 'none' }
                 : { maxWidth: '100%', maxHeight: '100%' }
               }
             />
