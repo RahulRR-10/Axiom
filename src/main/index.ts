@@ -118,6 +118,7 @@ const registerWindowIpcHandlers = (): void => {
   // ── Shell / file operations ──────────────────────────────────────────────
   ipcMain.handle('shell:openExternal', (_e, url: string) => {
     try { writeLog('IPC:received', 'shell:openExternal'); } catch { /* ignore */ }
+    if (/^https?:\/\//i.test(url)) return shell.openExternal(url);
     return shell.openPath(url);
   });
 

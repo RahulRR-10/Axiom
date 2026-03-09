@@ -10,6 +10,7 @@ const HL_COLORS = [
   { label: 'Green',  value: '#a7f3d0' },
   { label: 'Pink',   value: '#fbb6ce' },
   { label: 'Blue',   value: '#93c5fd' },
+  { label: 'Clear',  value: 'clear'   },
 ];
 
 type Props = {
@@ -20,6 +21,8 @@ type Props = {
   fileId:       string;
   vaultPath:    string;
   onAnnotationCreated: (ann: Annotation) => void;
+  annotations?: Annotation[];
+  onAnnotationDeleted?: (annId: string) => void;
 };
 
 /**
@@ -86,6 +89,8 @@ export const FloatingActionBar: React.FC<Props> = ({
   fileId,
   vaultPath,
   onAnnotationCreated,
+  annotations,
+  onAnnotationDeleted,
 }) => {
   const [pos, setPos]                   = useState<Position | null>(null);
   const [selectedText, setSelectedText] = useState('');
@@ -172,6 +177,48 @@ export const FloatingActionBar: React.FC<Props> = ({
 
   // ── Instant highlight with given color ──────────────────────────────────
   const doHighlight = useCallback((color: string) => {
+    if (color === 'clear') {
+      // Clear mode: erase overlapping highlight annotations on the current page
+      const sel = window.getSelection();
+      if (sel && !sel.isCollapsed && sel.rangeCount > 0) {
+        const range = sel.getRangeAt(0);
+        const ancestor = range.commonAncestorContainer;
+        const node = ancestor.nodeType === Node.TEXT_NODE ? ancestor.parentElement : ancestor as HTMLElement;
+        const pageWrapper = node?.closest('.textLayer')?.parentElement;
+        if (pageWrapper) {
+          const wrapRect = pageWrapper.getBoundingClientRect();
+          const wrapW = wrapRect.width || 1;
+          const wrapH = wrapRect.height || 1;
+          const selRects = Array.from(range.getClientRects())
+            .filter(r => r.width > 0 && r.height > 0)
+            .map(r => ({
+              x: (r.left - wrapRect.left) / wrapW,
+              y: (r.top  - wrapRect.top)  / wrapH,
+              w: r.width  / wrapW,
+              h: r.height / wrapH,
+            }));
+          if (selRects.length && onAnnotationDeleted && annotations) {
+            const hlAnns = annotations.filter(
+              (a): a is HighlightAnnotation => a.type === 'highlight' && a.page === currentPage,
+            );
+            for (const hl of hlAnns) {
+              const overlaps = hl.rects.some(hr =>
+                selRects.some(sr =>
+                  sr.x < hr.x + hr.w && sr.x + sr.w > hr.x &&
+                  sr.y < hr.y + hr.h && sr.y + sr.h > hr.y
+                )
+              );
+              if (overlaps) onAnnotationDeleted(hl.id);
+            }
+          }
+        }
+        sel.removeAllRanges();
+      }
+      setPos(null);
+      setHlOpen(false);
+      return;
+    }
+
     const result = buildHighlightFromSelection(fileId, color);
     if (!result) return;
 
@@ -180,7 +227,7 @@ export const FloatingActionBar: React.FC<Props> = ({
 
     setPos(null);
     setHlOpen(false);
-  }, [fileId, onAnnotationCreated]);
+  }, [fileId, onAnnotationCreated, currentPage, annotations, onAnnotationDeleted]);
 
   // Dispatch helpers
   const dispatchSendToAI = (prompt?: string) => {
@@ -299,7 +346,9 @@ export const FloatingActionBar: React.FC<Props> = ({
         >
           <Highlighter size={13} />
           <span
-            style={{ background: defaultColor }}
+            style={defaultColor === 'clear'
+              ? { background: 'repeating-conic-gradient(#555 0% 25%, #333 0% 50%) 50% / 6px 6px' }
+              : { background: defaultColor }}
             className="inline-block w-2.5 h-2.5 rounded-sm border border-[#555]"
           />
         </button>
@@ -337,7 +386,9 @@ export const FloatingActionBar: React.FC<Props> = ({
                   doHighlight(c.value);
                 }}
                 title={c.label}
-                style={{ background: c.value }}
+                style={c.value === 'clear'
+                  ? { background: 'repeating-conic-gradient(#555 0% 25%, #333 0% 50%) 50% / 8px 8px' }
+                  : { background: c.value }}
                 className={`w-6 h-6 rounded border-2 hover:scale-110 transition-transform ${
                   defaultColor === c.value ? 'border-white' : 'border-transparent'
                 }`}

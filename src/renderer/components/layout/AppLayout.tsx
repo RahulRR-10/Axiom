@@ -120,7 +120,8 @@ export const AppLayout: React.FC = () => {
         className="h-10 shrink-0 w-full flex items-center px-4 relative"
       >
         {/* Left: Axiom branding */}
-        <div className="text-xs text-[#8a8a8a] shrink-0 mr-4 select-none">
+        <div className="flex items-center gap-1.5 text-xs text-[#8a8a8a] shrink-0 mr-4 select-none">
+          <img src={new URL('axiom-logo.png', window.location.href).href} alt="" className="w-4 h-4 object-contain" />
           Axiom
         </div>
 

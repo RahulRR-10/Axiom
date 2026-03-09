@@ -90,6 +90,7 @@ const PDFPage = React.memo(function PDFPage({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const textLayerRef = useRef<HTMLDivElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const [linkAnns, setLinkAnns] = useState<Array<{ rect: [number, number, number, number]; url: string; naturalHeight: number }>>([]);
   const cleanupSelectionRef = useRef<{
     mousedown: ((e: MouseEvent) => void) | null;
     mouseup: (() => void) | null;
@@ -126,12 +127,35 @@ const PDFPage = React.memo(function PDFPage({
     }
   }, [cssWidth, cssHeight]);
 
+  /* Fetch PDF link annotations for clickable URL overlays */
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const page = await pdf.getPage(pageNum);
+        if (cancelled) { page.cleanup(); return; }
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const rawAnns: any[] = await page.getAnnotations();
+        if (cancelled) { page.cleanup(); return; }
+        const viewport = page.getViewport({ scale: 1 });
+        const naturalHeight = viewport.height;
+        const links = rawAnns
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          .filter((a: any) => a.subtype === 'Link' && typeof a.url === 'string' && /^https?:\/\//i.test(a.url))
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          .map((a: any) => ({ rect: a.rect as [number, number, number, number], url: a.url as string, naturalHeight }));
+        setLinkAnns(links);
+        page.cleanup();
+      } catch { /* ignore */ }
+    })();
+    return () => { cancelled = true; };
+  }, [pdf, pageNum]);
+
   /* Render canvas + text layer */
   useEffect(() => {
     const canvas = canvasRef.current;
     const textLayerDiv = textLayerRef.current;
     if (!canvas || !textLayerDiv) return;
-
     let cancelled = false;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let renderTask: any = null;
@@ -701,6 +725,27 @@ const PDFPage = React.memo(function PDFPage({
         }}
       />
       <div ref={textLayerRef} className="textLayer" />
+      {/* ── PDF link annotation overlays ── */}
+      {linkAnns.map((link, i) => (
+        <div
+          key={i}
+          style={{
+            position: 'absolute',
+            left: link.rect[0] * scale,
+            top: (link.naturalHeight - link.rect[3]) * scale,
+            width: (link.rect[2] - link.rect[0]) * scale,
+            height: (link.rect[3] - link.rect[1]) * scale,
+            cursor: activeTool === 'none' ? 'pointer' : 'default',
+            pointerEvents: activeTool === 'none' ? 'auto' : 'none',
+            zIndex: 4,
+          }}
+          onClick={(e) => {
+            e.stopPropagation();
+            window.electronAPI.openExternal(link.url);
+          }}
+          title={link.url}
+        />
+      ))}
       <AnnotationLayer
         activeTool={activeTool}
         highlightColor={highlightColor}
@@ -1797,6 +1842,8 @@ export const PDFViewer: React.FC<Props> = ({
             fileId={effectiveFileId}
             vaultPath={vaultPath ?? ""}
             onAnnotationCreated={onAnnotationCreated}
+            annotations={mergedAnnotations}
+            onAnnotationDeleted={onAnnotationDeleted}
           />
         )}
       </div>

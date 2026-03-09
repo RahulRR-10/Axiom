@@ -42,6 +42,10 @@ export const rendererConfig: Configuration = {
           // the correct file:// path in production.
           to: 'main_window/pdf.worker.min.mjs',
         },
+        {
+          from: path.resolve(__dirname, 'assets/axiom-logo.png'),
+          to: 'main_window/axiom-logo.png',
+        },
       ],
     }),
   ],
