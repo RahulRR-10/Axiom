@@ -54,9 +54,11 @@ The AI integration is more than a browser tab. Axiom pulls the most relevant exc
 ### 🔍 Knowledge Base & Search
 
 - **Automatic Indexing** — Drop files into your vault and Axiom indexes them instantly via `chokidar` file watching with SHA-256 change detection to skip unchanged files
-- **Semantic Search** — `all-MiniLM-L6-v2` embeddings (384-dim) via `@xenova/transformers`, stored in LanceDB with cosine similarity ranking
-- **Full-Text Search** — Parallel FTS5 (SQLite) with BM25 ranking for exact keyword matching
+- **Semantic Search** — `Xenova/bge-small-en-v1.5` embeddings (384-dim) via `@xenova/transformers`, stored in LanceDB with cosine similarity ranking
+- **Full-Text Search** — FTS5 (SQLite) with BM25 ranking for exact keyword matching
 - **Hybrid Results** — Both result sets merged, deduplicated, and re-scored (40% keyword + 60% semantic); annotation-sourced chunks boosted 1.3×
+- **Query Expansion** — Related-concept hints injected at embed time to improve semantic recall without touching the stored index
+- **Embed Cache** — Two-tier cache (session in-memory + persistent SQLite) keyed on chunk text hash; unchanged chunks are never re-embedded across restarts
 - **Supported Formats** — PDF, Markdown, plain text
 
 ### 📄 Document Viewer
@@ -114,8 +116,8 @@ Every source has a **▶ expand toggle** so you can read the raw chunk inline wi
 | **Desktop** | Electron 40, electron-forge 7 |
 | **Frontend** | React 19, TypeScript ~4.5, Tailwind CSS 3 |
 | **Build** | Webpack 5, ts-loader, fork-ts-checker |
-| **Database** | better-sqlite3 (metadata + FTS5), LanceDB (vectors) |
-| **Embeddings** | `@xenova/transformers` — all-MiniLM-L6-v2, 384-dim |
+| **Database** | better-sqlite3 (metadata + FTS5 + embed cache), LanceDB (vectors) |
+| **Embeddings** | `@xenova/transformers` — `bge-small-en-v1.5`, 384-dim, batches of 48 |
 | **PDF** | pdfjs-dist (render), pdf-parse (extract), pdf-lib (export) |
 | **Markdown** | CodeMirror 6, react-markdown, remark-gfm, remark-math, rehype-katex |
 | **Math** | KaTeX 0.16 |
@@ -136,17 +138,22 @@ Every source has a **▶ expand toggle** so you can read the raw chunk inline wi
 │  │              │  │                 │  │                   │  │
 │  │ vaultHandlers│  │ text extraction │  │ session partitions│  │
 │  │ searchHandler│  │ chunking        │  │ header rewriting  │  │
-│  │ notesHandlers│  │ embedding       │  │ UA spoofing       │  │
+│  │ notesHandlers│  │ embed cache     │  │ UA spoofing       │  │
 │  │ annotHandlers│  │ fts5 + lancedb  │  │ auth popup proxy  │  │
 │  │ ai:vault-inj │  └────────┬────────┘  └───────────────────┘  │
 │  └──────┬───────┘           │                                   │
-│         │                   │                                   │
-│  ┌──────▼───────────────────▼───────────────────────────────┐  │
-│  │                    Database Layer                         │  │
-│  │   better-sqlite3 (files, chunks, notes, annotations,     │  │
-│  │   FTS5 virtual tables, schema_migrations)                 │  │
-│  │                 + LanceDB (vector store)                  │  │
-│  └───────────────────────────────────────────────────────────┘  │
+│         │           ┌───────▼────────────────────┐             │
+│         │           │     EmbedderManager         │             │
+│         │           │  search worker (8s timeout) │             │
+│         │           │  index  worker (60s timeout)│             │
+│         │           └───────────────────────────-─┘             │
+│  ┌──────▼──────────────────────────────────────────────────┐   │
+│  │                    Database Layer                        │   │
+│  │   better-sqlite3 (files, chunks, notes, annotations,    │   │
+│  │   embed_cache, settings, FTS5 virtual tables,           │   │
+│  │   schema_migrations)                                     │   │
+│  │                 + LanceDB (vector store)                 │   │
+│  └──────────────────────────────────────────────────────────┘   │
 └───────────────────────────────┬─────────────────────────────────┘
                                 │ contextBridge (preload)
 ┌───────────────────────────────▼─────────────────────────────────┐
@@ -184,9 +191,12 @@ Extract text (pdf-parse / fs.readFile)
 Chunk text (sliding window — 300 tokens, 50-token overlap)
         │
         ▼
-Embed chunks (@xenova/transformers, batches of 32)
+Per-chunk hash lookup ── cache hit? reuse vector, skip embed.
+        │ (cache miss)
+        ▼
+Embed chunks (bge-small-en-v1.5 via index worker, batches of 48)
         │
-        ├──► SQLite  (files → chunks → FTS5 virtual table)
+        ├──► SQLite  (files → chunks → FTS5 virtual table + embed_cache)
         └──► LanceDB (384-dim vectors)
 ```
 
@@ -195,9 +205,9 @@ Embed chunks (@xenova/transformers, batches of 32)
 ```
 User Query
     │
-    ├──► FTS5 keyword search          (BM25 ranked)
+    ├──► FTS5 keyword search                       (BM25 ranked)
     │
-    └──► Embed query → LanceDB        (cosine similarity, top-k)
+    └──► Query expansion → embed → LanceDB         (cosine similarity, top-k)
                 │
                 ▼
     Merge + deduplicate + score → SearchResult[]
@@ -223,6 +233,17 @@ ai:vault-inject IPC → executeJavaScript into active webview
 AI responds in webview · Sources panel renders with expand toggles
 ```
 
+### Dual-Worker Embedding
+
+`embedderManager.ts` spawns two independent worker threads backed by the same `bge-small-en-v1.5` WASM model:
+
+| Worker | Consumer | Timeout |
+|---|---|---|
+| **search worker** | `embedQuery()` in `searchHandlers.ts` | 8 s |
+| **index worker** | `embedChunks()` in `indexer.ts` | 60 s |
+
+Keeping the workers separate ensures that a large batch indexing run never blocks a real-time search request, eliminating the timeout flood that occurs when a single shared worker is busy.
+
 ---
 
 ## Getting Started
@@ -240,7 +261,7 @@ AI responds in webview · Sources panel renders with expand toggles
 
 ```bash
 git clone https://github.com/RahulRR-10/Axiom.git
-cd axiom
+cd Axiom
 npm install        # postinstall rebuilds native modules for Electron
 npm start          # dev mode with hot-reload
 ```
@@ -266,9 +287,10 @@ src/
 │   │   └── vaultInject.ts            # DOM injection into AI webviews
 │   ├── database/
 │   │   ├── schema.ts                 # SQLite connection, WAL mode, migration runner
-│   │   ├── migrations.ts             # Versioned schema migrations (001–004)
+│   │   ├── migrations.ts             # Versioned schema migrations (001–008)
 │   │   └── vectorStore.ts            # LanceDB wrapper (add / delete / query)
 │   ├── indexing/
+│   │   ├── embedCache.ts             # 2-tier embed cache (in-memory + SQLite)
 │   │   └── indexer.ts                # Text extraction, chunking, embedding pipeline
 │   ├── ipc/
 │   │   ├── vaultHandlers.ts
@@ -278,7 +300,8 @@ src/
 │   ├── vault/
 │   │   └── vaultWatcher.ts           # chokidar watcher
 │   └── workers/
-│       └── embedder.ts               # Embedding worker
+│       ├── embedder.ts               # Worker thread: ONNX model loading + inference
+│       └── embedderManager.ts        # Dual-worker manager (search + index workers)
 │
 ├── preload/
 │   └── index.ts                      # contextBridge — safe IPC surface
@@ -418,11 +441,14 @@ All renderer ↔ main communication is funnelled through a typed `electronAPI` o
 
 ## Database Schema
 
-Each vault stores its own SQLite database at `<vault>/.axiom/axiom.db` (WAL mode, foreign keys enabled, versioned migrations). Vector embeddings live separately in LanceDB at `<vault>/.axiom/vectors/`.
+Each vault stores its own SQLite database at `<vault>/.axiom/axiom.db` (WAL mode, foreign keys enabled, versioned migrations 001–008). Vector embeddings live separately in LanceDB at `<vault>/.axiom/vectors/`.
 
 ```sql
 -- Migration tracking
 schema_migrations (version TEXT PRIMARY KEY, applied_at INTEGER)
+
+-- App-level key/value settings (e.g. embedding_model, embedding_dim)
+settings (key TEXT PRIMARY KEY, value TEXT)
 
 -- Indexed files
 files (
@@ -445,11 +471,20 @@ chunks (
   page_or_slide INTEGER,
   text          TEXT NOT NULL,
   chunk_index   INTEGER,
-  is_annotation INTEGER DEFAULT 0
+  is_annotation INTEGER DEFAULT 0,
+  text_hash     TEXT               -- SHA-256 of chunk text, used for embed cache lookup
 )
 
 -- FTS5 virtual table (mirrors chunks)
 chunks_fts (text, file_id, page_or_slide)
+
+-- Persistent embedding cache (keyed by chunk text hash + model)
+embed_cache (
+  text_hash  TEXT PRIMARY KEY,
+  vector     BLOB NOT NULL,
+  model      TEXT NOT NULL,
+  created_at INTEGER DEFAULT (unixepoch())
+)
 
 -- Markdown notes
 notes (
@@ -498,6 +533,7 @@ npm run make       # platform-specific installers
 **Build notes:**
 - App source is bundled into an ASAR archive
 - `better-sqlite3` and `vectordb` are excluded from webpack and loaded at runtime; `electron-rebuild` in `postinstall` ensures the correct Electron ABI
+- The `bge-small-en-v1.5` ONNX model is downloaded on first launch and cached at `%APPDATA%\Axiom\models` (Windows) / `~/Library/Application Support/Axiom/models` (macOS)
 - Electron Fuses applied at package time: cookie encryption enabled, Node.js CLI inspect disabled, ASAR integrity checking enabled
 - `all-MiniLM-L6-v2` model weights are downloaded on first launch and cached locally by `transformers.js` — no internet connection required after that
 
