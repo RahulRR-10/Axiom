@@ -9,7 +9,7 @@ import { registerNotesHandlers } from './ipc/notesHandlers';
 import { setupAISessions, writeWebviewPreload } from './ai/spoofing';
 import { injectPrompt } from './ai/vaultInject';
 import { initAutoUpdater } from './updater';
-import { warmup as warmupEmbedder } from './workers/embedder';
+import { initEmbedders, teardownEmbedders } from './workers/embedderManager';
 import { AI_CHANNELS } from '../shared/ipc/channels';
 import type { VaultInjectRequest, VaultInjectResponse } from '../shared/ipc/contracts';
 import { writeLog, logFile } from './logger';
@@ -321,10 +321,10 @@ app.whenReady().then(() => {
   logStep('initAutoUpdater');
   initAutoUpdater(() => mainWindow);
 
-  // Warm up the embedder worker — load model into memory before first query
-  // Don't await — do it in the background so app launch stays fast
-  warmupEmbedder().catch((err) => {
-    try { writeLog('embedder:warmup', `Failed: ${err}`); } catch { /* ignore */ }
+  // Spawn and load both embedder workers (search + indexing)
+  // so the first query has a warm worker ready
+  initEmbedders().catch((err) => {
+    try { writeLog('embedder:init', `Failed: ${err}`); } catch { /* ignore */ }
   });
 
   logStep('startup complete');
@@ -334,6 +334,7 @@ app.whenReady().then(() => {
 
 app.on('before-quit', () => {
   try { writeLog('APP:quit', 'before-quit fired'); } catch { /* ignore */ }
+  teardownEmbedders();
 });
 
 app.on('window-all-closed', () => {

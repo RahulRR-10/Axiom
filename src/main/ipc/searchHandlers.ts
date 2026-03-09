@@ -4,7 +4,7 @@ import { SEARCH_CHANNELS } from '../../shared/ipc/channels';
 import type { SearchQueryResponse } from '../../shared/ipc/contracts';
 import type { SearchResult } from '../../shared/types';
 import { getDb } from '../database/schema';
-import { embed } from '../workers/embedder';
+import { embedQuery } from '../workers/embedderManager';
 import { QUERY_PREFIX } from '../workers/embedder';
 import { searchVectors } from '../database/vectorStore';
 import { writeLog } from '../logger';
@@ -16,7 +16,7 @@ export function registerSearchHandlers(): void {
     SEARCH_CHANNELS.QUERY,
     async (_e, query: string, vaultPath: string, subject?: string, fileType?: string) => {
       try {
-        return await handleSearch(query, vaultPath, subject, fileType);
+        return await runSearch(query, vaultPath, subject, fileType);
       } catch (err) {
         try { writeLog('search:ERROR', err); } catch { /* ignore */ }
         throw err;
@@ -25,7 +25,29 @@ export function registerSearchHandlers(): void {
   );
 }
 
+// ── In-flight guard — prevents parallel embed calls from rapid keystrokes ─────
+let searchInFlight: Promise<SearchQueryResponse> | null = null;
+
 // ── Unified search handler ────────────────────────────────────────────────────
+
+async function runSearch(
+  query: string,
+  vaultPath: string,
+  subject?: string,
+  fileType?: string,
+): Promise<SearchQueryResponse> {
+  if (!query.trim()) return [];
+
+  // Wait for any running search to complete before starting a new one
+  if (searchInFlight) {
+    await searchInFlight.catch(() => {});
+  }
+
+  searchInFlight = handleSearch(query, vaultPath, subject, fileType)
+    .finally(() => { searchInFlight = null; });
+
+  return searchInFlight;
+}
 
 async function handleSearch(
   query: string,
@@ -56,8 +78,8 @@ async function handleSearch(
   const EMBED_TIMEOUT_MS = 6_000; // fall back to FTS-only if embedder is saturated
   let embedTimeoutId: ReturnType<typeof setTimeout>;
   const semanticPromise: Promise<SemRow[]> = Promise.race([
-    embed(QUERY_PREFIX + expandedQuery)
-      .then((vec) => {
+    embedQuery([QUERY_PREFIX + expandedQuery])
+      .then(([vec]) => {
         clearTimeout(embedTimeoutId);
         try { writeLog('search:embed', `${Date.now() - tEmbed}ms`, true); } catch { /* ignore */ }
         return searchVectors(vaultPath, vec, 30);

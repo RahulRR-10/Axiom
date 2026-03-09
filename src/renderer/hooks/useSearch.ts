@@ -36,7 +36,7 @@ export function useSearch(): UseSearchReturn {
                     console.error(err);
                     setIsSearching(false);
                 });
-        }, 200);
+        }, 300);
     }, []);
 
     const clearResults = useCallback(() => {

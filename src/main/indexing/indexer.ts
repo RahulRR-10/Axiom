@@ -6,7 +6,8 @@ import { BrowserWindow } from 'electron';
 import { v4 as uuidv4 } from 'uuid';
 import { Worker } from 'worker_threads';
 
-import { embedBatch, DOC_PREFIX, MODEL_NAME } from '../workers/embedder';
+import { embedChunks } from '../workers/embedderManager';
+import { DOC_PREFIX, MODEL_NAME } from '../workers/embedder';
 import { addVectors, deleteVectorsByFileId } from '../database/vectorStore';
 import { getDb } from '../database/schema';
 import { writeLog } from '../logger';
@@ -199,10 +200,10 @@ async function indexFileInner(filePath: string, vaultPath: string): Promise<void
     if (toEmbed.length > 0) {
       const texts = toEmbed.map(c => DOC_PREFIX + c.embed_text);
       try {
-        vectors = await embedBatch(texts);
+        vectors = await embedChunks(texts);
       } catch (embedErr) {
-        try { writeLog('indexer:ERROR', `embedBatch failed — skipping vectors for batch: ${embedErr}`); } catch { /* ignore */ }
-        console.warn('[indexer] embedBatch error — skipping LanceDB write for this batch:', embedErr);
+        try { writeLog('indexer:ERROR', `embedChunks failed — skipping vectors for batch: ${embedErr}`); } catch { /* ignore */ }
+        console.warn('[indexer] embedChunks error — skipping LanceDB write for this batch:', embedErr);
         // Still write chunks to SQLite even if embedding fails
         insertChunkBatch(batch);
         embeddedChunks += batch.length;

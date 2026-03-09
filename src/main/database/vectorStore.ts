@@ -50,6 +50,18 @@ async function getTable(vaultPath: string): Promise<LanceTable> {
 
 export async function addVectors(vaultPath: string, chunks: ChunkWithVector[]): Promise<void> {
   if (chunks.length === 0) return;
+
+  // Runtime dim guard — prevents cryptic LanceDB schema errors
+  for (const c of chunks) {
+    if (!c.vector || c.vector.length !== VECTOR_DIM) {
+      throw new Error(
+        `addVectors: dim mismatch for chunk ${c.id}. ` +
+        `Expected ${VECTOR_DIM}, got ${c.vector?.length ?? 0}. ` +
+        `Did the model change? Run checkModelCompatibility() on startup.`
+      );
+    }
+  }
+
   const t = Date.now();
   try {
     const table = await getTable(vaultPath);

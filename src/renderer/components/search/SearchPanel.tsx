@@ -159,7 +159,7 @@ export const SearchPanel: React.FC<SearchPanelProps> = ({ vaultPath }) => {
           console.error("[search]", err);
           setSearching(false);
         });
-    }, 200);
+    }, 300);
   }, [query, vaultPath]);
 
   // ── Derived data ──────────────────────────────────────────────────────
