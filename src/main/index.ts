@@ -27,6 +27,12 @@ function writeLog(label: string, err: unknown): void {
   console.error(line);
 }
 
+function logStep(step: string): void {
+  const line = `[${new Date().toISOString()}] STEP: ${step}\n`;
+  try { fs.appendFileSync(logFile, line); } catch { /* ignore */ }
+  console.log(line.trim());
+}
+
 // Catch unhandled promise rejections (most common silent crash cause)
 process.on('unhandledRejection', (reason) => {
   writeLog('unhandledRejection', reason);
@@ -37,6 +43,18 @@ process.on('uncaughtException', (err) => {
   writeLog('uncaughtException', err);
   dialog.showErrorBox('Axiom crashed', `${err.message}\n\nSee crash.log in:\n${logFile}`);
   app.exit(1);
+});
+
+// Catch renderer / GPU / utility process crashes
+app.on('render-process-gone', (_event, wc, details) => {
+  writeLog('render-process-gone', `reason=${details.reason} exitCode=${details.exitCode} url=${wc.getURL()}`);
+  dialog.showErrorBox('Renderer crashed', `Reason: ${details.reason}\nExit code: ${details.exitCode}\n\nSee crash.log in:\n${logFile}`);
+});
+
+app.on('child-process-gone', (_event, details) => {
+  if (details.type === 'GPU' || details.reason !== 'clean-exit') {
+    writeLog('child-process-gone', `type=${details.type} reason=${details.reason} exitCode=${details.exitCode}`);
+  }
 });
 
 const appIcon = path.join(
@@ -242,18 +260,26 @@ const createWindow = (): void => {
 const webviewMap = new Map<string, Electron.WebContents>();
 
 app.whenReady().then(() => {
+  logStep('app ready');
   // Remove default menu so Electron's built-in Ctrl+W accelerator doesn't close the window.
   // The renderer handles Ctrl+W itself to close workspace tabs.
   Menu.setApplicationMenu(null);
 
+  logStep('registerWindowIpcHandlers');
   registerWindowIpcHandlers();
+  logStep('registerVaultHandlers');
   registerVaultHandlers();
+  logStep('registerSearchHandlers');
   registerSearchHandlers();
+  logStep('registerAnnotationHandlers');
   registerAnnotationHandlers();
+  logStep('registerNotesHandlers');
   registerNotesHandlers();
 
+  logStep('setupAISessions');
   // AI webview spoofing — rewrite headers + write fingerprint preload to disk
   setupAISessions();
+  logStep('writeWebviewPreload');
   const aiPreloadURL = writeWebviewPreload();
   ipcMain.handle('ai:getPreloadPath', () => aiPreloadURL);
 
@@ -271,8 +297,13 @@ app.whenReady().then(() => {
     return injectPrompt(wc, req.provider, req.prompt);
   });
 
+  logStep('createWindow');
   createWindow();
+  logStep('initAutoUpdater');
   initAutoUpdater(() => mainWindow);
+  logStep('startup complete');
+}).catch((err) => {
+  writeLog('app.whenReady error', err);
 });
 
 app.on('window-all-closed', () => {

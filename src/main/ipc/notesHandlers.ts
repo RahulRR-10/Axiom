@@ -246,33 +246,20 @@ export function registerNotesHandlers(): void {
         NOTES_CHANNELS.LIST,
         async (_event, vaultPath: string) => {
             const db = getDb(vaultPath);
-            // Ordered by updated_at DESC so the first occurrence per path is the most recent
             const noteRows = db.prepare(
                 'SELECT * FROM notes ORDER BY updated_at DESC',
             ).all() as NoteRow[];
 
-            // Deduplicate notes rows by normalized file_path and skip files deleted from disk
-            const seenPaths = new Map<string, NoteSummary>();
-            for (const row of noteRows) {
-                if (row.file_path) {
-                    const key = path.normalize(row.file_path).toLowerCase();
-                    if (!seenPaths.has(key) && fs.existsSync(row.file_path)) {
-                        seenPaths.set(key, rowToSummary(row));
-                    }
-                } else {
-                    seenPaths.set(row.id, rowToSummary(row));
-                }
-            }
-
-            // Include .md files from the files table that aren't represented yet and still exist
+            // Also include .md files from the files table that don't have notes entries yet
+            const noteFilePaths = new Set(noteRows.map(r => r.file_path).filter(Boolean));
             const mdFiles = db.prepare(
                 "SELECT id, path, name, created_at FROM files WHERE type = 'md' ORDER BY name ASC",
             ).all() as Array<{ id: string; path: string; name: string; created_at: number }>;
 
+            const extraNotes: NoteSummary[] = [];
             for (const f of mdFiles) {
-                const key = path.normalize(f.path).toLowerCase();
-                if (!seenPaths.has(key) && fs.existsSync(f.path)) {
-                    seenPaths.set(key, {
+                if (!noteFilePaths.has(f.path)) {
+                    extraNotes.push({
                         id: f.id,
                         title: f.name.replace(/\.md$/i, ''),
                         file_path: f.path,
@@ -285,7 +272,7 @@ export function registerNotesHandlers(): void {
                 }
             }
 
-            return Array.from(seenPaths.values());
+            return [...noteRows.map(rowToSummary), ...extraNotes];
         },
     );
 
@@ -417,24 +404,19 @@ export function registerNotesHandlers(): void {
             const db = getDb(vaultPath);
             let row = db.prepare('SELECT * FROM notes WHERE id = ?').get(noteId) as NoteRow | undefined;
 
-            // noteId might be a files.id — resolve via file_path first to avoid creating
-            // duplicate notes rows for the same file.
+            // noteId might be a files.id — resolve and create notes entry on the fly
             if (!row) {
                 const fileRow = db.prepare('SELECT id, path, name FROM files WHERE id = ?').get(noteId) as { id: string; path: string; name: string } | undefined;
                 if (fileRow && fileRow.path.endsWith('.md')) {
-                    // Check if a notes record already exists for this file (different primary key)
-                    row = db.prepare('SELECT * FROM notes WHERE file_path = ?').get(fileRow.path) as NoteRow | undefined;
-                    if (!row) {
-                        const content = fs.existsSync(fileRow.path) ? fs.readFileSync(fileRow.path, 'utf-8') : '';
-                        const title = path.basename(fileRow.path, '.md');
-                        const subject = path.relative(vaultPath, path.dirname(fileRow.path)).split(path.sep)[0] || null;
-                        const now = Math.floor(Date.now() / 1000);
-                        db.prepare(`
-                            INSERT OR IGNORE INTO notes (id, title, content, file_path, subject, source_file_id, source_page, created_at, updated_at)
-                            VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?)
-                        `).run(noteId, title, content, fileRow.path, subject, now, now);
-                        row = db.prepare('SELECT * FROM notes WHERE id = ?').get(noteId) as NoteRow | undefined;
-                    }
+                    const content = fs.existsSync(fileRow.path) ? fs.readFileSync(fileRow.path, 'utf-8') : '';
+                    const title = path.basename(fileRow.path, '.md');
+                    const subject = path.relative(vaultPath, path.dirname(fileRow.path)).split(path.sep)[0] || null;
+                    const now = Math.floor(Date.now() / 1000);
+                    db.prepare(`
+                        INSERT OR IGNORE INTO notes (id, title, content, file_path, subject, source_file_id, source_page, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?)
+                    `).run(noteId, title, content, fileRow.path, subject, now, now);
+                    row = db.prepare('SELECT * FROM notes WHERE id = ?').get(noteId) as NoteRow | undefined;
                 }
             }
 
@@ -442,12 +424,7 @@ export function registerNotesHandlers(): void {
 
             assertInsideVault(vaultPath, row.file_path);
 
-            // If the file has been deleted from disk, refuse to recreate it.
-            // The renderer should fall back to the next available note.
-            if (!fs.existsSync(row.file_path)) {
-                return { ok: false as const, reason: 'file_deleted' };
-            }
-            // normalize whitespace, remove hyphenation, join broken lines
+            // Clean the selected text: normalize whitespace, remove hyphenation, join broken lines
             const cleaned = selectedText
                 .replace(/(\w)-\n(\w)/g, '$1$2')   // join hyphenated line breaks
                 .replace(/\n+/g, ' ')               // join broken lines
@@ -472,6 +449,12 @@ export function registerNotesHandlers(): void {
             db.prepare('UPDATE notes SET content = ?, updated_at = ? WHERE id = ?')
                 .run(newContent, now, noteId);
 
+            // Update lastUsedNoteId
+            db.prepare(
+                `INSERT INTO settings (key, value) VALUES ('lastUsedNoteId', ?)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+            ).run(noteId);
+
             // Broadcast to other windows (not the sender — avoids closing the note tab)
             const normalizedPath = path.normalize(row.file_path).toLowerCase();
             for (const win of BrowserWindow.getAllWindows()) {
@@ -480,7 +463,7 @@ export function registerNotesHandlers(): void {
                 }
             }
 
-            return { ok: true, noteTitle: path.basename(row.file_path, '.md') };
+            return { ok: true, noteTitle: row.title };
         },
     );
 
@@ -509,20 +492,10 @@ export function registerNotesHandlers(): void {
         NOTES_CHANNELS.GET_LAST_USED,
         async (_event, vaultPath: string) => {
             const db = getDb(vaultPath);
-
-            // Return the most recently indexed (updated_at) note whose file still exists.
-            // Falls back to most recently created if nothing has been updated yet.
-            const allNotes = db.prepare(
-                'SELECT id, file_path FROM notes ORDER BY updated_at DESC, created_at DESC',
-            ).all() as Array<{ id: string; file_path: string | null }>;
-
-            for (const n of allNotes) {
-                if (n.file_path && fs.existsSync(n.file_path)) {
-                    return n.id;
-                }
-            }
-
-            return null;
+            const row = db.prepare(
+                "SELECT value FROM settings WHERE key = 'lastUsedNoteId'",
+            ).get() as { value: string } | undefined;
+            return row?.value ?? null;
         },
     );
 

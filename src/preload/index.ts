@@ -107,7 +107,7 @@ const electronAPI = {
     selectedText: string,
     sourceFile: string,
     sourcePage: number,
-  ): Promise<{ ok: boolean; noteTitle?: string; reason?: string }> =>
+  ): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(NOTES_CHANNELS.APPEND, vaultPath, noteId, selectedText, sourceFile, sourcePage),
 
   recentNotes: (vaultPath: string): Promise<{ notes: import('../shared/types').NoteSummary[]; lastUsedNoteId: string | null }> =>

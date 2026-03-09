@@ -94,7 +94,6 @@ export const AIPanel: React.FC<AIPanelProps> = ({ vaultPath }) => {
       const { text, customPrompt } = (e as CustomEvent<{ text: string; customPrompt?: string }>).detail;
       if (!text.trim() || loading) return;
 
-      setLoading(true);
       setError(null);
 
       try {
@@ -121,8 +120,6 @@ export const AIPanel: React.FC<AIPanelProps> = ({ vaultPath }) => {
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : "Something went wrong";
         setError(message);
-      } finally {
-        setLoading(false);
       }
     };
 
