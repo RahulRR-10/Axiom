@@ -41,6 +41,8 @@ declare global {
       renameNote: (vaultPath: string, noteId: string, newTitle: string) => Promise<NoteSummary>;
       exportNotePdf: (html: string, mdFilePath: string, vaultPath: string) => Promise<string>;
       appendToNote: (vaultPath: string, noteId: string, selectedText: string, sourceFile: string, sourcePage: number) => Promise<{ ok: boolean; noteTitle?: string; reason?: string }>;
+      appendChunk: (vaultPath: string, noteId: string, text: string, sourceFile: string, sourcePage: number) => Promise<{ ok: boolean; noteTitle?: string; duplicate?: boolean; reason?: string }>;
+      onNoteLiveAppend: (callback: (payload: { noteId: string; filePath: string; chunk: string }) => void) => () => void;
       recentNotes: (vaultPath: string) => Promise<{ notes: NoteSummary[]; lastUsedNoteId: string | null }>;
       getLastUsedNoteId: (vaultPath: string) => Promise<string | null>;
       setLastUsedNoteId: (vaultPath: string, noteId: string) => Promise<void>;
@@ -67,7 +69,7 @@ declare global {
       // ── AI panel ─────────────────────────────────────────────────────────
       getAIPreloadPath: () => Promise<string>;
       registerWebview: (provider: string, webContentsId: number) => void;
-      vaultInject: (provider: string, prompt: string) => Promise<{ success: boolean; error?: string }>;
+      vaultInject: (provider: string, serviceId: string, prompt: string) => Promise<{ success: boolean; error?: string }>;
 
       // ── Window controls ────────────────────────────────────────────────
       minimizeWindow: () => Promise<void>;

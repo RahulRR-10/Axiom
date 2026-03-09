@@ -545,4 +545,101 @@ export function registerNotesHandlers(): void {
             } catch (err) { try { writeLog('IPC:ERROR', `channel:notes:setLastUsed error:${err instanceof Error ? err.message : String(err)}`); } catch { /* ignore */ } throw err; }
         },
     );
+
+    // ── notes:appendChunk ────────────────────────────────────────────────────
+    // New handler: checks existence, detects duplicates, handles live-vs-disk
+    // append, and broadcasts to other windows.
+    ipcMain.handle(
+        NOTES_CHANNELS.APPEND_CHUNK,
+        async (
+            _event,
+            vaultPath: string,
+            noteId: string,
+            text: string,
+            sourceFile: string,
+            sourcePage: number,
+        ): Promise<{ ok: boolean; noteTitle?: string; duplicate?: boolean; reason?: string }> => {
+            try { writeLog('IPC:received', 'notes:appendChunk'); } catch { /* ignore */ }
+            try {
+            const db = getDb(vaultPath);
+            let row = db.prepare('SELECT * FROM notes WHERE id = ?').get(noteId) as NoteRow | undefined;
+
+            // noteId might be a files.id — resolve via file_path
+            if (!row) {
+                const fileRow = db.prepare('SELECT id, path, name FROM files WHERE id = ?').get(noteId) as { id: string; path: string; name: string } | undefined;
+                if (fileRow && fileRow.path.endsWith('.md')) {
+                    const content = fs.existsSync(fileRow.path) ? fs.readFileSync(fileRow.path, 'utf-8') : '';
+                    const title = path.basename(fileRow.path, '.md');
+                    const subject = path.relative(vaultPath, path.dirname(fileRow.path)).split(path.sep)[0] || null;
+                    const now = Math.floor(Date.now() / 1000);
+                    db.prepare(`
+                        INSERT OR IGNORE INTO notes (id, title, content, file_path, subject, source_file_id, source_page, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?)
+                    `).run(noteId, title, content, fileRow.path, subject, now, now);
+                    row = db.prepare('SELECT * FROM notes WHERE id = ?').get(noteId) as NoteRow | undefined;
+                }
+            }
+
+            // Note doesn't exist at all
+            if (!row || !row.file_path) {
+                return { ok: false, reason: 'not_found' };
+            }
+
+            // Note's file was deleted from disk
+            if (!fs.existsSync(row.file_path)) {
+                // Clean up the DB row so it doesn't linger
+                db.prepare('DELETE FROM notes WHERE id = ?').run(noteId);
+                return { ok: false, reason: 'deleted' };
+            }
+
+            assertInsideVault(vaultPath, row.file_path);
+
+            // Clean the selected text
+            const cleaned = text
+                .replace(/(\w)-\n(\w)/g, '$1$2')
+                .replace(/\n+/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim();
+
+            // Duplicate check: see if the cleaned text already exists in the note
+            const existing = fs.readFileSync(row.file_path, 'utf-8');
+            const isDuplicate = existing.includes(cleaned);
+
+            // Format the block
+            const block = `> ${cleaned}\n\n*From: ${sourceFile}, p.${sourcePage}*\n\n---\n`;
+
+            // Append with proper spacing
+            const separator = existing.length === 0 ? '' : existing.endsWith('\n\n') ? '' : existing.endsWith('\n') ? '\n' : '\n\n';
+            const newContent = existing + separator + block;
+
+            try {
+                fs.writeFileSync(row.file_path, newContent, 'utf-8');
+            } catch {
+                return { ok: false, reason: 'write_failed', noteTitle: row.title };
+            }
+
+            // Update DB
+            const now = Math.floor(Date.now() / 1000);
+            db.prepare('UPDATE notes SET content = ?, updated_at = ? WHERE id = ?')
+                .run(newContent, now, noteId);
+
+            // Update lastUsedNoteId
+            db.prepare(
+                `INSERT INTO settings (key, value) VALUES ('lastUsedNoteId', ?)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+            ).run(noteId);
+
+            // Broadcast live append event to ALL windows so open editors refresh
+            for (const win of BrowserWindow.getAllWindows()) {
+                win.webContents.send('notes:liveAppend', {
+                    noteId,
+                    filePath: row.file_path,
+                    chunk: block,
+                });
+            }
+
+            return { ok: true, noteTitle: row.title, duplicate: isDuplicate };
+            } catch (err) { try { writeLog('IPC:ERROR', `channel:notes:appendChunk error:${err instanceof Error ? err.message : String(err)}`); } catch { /* ignore */ } throw err; }
+        },
+    );
 }

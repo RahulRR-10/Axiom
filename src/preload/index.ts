@@ -110,6 +110,23 @@ const electronAPI = {
   ): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(NOTES_CHANNELS.APPEND, vaultPath, noteId, selectedText, sourceFile, sourcePage),
 
+  appendChunk: (
+    vaultPath: string,
+    noteId: string,
+    text: string,
+    sourceFile: string,
+    sourcePage: number,
+  ): Promise<{ ok: boolean; noteTitle?: string; duplicate?: boolean; reason?: string }> =>
+    ipcRenderer.invoke(NOTES_CHANNELS.APPEND_CHUNK, vaultPath, noteId, text, sourceFile, sourcePage),
+
+  onNoteLiveAppend: (
+    callback: (payload: { noteId: string; filePath: string; chunk: string }) => void,
+  ): (() => void) => {
+    const listener = (_: unknown, payload: { noteId: string; filePath: string; chunk: string }): void => callback(payload);
+    ipcRenderer.on('notes:liveAppend', listener);
+    return () => ipcRenderer.removeListener('notes:liveAppend', listener);
+  },
+
   recentNotes: (vaultPath: string): Promise<{ notes: import('../shared/types').NoteSummary[]; lastUsedNoteId: string | null }> =>
     ipcRenderer.invoke(NOTES_CHANNELS.RECENT, vaultPath),
 
@@ -190,8 +207,8 @@ const electronAPI = {
   registerWebview: (provider: string, webContentsId: number): void =>
     ipcRenderer.send(AI_CHANNELS.REGISTER_WEBVIEW, { provider, webContentsId }),
 
-  vaultInject: (provider: string, prompt: string): Promise<{ success: boolean; error?: string }> =>
-    ipcRenderer.invoke(AI_CHANNELS.VAULT_INJECT, { provider, prompt }),
+  vaultInject: (provider: string, serviceId: string, prompt: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke(AI_CHANNELS.VAULT_INJECT, { provider, serviceId, prompt }),
 
   // ── Window controls ──────────────────────────────────────────────────────
   minimizeWindow: (): Promise<void> =>

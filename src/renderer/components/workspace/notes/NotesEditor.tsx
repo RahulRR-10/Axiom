@@ -556,6 +556,34 @@ export const NotesEditor: React.FC<NotesEditorProps> = ({ filePath, noteId, vaul
         return () => window.removeEventListener('noteContentAppended', handler);
     }, [noteId, vaultPath]);
 
+    // ── Live append from notes:appendChunk IPC broadcast ──────────────────
+    // When another window (or this one) appends a chunk to the note currently
+    // open in the editor, reload from disk so CodeMirror stays in sync.
+    useEffect(() => {
+        const cleanup = window.electronAPI.onNoteLiveAppend((payload) => {
+            if (payload.noteId !== noteId) return;
+            // Re-read from disk to pick up the freshly written content
+            window.electronAPI.readNote(vaultPath, noteId)
+                .then((note) => {
+                    setContent(note.content);
+                    lastLoadedAtRef.current = Math.floor(Date.now() / 1000);
+                    const view = viewRef.current;
+                    if (view) {
+                        const currentDoc = view.state.doc.toString();
+                        if (currentDoc !== note.content) {
+                            view.dispatch({
+                                changes: { from: 0, to: currentDoc.length, insert: note.content },
+                            });
+                        }
+                    }
+                })
+                .catch((err) => {
+                    console.error('[NotesEditor] Failed to refresh after liveAppend:', err);
+                });
+        });
+        return cleanup;
+    }, [noteId, vaultPath]);
+
     // ── Keyboard shortcut: Ctrl+E toggles modes ────────────────────────────
     useEffect(() => {
         const onKeyDown = (e: KeyboardEvent) => {

@@ -82,7 +82,7 @@ export type NotesExportPdfRequest = { html: string; mdFilePath: string };
 export type NotesExportPdfResponse = string; // absolute path of the written PDF
 
 // ── ai:vault-inject ─────────────────────────────────────────────────────────
-export type VaultInjectRequest = { provider: string; prompt: string };
+export type VaultInjectRequest = { provider: string; serviceId: string; prompt: string };
 export type VaultInjectResponse = { success: boolean; error?: string };
 // ── notes:append ─────────────────────────────────────────────────────────
 export type NotesAppendRequest = {
@@ -93,6 +93,21 @@ export type NotesAppendRequest = {
   sourcePage: number;
 };
 export type NotesAppendResponse = { ok: boolean; noteTitle?: string; reason?: string };
+
+// ── notes:appendChunk ────────────────────────────────────────────────────
+export type NotesAppendChunkRequest = {
+  vaultPath: string;
+  noteId: string;
+  text: string;
+  sourceFile: string;
+  sourcePage: number;
+};
+export type NotesAppendChunkResponse = {
+  ok: boolean;
+  noteTitle?: string;
+  duplicate?: boolean;
+  reason?: string; // 'deleted' | 'not_found' | 'write_failed'
+};
 
 // ── notes:recent ─────────────────────────────────────────────────────────
 export type NotesRecentRequest = { vaultPath: string };

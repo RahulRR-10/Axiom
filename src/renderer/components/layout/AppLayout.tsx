@@ -2,6 +2,7 @@ import React, { useState, useCallback, useEffect, useRef } from "react";
 
 import { Search } from "lucide-react";
 import { AIPanel } from "../ai/AIPanel";
+import type { SearchResult } from "../../../shared/types";
 import { SearchPanel } from "../search/SearchPanel";
 import { VaultSidebar } from "../vault/VaultSidebar";
 import { Workspace } from "../workspace/Workspace";
@@ -18,6 +19,9 @@ export const AppLayout: React.FC = () => {
   const [updateReady, setUpdateReady] = useState<boolean>(false);
   const [isResizingAI, setIsResizingAI] = useState<boolean>(false);
   const [aiQuestion, setAiQuestion] = useState<string>('');
+  const [aiSources, setAiSources] = useState<SearchResult[]>([]);
+  const [sourcesOpen, setSourcesOpen] = useState(false);
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const isDraggingAI = useRef<boolean>(false);
   const dragStartX = useRef<number>(0);
   const dragStartW = useRef<number>(340);
@@ -267,7 +271,7 @@ export const AppLayout: React.FC = () => {
               className="hover:bg-[#4a9eff]/40"
             />
           )}
-          {aiCollapsed ? (
+          {aiCollapsed && (
             <div className="h-full w-full flex flex-col">
               <div className="h-10 border-b border-[#2a2a2a] flex items-center justify-center">
                 <button
@@ -280,50 +284,137 @@ export const AppLayout: React.FC = () => {
                 </button>
               </div>
             </div>
-          ) : (
-            <div className="h-full w-full flex flex-col overflow-hidden">
-              <div className="h-10 border-b border-[#2a2a2a] flex items-center px-2 gap-1.5">
-                <span className="text-xs text-[#8a8a8a] shrink-0">AI</span>
-                <input
-                  value={aiQuestion}
-                  onChange={(e) => setAiQuestion(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && aiQuestion.trim() && vaultPath) {
-                      window.dispatchEvent(new CustomEvent('ai:ask', { detail: { question: aiQuestion } }));
-                      setAiQuestion('');
-                    }
-                  }}
-                  placeholder="Ask your study material..."
-                  disabled={!vaultPath}
-                  className="flex-1 bg-[#141414] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-[#d4d4d4] outline-none placeholder-[#4a4a4a] focus:border-[#4a9eff] disabled:opacity-50 min-w-0"
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (aiQuestion.trim() && vaultPath) {
-                      window.dispatchEvent(new CustomEvent('ai:ask', { detail: { question: aiQuestion } }));
-                      setAiQuestion('');
-                    }
-                  }}
-                  disabled={!aiQuestion.trim() || !vaultPath}
-                  className="shrink-0 px-2 py-1 rounded text-xs font-medium bg-[#4a9eff] text-white hover:bg-[#3a8eff] disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  Ask
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setAiCollapsed(true)}
-                  className="h-7 w-7 rounded-md text-[#d4d4d4] hover:bg-[#2a2a2a] flex items-center justify-center shrink-0"
-                  aria-label="Collapse AI panel"
-                >
-                  →
-                </button>
-              </div>
-              <div className="flex-1 overflow-hidden">
-                <AIPanel vaultPath={vaultPath} />
-              </div>
-            </div>
           )}
+          <div className="h-full w-full flex flex-col overflow-hidden" style={{ display: aiCollapsed ? "none" : "flex" }}>
+            <div className="h-10 border-b border-[#2a2a2a] flex items-center px-2 gap-1.5">
+              <span className="text-xs text-[#8a8a8a] shrink-0">AI</span>
+              <input
+                value={aiQuestion}
+                onChange={(e) => setAiQuestion(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && aiQuestion.trim() && vaultPath) {
+                    window.dispatchEvent(new CustomEvent('ai:ask', { detail: { question: aiQuestion } }));
+                    setAiQuestion('');
+                  }
+                }}
+                placeholder="Ask your study material..."
+                disabled={!vaultPath}
+                className="flex-1 bg-[#141414] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-[#d4d4d4] outline-none placeholder-[#4a4a4a] focus:border-[#4a9eff] disabled:opacity-50 min-w-0"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  if (aiQuestion.trim() && vaultPath) {
+                    window.dispatchEvent(new CustomEvent('ai:ask', { detail: { question: aiQuestion } }));
+                    setAiQuestion('');
+                  }
+                }}
+                disabled={!aiQuestion.trim() || !vaultPath}
+                className="shrink-0 px-2 py-1 rounded text-xs font-medium bg-[#4a9eff] text-white hover:bg-[#3a8eff] disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Ask
+              </button>
+              <button
+                type="button"
+                onClick={() => aiSources.length > 0 && setSourcesOpen((v) => !v)}
+                disabled={aiSources.length === 0}
+                className={`shrink-0 px-2 py-1 rounded text-xs font-medium transition-colors ${
+                  aiSources.length > 0
+                    ? "text-[#8a8a8a] hover:text-[#ccc] hover:bg-[#2a2a2a] cursor-pointer"
+                    : "text-[#3a3a3a] cursor-default"
+                }`}
+                title={aiSources.length > 0 ? "Toggle sources" : "No sources yet"}
+              >
+                Sources{aiSources.length > 0 ? ` (${aiSources.length})` : ""}
+              </button>
+              <button
+                type="button"
+                onClick={() => setAiCollapsed(true)}
+                className="h-7 w-7 rounded-md text-[#d4d4d4] hover:bg-[#2a2a2a] flex items-center justify-center shrink-0"
+                aria-label="Collapse AI panel"
+              >
+                →
+              </button>
+            </div>
+            {/* Sources panel */}
+            {sourcesOpen && aiSources.length > 0 && (
+              <div
+                className="shrink-0 border-b border-[#2a2a2a] bg-[#1a1a1a]"
+                style={{ maxHeight: 180, overflowY: "auto" }}
+              >
+                {aiSources.map((source) => {
+                  const isExpanded = expandedIds.has(source.id);
+                  return (
+                    <div key={source.id} className="px-2 py-1">
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          className="text-[10px] text-[#6a6a6a] hover:text-[#aaa] w-4 text-center shrink-0"
+                          onClick={() => {
+                            setExpandedIds((prev) => {
+                              const next = new Set(prev);
+                              isExpanded ? next.delete(source.id) : next.add(source.id);
+                              return next;
+                            });
+                          }}
+                        >
+                          {isExpanded ? "▼" : "▶"}
+                        </button>
+                        <span className="text-[11px] text-[#bbb] truncate flex-1">
+                          {source.file_name}
+                          {source.page_or_slide != null ? ` — Page ${source.page_or_slide}` : ""}
+                        </span>
+                        <button
+                          type="button"
+                          className="text-[10px] text-[#5a5a5a] hover:text-[#aaa] shrink-0 px-1"
+                          onClick={() => {
+                            window.dispatchEvent(
+                              new CustomEvent("openFile", {
+                                detail: {
+                                  filePath: source.file_path,
+                                  fileId: source.file_id,
+                                  fileType: source.file_type,
+                                  page: source.page_or_slide,
+                                },
+                              }),
+                            );
+                          }}
+                          title="Open in workspace"
+                        >
+                          →
+                        </button>
+                      </div>
+                      {isExpanded && (
+                        <div
+                          className="text-[11px] text-[#888] leading-relaxed whitespace-pre-wrap"
+                          style={{
+                            maxHeight: 100,
+                            overflowY: "auto",
+                            padding: "6px 8px",
+                            background: "rgba(255,255,255,0.04)",
+                            borderRadius: 4,
+                            margin: "4px 0 4px 20px",
+                          }}
+                        >
+                          {source.text}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            <div className="flex-1 overflow-hidden">
+              <AIPanel
+                vaultPath={vaultPath}
+                onSourcesUpdate={(results) => {
+                  setAiSources(results);
+                  setExpandedIds(new Set());
+                  if (results.length === 0) setSourcesOpen(false);
+                }}
+              />
+            </div>
+          </div>
         </section>
       </div>
 

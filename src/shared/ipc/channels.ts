@@ -31,6 +31,7 @@ export const NOTES_CHANNELS = {
   RENAME: 'notes:rename',
   EXPORT_PDF: 'notes:exportPdf',
   APPEND: 'notes:append',
+  APPEND_CHUNK: 'notes:appendChunk',
   RECENT: 'notes:recent',
   GET_LAST_USED: 'notes:getLastUsed',
   SET_LAST_USED: 'notes:setLastUsed',

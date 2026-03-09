@@ -1,7 +1,14 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { ChevronDown, FileText, Highlighter, Send } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
-import type { Annotation, HighlightAnnotation, NoteSummary } from '../../../shared/types';
+import type { Annotation, HighlightAnnotation } from '../../../shared/types';
+import {
+  NotePickerPopover,
+  getSessionDefault,
+  setSessionDefault,
+  syncSessionVault,
+  clearSessionDefault,
+} from './NotePickerPopover';
 
 type Position = { top: number; left: number };
 
@@ -20,6 +27,8 @@ type Props = {
   filePath:     string;
   fileId:       string;
   vaultPath:    string;
+  /** Subject of the currently open source file (folder name), for ranking notes */
+  sourceSubject?: string | null;
   onAnnotationCreated: (ann: Annotation) => void;
   annotations?: Annotation[];
   onAnnotationDeleted?: (annId: string) => void;
@@ -88,6 +97,7 @@ export const FloatingActionBar: React.FC<Props> = ({
   filePath,
   fileId,
   vaultPath,
+  sourceSubject,
   onAnnotationCreated,
   annotations,
   onAnnotationDeleted,
@@ -96,13 +106,14 @@ export const FloatingActionBar: React.FC<Props> = ({
   const [selectedText, setSelectedText] = useState('');
   const [hlOpen, setHlOpen]             = useState(false);
   const [defaultColor, setDefaultColor] = useState('#fde68a');
-  const [noteDropdownOpen, setNoteDropdownOpen] = useState(false);
-  const [allNotes, setAllNotes]         = useState<NoteSummary[] | null>(null);
-  const [saving, setSaving]             = useState(false);
+  const [notePopoverOpen, setNotePopoverOpen] = useState(false);
   const [aiDropdownOpen, setAiDropdownOpen] = useState(false);
   const [customPrompt, setCustomPrompt]     = useState('');
   const barRef                          = useRef<HTMLDivElement>(null);
   const textareaRef                     = useRef<HTMLTextAreaElement>(null);
+
+  // Clear session default when vault changes
+  syncSessionVault(vaultPath);
 
   // Focus the textarea whenever the AI dropdown opens
   useEffect(() => {
@@ -166,7 +177,7 @@ export const FloatingActionBar: React.FC<Props> = ({
       if (barRef.current && !barRef.current.contains(e.target as Node)) {
         setPos(null);
         setHlOpen(false);
-        setNoteDropdownOpen(false);
+        setNotePopoverOpen(false);
         setAiDropdownOpen(false);
         setCustomPrompt('');
       }
@@ -240,79 +251,34 @@ export const FloatingActionBar: React.FC<Props> = ({
   // ── Save to Note helpers ──────────────────────────────────────────────
   const sourceFileName = filePath.split(/[\\/]/).pop() ?? filePath;
 
-  // Load all notes into the dropdown — always sorted alphabetically by title
-  const loadNotes = useCallback(async () => {
-    if (!vaultPath) return;
-    try {
-      const notes = await window.electronAPI.listNotes(vaultPath);
-      const sorted = notes.slice().sort((a, b) =>
-        a.title.localeCompare(b.title, undefined, { sensitivity: 'base' })
-      );
-      setAllNotes(sorted);
-    } catch (err) {
-      console.error('[FloatingActionBar] Failed to list notes:', err);
-    }
-  }, [vaultPath]);
-
-  const doSaveToNote = useCallback(async (noteId: string) => {
-    if (!vaultPath || saving) return;
-    setSaving(true);
-    try {
-      const result = await window.electronAPI.appendToNote(vaultPath, noteId, selectedText, sourceFileName, currentPage);
-
-      // The file was deleted — re-query the backend for the next best existing note
-      if (!result.ok && result.reason === 'file_deleted') {
-        const nextId = await window.electronAPI.getLastUsedNoteId(vaultPath);
-        if (nextId && nextId !== noteId) {
-          setSaving(false);
-          void doSaveToNote(nextId);
-        } else {
-          // No notes left — open the dropdown so user can pick
-          setSaving(false);
-          setNoteDropdownOpen(true);
-          void loadNotes();
-        }
-        return;
-      }
-
-      // Notify any open NotesEditor to refresh its content
-      window.dispatchEvent(new CustomEvent('noteContentAppended', { detail: { noteId } }));
-      // Use the clean basename returned by the backend — never shows a raw ID
-      const noteTitle = result.noteTitle ?? noteId;
-      window.dispatchEvent(new CustomEvent('noteSavedToast', { detail: { noteTitle } }));
-      setPos(null);
-      setNoteDropdownOpen(false);
-      setAllNotes(null);
-    } catch (err) {
-      console.error('[FloatingActionBar] Failed to save to note:', err);
-    } finally {
-      setSaving(false);
-    }
-  }, [vaultPath, selectedText, sourceFileName, currentPage, saving, loadNotes]);
-
-  const handleSaveClick = useCallback(async () => {
-    if (!vaultPath) return;
-    const noteId = await window.electronAPI.getLastUsedNoteId(vaultPath);
-    if (noteId) {
-      void doSaveToNote(noteId);
-    } else {
-      // No notes yet — open the dropdown so user can pick
-      setNoteDropdownOpen(true);
-      setHlOpen(false);
-      void loadNotes();
-    }
-  }, [vaultPath, doSaveToNote, loadNotes]);
-
-  const openNoteDropdown = useCallback(() => {
-    const willOpen = !noteDropdownOpen;
-    setNoteDropdownOpen(willOpen);
+  const handleSaveClick = useCallback(() => {
+    // Always open the popover — session default is pre-highlighted inside
+    setNotePopoverOpen(true);
     setHlOpen(false);
-    if (!willOpen) {
-      setAllNotes(null);
-      return;
-    }
-    void loadNotes();
-  }, [noteDropdownOpen, loadNotes]);
+    setAiDropdownOpen(false);
+  }, []);
+
+  const handleNoteSaved = useCallback((noteTitle: string) => {
+    window.dispatchEvent(new CustomEvent('noteSavedToast', { detail: { noteTitle } }));
+    setPos(null);
+    setNotePopoverOpen(false);
+  }, []);
+
+  const handleNoteDeleted = useCallback(() => {
+    // Note was deleted — show toast and reopen popover with fresh data
+    window.dispatchEvent(
+      new CustomEvent('noteSavedToast', {
+        detail: { noteTitle: 'That note was deleted' },
+      }),
+    );
+    // The popover stays open — it will refetch and show remaining notes
+    setNotePopoverOpen(false);
+    setTimeout(() => setNotePopoverOpen(true), 100);
+  }, []);
+
+  const handlePopoverClose = useCallback(() => {
+    setNotePopoverOpen(false);
+  }, []);
 
   if (!pos) return null;
 
@@ -412,7 +378,7 @@ export const FloatingActionBar: React.FC<Props> = ({
         </button>
         <button
           type="button"
-          onClick={() => { setAiDropdownOpen(o => !o); setHlOpen(false); setNoteDropdownOpen(false); }}
+          onClick={() => { setAiDropdownOpen(o => !o); setHlOpen(false); setNotePopoverOpen(false); }}
           className="px-1 py-1 text-xs text-[#8a8a8a] rounded-r hover:bg-[#3a3a3a] transition-colors"
           title="Add custom prompt"
         >
@@ -498,63 +464,29 @@ export const FloatingActionBar: React.FC<Props> = ({
 
       <span className="w-px h-4 bg-[#444]" />
 
-      {/* Save to Note — split button with dropdown */}
+      {/* Save to Note — click opens popover */}
       <div className="relative flex items-center">
         <button
           type="button"
           onClick={handleSaveClick}
-          disabled={saving}
-          className="flex items-center gap-1 px-2 py-1 text-xs text-[#d4d4d4] rounded-l hover:bg-[#3a3a3a] transition-colors disabled:opacity-50"
-          title="Save to last edited note"
+          className="flex items-center gap-1 px-2 py-1 text-xs text-[#d4d4d4] rounded hover:bg-[#3a3a3a] transition-colors"
+          title="Save to Note"
         >
           <FileText size={13} />
           Save to Note
         </button>
-        <button
-          type="button"
-          onClick={openNoteDropdown}
-          className="px-1 py-1 text-xs text-[#8a8a8a] rounded-r hover:bg-[#3a3a3a] transition-colors"
-          title="Pick target note"
-        >
-          <ChevronDown size={12} />
-        </button>
 
-        {noteDropdownOpen && (
-          <div
-            style={{
-              position: 'absolute',
-              top: '100%',
-              right: 0,
-              marginTop: 4,
-              background: '#2d2d2d',
-              border: '1px solid #444',
-              borderRadius: '8px',
-              padding: '4px 0',
-              minWidth: 180,
-              maxWidth: 260,
-              maxHeight: 240,
-              overflowY: 'auto',
-              zIndex: 1001,
-              boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
-            }}
-          >
-            {allNotes === null && (
-              <div className="px-3 py-2 text-xs text-[#888]">Loading…</div>
-            )}
-            {allNotes !== null && allNotes.length === 0 && (
-              <div className="px-3 py-2 text-xs text-[#888]">No notes in vault</div>
-            )}
-            {allNotes?.map(note => (
-              <button
-                key={note.id}
-                type="button"
-                onClick={() => void doSaveToNote(note.id)}
-                className="flex items-center w-full px-3 py-1.5 text-xs text-[#d4d4d4] hover:bg-[#3a3a3a] transition-colors text-left"
-              >
-                <span className="truncate">{note.title}</span>
-              </button>
-            ))}
-          </div>
+        {notePopoverOpen && (
+          <NotePickerPopover
+            vaultPath={vaultPath}
+            sourceSubject={sourceSubject ?? null}
+            selectedText={selectedText}
+            sourceFile={sourceFileName}
+            sourcePage={currentPage}
+            onSaved={handleNoteSaved}
+            onDeleted={handleNoteDeleted}
+            onClose={handlePopoverClose}
+          />
         )}
       </div>
     </div>

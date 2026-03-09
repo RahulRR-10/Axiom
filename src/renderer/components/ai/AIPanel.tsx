@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 
 import type { SearchResult } from "../../../shared/types";
 import { buildVaultPrompt } from "../../utils/buildVaultPrompt";
@@ -37,44 +37,96 @@ const AI_SERVICES: AIService[] = [
   },
 ];
 
+// ── Tab instance ─────────────────────────────────────────────────────────────
+
+type TabInstance = {
+  instanceId: string;
+  serviceId: string;
+};
+
+let _tabCounter = 0;
+const nextInstanceId = (serviceId: string): string => `${serviceId}-${_tabCounter++}`;
+
 // ── Props ────────────────────────────────────────────────────────────────────
 
 type AIPanelProps = {
   vaultPath: string | null;
+  onSourcesUpdate: (sources: SearchResult[]) => void;
 };
 
 // ── Component ────────────────────────────────────────────────────────────────
 
-export const AIPanel: React.FC<AIPanelProps> = ({ vaultPath }) => {
-  const [activeTab, setActiveTab] = useState<string>("chatgpt");
+export const AIPanel: React.FC<AIPanelProps> = ({ vaultPath, onSourcesUpdate }) => {
+  const [tabs, setTabs] = useState<TabInstance[]>(() =>
+    AI_SERVICES.map((s) => ({ instanceId: nextInstanceId(s.id), serviceId: s.id })),
+  );
+  const [activeTabId, setActiveTabId] = useState<string>(
+    () => tabs[0].instanceId,
+  );
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const pickerRef = useRef<HTMLDivElement>(null);
   const [preloadURL, setPreloadURL] = useState<string | null>(null);
   const webviewRefs = useRef<Record<string, Electron.WebviewTag | null>>({});
 
-  // Sources state
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [sources, setSources] = useState<SearchResult[]>([]);
-  const [sourcesOpen, setSourcesOpen] = useState(false);
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+
+  // ── Close picker on outside click ─────────────────────────────────────────
+
+  useEffect(() => {
+    if (!pickerOpen) return;
+    const handler = (e: MouseEvent): void => {
+      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) {
+        setPickerOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [pickerOpen]);
+
+  // ── Tab management ────────────────────────────────────────────────────────
+
+  const addTab = useCallback((serviceId: string): void => {
+    const instanceId = nextInstanceId(serviceId);
+    setTabs((prev) => [...prev, { instanceId, serviceId }]);
+    setActiveTabId(instanceId);
+    setPickerOpen(false);
+  }, []);
+
+  const closeTab = useCallback((instanceId: string): void => {
+    setTabs((prev) => {
+      if (prev.length === 1) return prev;
+      const next = prev.filter((t) => t.instanceId !== instanceId);
+      setActiveTabId((cur) => {
+        if (cur !== instanceId) return cur;
+        const idx = prev.findIndex((t) => t.instanceId === instanceId);
+        return next[Math.max(0, idx - 1)].instanceId;
+      });
+      return next;
+    });
+  }, []);
 
   // Fetch the preload path once on mount
   useEffect(() => {
     window.electronAPI.getAIPreloadPath().then(setPreloadURL);
   }, []);
 
-  // Register webviews once preload is ready
+  // Register webviews once preload is ready or tabs change
   useEffect(() => {
     if (!preloadURL) return;
 
     const cleanups: (() => void)[] = [];
 
-    for (const svc of AI_SERVICES) {
-      const el = webviewRefs.current[svc.id];
+    for (const tab of tabs) {
+      const el = webviewRefs.current[tab.instanceId];
       if (!el) continue;
 
       const onReady = (): void => {
         try {
-          window.electronAPI.registerWebview(svc.id, (el as unknown as { getWebContentsId: () => number }).getWebContentsId());
+          window.electronAPI.registerWebview(
+            tab.instanceId,
+            (el as unknown as { getWebContentsId: () => number }).getWebContentsId(),
+          );
         } catch {
           // webview may not be fully ready
         }
@@ -85,7 +137,7 @@ export const AIPanel: React.FC<AIPanelProps> = ({ vaultPath }) => {
     }
 
     return () => cleanups.forEach((fn) => fn());
-  }, [preloadURL]);
+  }, [preloadURL, tabs]);
 
   // ── Listen for sendToAI event from FloatingActionBar ─────────────────────
 
@@ -110,7 +162,8 @@ export const AIPanel: React.FC<AIPanelProps> = ({ vaultPath }) => {
         ].join('\n');
 
         const { success, error: injErr } = await window.electronAPI.vaultInject(
-          activeTab,
+          activeTabId,
+          tabs.find((t) => t.instanceId === activeTabId)?.serviceId ?? activeTabId,
           prompt,
         );
 
@@ -125,7 +178,7 @@ export const AIPanel: React.FC<AIPanelProps> = ({ vaultPath }) => {
 
     window.addEventListener("sendToAI", handler);
     return () => window.removeEventListener("sendToAI", handler);
-  }, [activeTab, loading]);
+  }, [activeTabId, loading]);
 
   // ── Listen for ai:ask event from AppLayout ─────────────────────────────────
 
@@ -136,9 +189,7 @@ export const AIPanel: React.FC<AIPanelProps> = ({ vaultPath }) => {
 
       setLoading(true);
       setError(null);
-      setSources([]);
-      setExpandedIds(new Set());
-      setSourcesOpen(false);
+      onSourcesUpdate([]);
 
       try {
         // 1. Retrieve chunks — take only top 2
@@ -153,7 +204,8 @@ export const AIPanel: React.FC<AIPanelProps> = ({ vaultPath }) => {
 
         // 3. Inject into active webview
         const { success, error: injErr } = await window.electronAPI.vaultInject(
-          activeTab,
+          activeTabId,
+          tabs.find((t) => t.instanceId === activeTabId)?.serviceId ?? activeTabId,
           prompt,
         );
 
@@ -162,8 +214,8 @@ export const AIPanel: React.FC<AIPanelProps> = ({ vaultPath }) => {
           return;
         }
 
-        // 4. Show sources (closed by default — user can open)
-        setSources(results);
+        // 4. Notify parent with sources
+        onSourcesUpdate(results);
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : "Something went wrong";
         setError(message);
@@ -174,7 +226,7 @@ export const AIPanel: React.FC<AIPanelProps> = ({ vaultPath }) => {
 
     window.addEventListener("ai:ask", handler);
     return () => window.removeEventListener("ai:ask", handler);
-  }, [activeTab, loading, vaultPath]);
+  }, [activeTabId, loading, vaultPath, onSourcesUpdate]);
 
   // NOTE: Popup handling (Google auth, etc.) is managed from the main process
   // via setWindowOpenHandler in spoofing.ts — do NOT intercept new-window here
@@ -190,47 +242,74 @@ export const AIPanel: React.FC<AIPanelProps> = ({ vaultPath }) => {
 
   return (
     <div className="h-full w-full flex flex-col">
-      {/* ── Tab row + Sources dropdown ── */}
+      {/* ── Tab row ── */}
       <div className="flex shrink-0 border-b border-[#2a2a2a] bg-[#1a1a1a]">
-        {AI_SERVICES.map((svc) => (
-          <button
-            key={svc.id}
-            type="button"
-            onClick={() => setActiveTab(svc.id)}
-            className={`
-              flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5
-              text-xs font-medium transition-colors
-              ${
-                activeTab === svc.id
-                  ? "text-[#e0e0e0] border-b-2 border-[#4a9eff] bg-[#1e1e1e]"
-                  : "text-[#6a6a6a] hover:text-[#9a9a9a] hover:bg-[#222]"
-              }
-            `}
-          >
-            <span>{svc.icon}</span>
-            <span>{svc.label}</span>
-          </button>
-        ))}
-
-        {/* Sources dropdown toggle */}
-        <button
-          type="button"
-          onClick={() => sources.length > 0 && setSourcesOpen((v) => !v)}
-          disabled={sources.length === 0}
-          className={`
-            shrink-0 flex items-center gap-1 px-2.5 py-1.5
-            text-[10px] font-medium transition-colors border-l border-[#2a2a2a]
-            ${
-              sources.length > 0
-                ? "text-[#8a8a8a] hover:text-[#ccc] hover:bg-[#252525] cursor-pointer"
-                : "text-[#3a3a3a] cursor-default"
-            }
-          `}
-          title={sources.length > 0 ? "Toggle sources" : "No sources yet"}
+        {/* Scrollable tab strip */}
+        <div
+          className="flex flex-1 overflow-x-auto min-w-0"
+          style={{ scrollbarWidth: "none" }}
         >
-          <span>{sourcesOpen ? "▼" : "▶"}</span>
-          <span>Sources{sources.length > 0 ? ` (${sources.length})` : ""}</span>
-        </button>
+          {tabs.map((tab) => {
+            const svc = AI_SERVICES.find((s) => s.id === tab.serviceId)!;
+            const svcInstances = tabs.filter((t) => t.serviceId === tab.serviceId);
+            const svcIdx = svcInstances.findIndex((t) => t.instanceId === tab.instanceId);
+            const label = svcInstances.length > 1 ? `${svc.label} ${svcIdx + 1}` : svc.label;
+            const isActive = activeTabId === tab.instanceId;
+            return (
+              <div
+                key={tab.instanceId}
+                className={`
+                  group shrink-0 flex items-stretch whitespace-nowrap
+                  ${isActive ? "border-b-2 border-[#4a9eff] bg-[#1e1e1e]" : "border-b-2 border-transparent hover:bg-[#222]"}
+                `}
+              >
+                <button
+                  type="button"
+                  onClick={() => setActiveTabId(tab.instanceId)}
+                  className={`flex items-center gap-1.5 pl-2.5 pr-1 py-1.5 text-xs font-medium transition-colors ${isActive ? "text-[#e0e0e0]" : "text-[#6a6a6a] group-hover:text-[#9a9a9a]"}`}
+                >
+                  <span>{svc.icon}</span>
+                  <span>{label}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => closeTab(tab.instanceId)}
+                  aria-label={`Close ${label}`}
+                  className={`flex items-center pr-2 pl-0.5 py-1.5 text-xs transition-colors opacity-0 group-hover:opacity-100 ${isActive ? "text-[#6a6a6a] hover:text-[#e0e0e0]" : "text-[#5a5a5a] hover:text-[#aaa]"}`}
+                >
+                  ×
+                </button>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* + button — outside scroll container so dropdown isn't clipped */}
+        <div ref={pickerRef} className="relative shrink-0 flex items-stretch border-l border-[#2a2a2a]">
+          <button
+            type="button"
+            onClick={() => setPickerOpen((v) => !v)}
+            className="px-2.5 text-[#5a5a5a] hover:text-[#aaa] hover:bg-[#222] text-sm transition-colors"
+            title="Add tab"
+          >
+            +
+          </button>
+          {pickerOpen && (
+            <div className="absolute top-full right-0 mt-0.5 z-50 bg-[#252525] border border-[#333] rounded shadow-lg py-1 min-w-[130px]">
+              {AI_SERVICES.map((svc) => (
+                <button
+                  key={svc.id}
+                  type="button"
+                  onClick={() => addTab(svc.id)}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-[#ccc] hover:bg-[#333] transition-colors"
+                >
+                  <span>{svc.icon}</span>
+                  <span>{svc.label}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* ── Error message ── */}
@@ -248,106 +327,31 @@ export const AIPanel: React.FC<AIPanelProps> = ({ vaultPath }) => {
         </div>
       )}
 
-      {/* ── Sources panel (collapsible) ── */}
-      {sourcesOpen && sources.length > 0 && (
-        <div
-          className="shrink-0 border-b border-[#2a2a2a] bg-[#1a1a1a]"
-          style={{ maxHeight: 180, overflowY: "auto" }}
-        >
-          {sources.map((source) => {
-            const isExpanded = expandedIds.has(source.id);
-            return (
-              <div key={source.id} className="px-2 py-1">
-                <div className="flex items-center gap-1.5">
-                  {/* Chevron toggle */}
-                  <button
-                    type="button"
-                    className="text-[10px] text-[#6a6a6a] hover:text-[#aaa] w-4 text-center shrink-0"
-                    onClick={() => {
-                      setExpandedIds((prev) => {
-                        const next = new Set(prev);
-                        isExpanded ? next.delete(source.id) : next.add(source.id);
-                        return next;
-                      });
-                    }}
-                  >
-                    {isExpanded ? "▼" : "▶"}
-                  </button>
-
-                  {/* Source name */}
-                  <span className="text-[11px] text-[#bbb] truncate flex-1">
-                    {source.file_name}
-                    {source.page_or_slide != null
-                      ? ` — Page ${source.page_or_slide}`
-                      : ""}
-                  </span>
-
-                  {/* Open in workspace */}
-                  <button
-                    type="button"
-                    className="text-[10px] text-[#5a5a5a] hover:text-[#aaa] shrink-0 px-1"
-                    onClick={() => {
-                      window.dispatchEvent(
-                        new CustomEvent("openFile", {
-                          detail: {
-                            filePath: source.file_path,
-                            fileId: source.file_id,
-                            fileType: source.file_type,
-                            page: source.page_or_slide,
-                          },
-                        }),
-                      );
-                    }}
-                    title="Open in workspace"
-                  >
-                    →
-                  </button>
-                </div>
-
-                {/* Expanded chunk text */}
-                {isExpanded && (
-                  <div
-                    className="text-[11px] text-[#888] leading-relaxed whitespace-pre-wrap"
-                    style={{
-                      maxHeight: 100,
-                      overflowY: "auto",
-                      padding: "6px 8px",
-                      background: "rgba(255,255,255,0.04)",
-                      borderRadius: 4,
-                      margin: "4px 0 4px 20px",
-                    }}
-                  >
-                    {source.text}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-
       {/* ── Webview container ── */}
       <div className="flex-1 relative min-h-0">
-        {AI_SERVICES.map((svc) => (
-          <webview
-            key={svc.id}
-            ref={(el) => {
-              webviewRefs.current[svc.id] = el as unknown as Electron.WebviewTag | null;
-            }}
-            src={svc.url}
-            partition={svc.partition}
-            preload={preloadURL}
-            webpreferences="contextIsolation=no"
-            allowpopups={"true" as unknown as boolean}
-            style={{
-              position: "absolute",
-              inset: 0,
-              width: "100%",
-              height: "100%",
-              display: activeTab === svc.id ? "flex" : "none",
-            }}
-          />
-        ))}
+        {tabs.map((tab) => {
+          const svc = AI_SERVICES.find((s) => s.id === tab.serviceId)!;
+          return (
+            <webview
+              key={tab.instanceId}
+              ref={(el) => {
+                webviewRefs.current[tab.instanceId] = el as unknown as Electron.WebviewTag | null;
+              }}
+              src={svc.url}
+              partition={svc.partition}
+              preload={preloadURL}
+              webpreferences="contextIsolation=no"
+              allowpopups={"true" as unknown as boolean}
+              style={{
+                position: "absolute",
+                inset: 0,
+                width: "100%",
+                height: "100%",
+                display: activeTabId === tab.instanceId ? "flex" : "none",
+              }}
+            />
+          );
+        })}
       </div>
     </div>
   );

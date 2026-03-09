@@ -314,7 +314,7 @@ app.whenReady().then(() => {
     if (!wc) {
       return { success: false, error: `Webview for ${req.provider} not ready` };
     }
-    return injectPrompt(wc, req.provider, req.prompt);
+    return injectPrompt(wc, req.serviceId, req.prompt);
   });
 
   logStep('createWindow');
