@@ -607,7 +607,7 @@ npm run make       # platform-specific installers
 
 ## License
 
-[MIT](LICENSE)
+[LICENSE](LICENSE.md)
 
 ---
 
