@@ -5,15 +5,23 @@ import type { SearchQueryResponse } from '../../shared/ipc/contracts';
 import type { SearchResult } from '../../shared/types';
 import { getDb } from '../database/schema';
 import { embed } from '../workers/embedder';
+import { QUERY_PREFIX } from '../workers/embedder';
 import { searchVectors } from '../database/vectorStore';
+import { writeLog } from '../logger';
 
 // ── Registry ──────────────────────────────────────────────────────────────────
 
 export function registerSearchHandlers(): void {
   ipcMain.handle(
     SEARCH_CHANNELS.QUERY,
-    (_e, query: string, vaultPath: string, subject?: string, fileType?: string) =>
-      handleSearch(query, vaultPath, subject, fileType),
+    async (_e, query: string, vaultPath: string, subject?: string, fileType?: string) => {
+      try {
+        return await handleSearch(query, vaultPath, subject, fileType);
+      } catch (err) {
+        try { writeLog('search:ERROR', err); } catch { /* ignore */ }
+        throw err;
+      }
+    },
   );
 }
 
@@ -27,6 +35,7 @@ async function handleSearch(
 ): Promise<SearchQueryResponse> {
   if (!query.trim()) return [];
 
+  try { writeLog('search:query', query, true); } catch { /* ignore */ }
   const db = getDb(vaultPath);
   const resultMap = new Map<string, SearchResult>();
 
@@ -34,28 +43,49 @@ async function handleSearch(
   const intent = classifyQueryIntent(query);
   const ftsWeight = intent === 'keyword' ? 0.6 : 0.25;
   const semWeight = intent === 'keyword' ? 0.4 : 0.75;
-  const COSINE_THRESHOLD = 0.2;
+  const COSINE_THRESHOLD = 0.3;
 
   const subjectFilter = subject ? 'AND f.subject = ?' : '';
   const typeFilter = fileType ? 'AND f.type = ?' : '';
 
   // ── Start semantic embedding in background (parallel with FTS5) ────────
   const expandedQuery = expandQuery(query);
+  try { writeLog('search:expand', expandedQuery, true); } catch { /* ignore */ }
   type SemRow = { id: string; file_id: string; page_or_slide: number | null; text: string; score: number };
-  const semanticPromise: Promise<SemRow[]> = embed(expandedQuery)
-    .then((vec) => searchVectors(vaultPath, vec, 30))
-    .then((rows) => {
-      if (rows.length > 0) {
-        console.log(`[search] Semantic: ${rows.length} raw results, top score=${rows[0].score.toFixed(3)}, bottom=${rows[rows.length - 1].score.toFixed(3)}`);
-      } else {
-        console.log('[search] Semantic: 0 raw results from vector search');
-      }
-      return rows.filter((r) => r.score >= COSINE_THRESHOLD);
-    })
-    .catch((err) => {
-      console.warn('[search] Semantic error:', err);
-      return [] as SemRow[];
-    });
+  const tEmbed = Date.now();
+  const EMBED_TIMEOUT_MS = 6_000; // fall back to FTS-only if embedder is saturated
+  let embedTimeoutId: ReturnType<typeof setTimeout>;
+  const semanticPromise: Promise<SemRow[]> = Promise.race([
+    embed(QUERY_PREFIX + expandedQuery)
+      .then((vec) => {
+        clearTimeout(embedTimeoutId);
+        try { writeLog('search:embed', `${Date.now() - tEmbed}ms`, true); } catch { /* ignore */ }
+        return searchVectors(vaultPath, vec, 30);
+      })
+      .then((rows) => {
+        if (rows.length > 0) {
+          try { writeLog('search:vector', `${rows.length} results top:${rows[0].score.toFixed(3)}`, true); } catch { /* ignore */ }
+          console.log(`[search] Semantic: ${rows.length} raw results, top score=${rows[0].score.toFixed(3)}, bottom=${rows[rows.length - 1].score.toFixed(3)}`);
+        } else {
+          try { writeLog('search:vector', '0 results', true); } catch { /* ignore */ }
+          console.log('[search] Semantic: 0 raw results from vector search');
+        }
+        return rows.filter((r) => r.score >= COSINE_THRESHOLD);
+      })
+      .catch((err) => {
+        clearTimeout(embedTimeoutId);
+        try { writeLog('search:ERROR', err); } catch { /* ignore */ }
+        console.warn('[search] Semantic error:', err);
+        return [] as SemRow[];
+      }),
+    new Promise<SemRow[]>((resolve) => {
+      embedTimeoutId = setTimeout(() => {
+        try { writeLog('search:embed', `timeout after ${EMBED_TIMEOUT_MS}ms — skipping semantic`, true); } catch { /* ignore */ }
+        console.warn('[search] Semantic embed timed out — returning FTS results only');
+        resolve([]);
+      }, EMBED_TIMEOUT_MS);
+    }),
+  ]);
 
   // ── 1. FTS5 keyword pass (sync — runs while embedding computes) ────────
   try {
@@ -103,7 +133,9 @@ async function handleSearch(
         source: 'fts',
       });
     }
+    try { writeLog('search:fts', `${rows.length} results`, true); } catch { /* ignore */ }
   } catch (err) {
+    try { writeLog('search:ERROR', err); } catch { /* ignore */ }
     console.warn('[search] FTS5 error:', err);
   }
 
@@ -236,9 +268,11 @@ async function handleSearch(
     console.warn('[search] File-name fallback error:', err);
   }
 
-  return Array.from(resultMap.values())
+  const finalResults = Array.from(resultMap.values())
     .sort((a, b) => b.score - a.score)
     .slice(0, 30);
+  try { writeLog('search:result', `${finalResults.length} merged results`, true); } catch { /* ignore */ }
+  return finalResults;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -290,6 +324,7 @@ function expandQuery(query: string): string {
  * Sanitize a user query for SQLite FTS5 MATCH syntax.
  * Strips operators (-/NOT/OR/AND/NEAR), quotes each token so hyphens and
  * special chars inside words are treated as literals, not operators.
+ * Uses OR so chunks matching ANY keyword appear; BM25 ranks multi-matches higher.
  */
 function sanitizeFtsQuery(query: string): string {
   const tokens = query
@@ -298,8 +333,8 @@ function sanitizeFtsQuery(query: string): string {
     .filter(Boolean)
     .filter((t) => !/^(AND|OR|NOT|NEAR)$/i.test(t));
   if (tokens.length === 0) return '';
-  // Quote each token so hyphens etc. are literal
-  return tokens.map((t) => `"${t.replace(/"/g, '""')}"`).join(' ');
+  // Quote each token so hyphens etc. are literal; OR for broader recall
+  return tokens.map((t) => `"${t.replace(/"/g, '""')}"`).join(' OR ');
 }
 
 function categorize(r: {

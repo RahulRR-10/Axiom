@@ -270,8 +270,8 @@ export const Workspace: React.FC<WorkspaceProps> = ({ vaultPath }) => {
   // ── Listen for openFile events from VaultSidebar ───────────────────────
   useEffect(() => {
     const handler = async (e: Event) => {
-      const { filePath, fileType, page } = (
-        e as CustomEvent<{ filePath: string; fileType: string; page?: number }>
+      const { filePath, fileType, page, fileId: eventFileId } = (
+        e as CustomEvent<{ filePath: string; fileType: string; page?: number; fileId?: string }>
       ).detail;
 
       const existing = openFiles.find((f) => f.filePath === filePath);
@@ -289,8 +289,8 @@ export const Workspace: React.FC<WorkspaceProps> = ({ vaultPath }) => {
         return;
       }
 
-      let fileId: string | null = null;
-      if (vaultPath) {
+      let fileId: string | null = eventFileId ?? null;
+      if (!fileId && vaultPath) {
         try {
           fileId = await window.electronAPI.getFileId(vaultPath, filePath);
         } catch {

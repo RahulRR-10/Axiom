@@ -12,8 +12,11 @@ import type {
 } from '../../shared/ipc/contracts';
 import type { FileNode, IndexStatus } from '../../shared/types';
 import { getDb } from '../database/schema';
+import { checkModelCompatibility } from '../database/migrations';
 import { indexFile } from '../indexing/indexer';
+import { warmEmbedCache } from '../indexing/embedCache';
 import { startWatching } from '../vault/vaultWatcher';
+import { writeLog } from '../logger';
 
 // Simple JSON file for persisting app settings (vault path, etc.)
 // Stored in the app's userData directory so it survives updates.
@@ -40,22 +43,48 @@ let activeIndexingAbort: { aborted: boolean } | null = null;
 // ── Registry ─────────────────────────────────────────────────────────────────
 
 export function registerVaultHandlers(): void {
-  ipcMain.handle(VAULT_CHANNELS.SELECT, handleSelect);
-  ipcMain.handle(VAULT_CHANNELS.OPEN, (_e, vaultPath: string) => handleOpen(vaultPath));
-  ipcMain.handle(VAULT_CHANNELS.READ_DIRECTORY, (_e, dirPath: string) => handleReadDirectory(dirPath));
-  ipcMain.handle(VAULT_CHANNELS.READ_FILE, (_e, filePath: string) => handleReadFile(filePath));
-  ipcMain.handle(VAULT_CHANNELS.WRITE_FILE, (e, filePath: string, data: Buffer) => handleWriteFile(filePath, data, e.sender.id));
-  ipcMain.handle(VAULT_CHANNELS.GET_INDEX_STATUS, (_e, vaultPath: string) => handleGetIndexStatus(vaultPath));
+  ipcMain.handle(VAULT_CHANNELS.SELECT, async () => {
+    try { writeLog('IPC:received', 'vault:select'); } catch { /* ignore */ }
+    try { return await handleSelect(); } catch (err) { try { writeLog('IPC:ERROR', `channel:vault:select error:${err instanceof Error ? err.message : String(err)}`); } catch { /* ignore */ } throw err; }
+  });
+  ipcMain.handle(VAULT_CHANNELS.OPEN, async (_e, vaultPath: string) => {
+    try { writeLog('IPC:received', 'vault:open'); } catch { /* ignore */ }
+    try { return await handleOpen(vaultPath); } catch (err) { try { writeLog('IPC:ERROR', `channel:vault:open error:${err instanceof Error ? err.message : String(err)}`); } catch { /* ignore */ } throw err; }
+  });
+  ipcMain.handle(VAULT_CHANNELS.READ_DIRECTORY, (_e, dirPath: string) => {
+    try { writeLog('IPC:received', 'vault:readDirectory'); } catch { /* ignore */ }
+    try { return handleReadDirectory(dirPath); } catch (err) { try { writeLog('IPC:ERROR', `channel:vault:readDirectory error:${err instanceof Error ? err.message : String(err)}`); } catch { /* ignore */ } throw err; }
+  });
+  ipcMain.handle(VAULT_CHANNELS.READ_FILE, (_e, filePath: string) => {
+    try { writeLog('IPC:received', 'vault:readFile'); } catch { /* ignore */ }
+    try { return handleReadFile(filePath); } catch (err) { try { writeLog('IPC:ERROR', `channel:vault:readFile error:${err instanceof Error ? err.message : String(err)}`); } catch { /* ignore */ } throw err; }
+  });
+  ipcMain.handle(VAULT_CHANNELS.WRITE_FILE, (e, filePath: string, data: Buffer) => {
+    try { writeLog('IPC:received', 'vault:writeFile'); } catch { /* ignore */ }
+    try { return handleWriteFile(filePath, data, e.sender.id); } catch (err) { try { writeLog('IPC:ERROR', `channel:vault:writeFile error:${err instanceof Error ? err.message : String(err)}`); } catch { /* ignore */ } throw err; }
+  });
+  ipcMain.handle(VAULT_CHANNELS.GET_INDEX_STATUS, (_e, vaultPath: string) => {
+    try { writeLog('IPC:received', 'vault:getIndexStatus'); } catch { /* ignore */ }
+    try { return handleGetIndexStatus(vaultPath); } catch (err) { try { writeLog('IPC:ERROR', `channel:vault:getIndexStatus error:${err instanceof Error ? err.message : String(err)}`); } catch { /* ignore */ } throw err; }
+  });
   ipcMain.handle(VAULT_CHANNELS.GET_FILE_ID, (_e, vaultPath: string, filePath: string) => {
-    const db = getDb(vaultPath);
-    const row = db.prepare('SELECT id FROM files WHERE path = ?').get(filePath) as { id: string } | undefined;
-    return row?.id ?? null;
+    try { writeLog('IPC:received', 'vault:getFileId'); } catch { /* ignore */ }
+    try {
+      const db = getDb(vaultPath);
+      const row = db.prepare('SELECT id FROM files WHERE path = ?').get(filePath) as { id: string } | undefined;
+      if (row) return row.id;
+      // Also check notes table — newly created notes may not be in files yet
+      const noteRow = db.prepare('SELECT id FROM notes WHERE file_path = ?').get(filePath) as { id: string } | undefined;
+      return noteRow?.id ?? null;
+    } catch (err) { try { writeLog('IPC:ERROR', `channel:vault:getFileId error:${err instanceof Error ? err.message : String(err)}`); } catch { /* ignore */ } throw err; }
   });
   ipcMain.handle(VAULT_CHANNELS.GET_LAST_VAULT, () => {
-    return (readSettings().lastVaultPath as string) || null;
+    try { writeLog('IPC:received', 'vault:getLastVault'); } catch { /* ignore */ }
+    try { return (readSettings().lastVaultPath as string) || null; } catch (err) { try { writeLog('IPC:ERROR', `channel:vault:getLastVault error:${err instanceof Error ? err.message : String(err)}`); } catch { /* ignore */ } throw err; }
   });
   ipcMain.handle(VAULT_CHANNELS.SET_LAST_VAULT, (_e, vaultPath: string) => {
-    writeSetting('lastVaultPath', vaultPath);
+    try { writeLog('IPC:received', 'vault:setLastVault'); } catch { /* ignore */ }
+    try { writeSetting('lastVaultPath', vaultPath); } catch (err) { try { writeLog('IPC:ERROR', `channel:vault:setLastVault error:${err instanceof Error ? err.message : String(err)}`); } catch { /* ignore */ } throw err; }
   });
 }
 
@@ -79,7 +108,13 @@ async function handleOpen(vaultPath: string): Promise<VaultOpenResponse> {
   // 1. Init DB (runs migrations)
   const db = getDb(vaultPath);
 
-  // 2. Start file watcher
+  // 2. Check if embedding model changed — clears stale vectors if needed
+  await checkModelCompatibility(db, vaultPath);
+
+  // 3. Pre-populate in-memory embed cache from DB
+  warmEmbedCache(db);
+
+  // 4. Start file watcher
   startWatching(vaultPath);
 
   // 3. Build file list and kick off indexing for new/changed files

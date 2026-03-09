@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import type { ChunkWithVector, SearchResult } from '../../shared/types';
+import { writeLog } from '../logger';
 
 // vectordb v0.21 ships CommonJS + type definitions
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -9,7 +10,7 @@ const lancedb = require('vectordb') as typeof import('vectordb');
 
 type LanceTable = Awaited<ReturnType<Awaited<ReturnType<typeof lancedb.connect>>['openTable']>>;
 
-const VECTOR_DIM = 768;
+const VECTOR_DIM = 384;
 const TABLE_NAME = 'chunk_vectors';
 
 // ── Connection cache ─────────────────────────────────────────────────────────
@@ -49,11 +50,21 @@ async function getTable(vaultPath: string): Promise<LanceTable> {
 
 export async function addVectors(vaultPath: string, chunks: ChunkWithVector[]): Promise<void> {
   if (chunks.length === 0) return;
-  const table = await getTable(vaultPath);
-  const rows = chunks.map((c) =>
-    makeRow(c.id, c.file_id, c.page_or_slide ?? null, c.text, c.vector),
-  );
-  await (table as unknown as { add: (rows: unknown[]) => Promise<unknown> }).add(rows);
+  const t = Date.now();
+  try {
+    const table = await getTable(vaultPath);
+    const rows = chunks.map((c) =>
+      makeRow(c.id, c.file_id, c.page_or_slide ?? null, c.text, c.vector),
+    );
+    await (table as unknown as { add: (rows: unknown[]) => Promise<unknown> }).add(rows);
+    const elapsed = Date.now() - t;
+    if (elapsed > 2000) {
+      try { writeLog('lancedb:slow', `addVectors took ${elapsed}ms`); } catch { /* ignore */ }
+    }
+  } catch (err) {
+    try { writeLog('lancedb:ERROR', err); } catch { /* ignore */ }
+    throw err;
+  }
 }
 
 export async function searchVectors(
@@ -62,6 +73,7 @@ export async function searchVectors(
   limit = 20,
 ): Promise<Array<{ id: string; file_id: string; page_or_slide: number | null; text: string; score: number }>> {
   try {
+    const t = Date.now();
     const table = await getTable(vaultPath);
     const results = await (
       table as unknown as {
@@ -76,6 +88,11 @@ export async function searchVectors(
       .limit(limit)
       .execute();
 
+    const elapsed = Date.now() - t;
+    if (elapsed > 2000) {
+      try { writeLog('lancedb:slow', `searchVectors took ${elapsed}ms`); } catch { /* ignore */ }
+    }
+
     return (results as Array<Record<string, unknown>>).map((r) => ({
       id:            r['id'] as string,
       file_id:       r['file_id'] as string,
@@ -83,18 +100,25 @@ export async function searchVectors(
       text:          r['text'] as string,
       score:         1 - (r['_distance'] as number ?? 0), // cosine: 1-distance = similarity
     }));
-  } catch {
+  } catch (err) {
+    try { writeLog('lancedb:ERROR', err); } catch { /* ignore */ }
     return [];
   }
 }
 
 export async function deleteVectorsByFileId(vaultPath: string, fileId: string): Promise<void> {
   try {
+    const t = Date.now();
     const table = await getTable(vaultPath);
     await (table as unknown as { delete: (f: string) => Promise<void> }).delete(
       `file_id = '${fileId.replace(/'/g, "''")}'`,
     );
-  } catch {
+    const elapsed = Date.now() - t;
+    if (elapsed > 2000) {
+      try { writeLog('lancedb:slow', `deleteVectorsByFileId took ${elapsed}ms`); } catch { /* ignore */ }
+    }
+  } catch (err) {
+    try { writeLog('lancedb:ERROR', err); } catch { /* ignore */ }
     // Non-fatal: table may be empty
   }
 }
@@ -103,6 +127,21 @@ export function invalidateVectorCache(): void {
   _connection = null;
   _table = null;
   _vaultPath = '';
+}
+
+export async function dropVectorTable(vaultPath: string): Promise<void> {
+  try {
+    const vectorsDir = path.join(vaultPath, '.axiom', 'vectors');
+    if (!fs.existsSync(vectorsDir)) return;
+    const conn = await lancedb.connect(vectorsDir);
+    const tableNames: string[] = await conn.tableNames();
+    if (tableNames.includes(TABLE_NAME)) {
+      await conn.dropTable(TABLE_NAME);
+    }
+    invalidateVectorCache();
+  } catch (err) {
+    try { writeLog('lancedb:ERROR', `dropVectorTable: ${err}`); } catch { /* ignore */ }
+  }
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

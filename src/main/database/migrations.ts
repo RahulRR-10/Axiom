@@ -1,6 +1,13 @@
 // Migrations are embedded as TypeScript constants to work correctly in the
 // packaged Electron app (no filesystem path assumptions needed).
 
+import type Database from 'better-sqlite3';
+
+import { dropVectorTable } from './vectorStore';
+
+const CURRENT_MODEL     = 'bge-small-en-v1.5';
+const CURRENT_MODEL_DIM = 384;
+
 export const MIGRATIONS: Array<{ version: string; sql: string }> = [
   {
     version: '001_init',
@@ -144,4 +151,46 @@ export const MIGRATIONS: Array<{ version: string; sql: string }> = [
       );
     `,
   },
+  {
+    version: '007_text_hash',
+    sql: `
+      ALTER TABLE chunks ADD COLUMN text_hash TEXT;
+      CREATE INDEX IF NOT EXISTS idx_chunks_text_hash ON chunks(text_hash);
+    `,
+  },
+  {
+    version: '008_embed_cache',
+    sql: `
+      CREATE TABLE IF NOT EXISTS embed_cache (
+        text_hash  TEXT PRIMARY KEY,
+        vector     BLOB NOT NULL,
+        model      TEXT NOT NULL,
+        created_at INTEGER DEFAULT (unixepoch())
+      );
+      CREATE INDEX IF NOT EXISTS idx_embed_cache_hash ON embed_cache(text_hash);
+    `,
+  },
 ];
+
+export async function checkModelCompatibility(db: Database.Database, vaultPath: string): Promise<void> {
+  const stored = db.prepare(
+    "SELECT value FROM settings WHERE key='embedding_model'"
+  ).get() as { value: string } | undefined;
+
+  if (stored?.value && stored.value !== CURRENT_MODEL) {
+    console.warn(`Model changed from ${stored.value} → ${CURRENT_MODEL}. Clearing vectors.`);
+
+    // Clear LanceDB vectors
+    await dropVectorTable(vaultPath);
+
+    // Clear embed cache
+    db.prepare('DELETE FROM embed_cache').run();
+
+    // Reset indexed_at so all files get re-indexed
+    db.prepare('UPDATE files SET indexed_at=NULL').run();
+  }
+
+  // Persist current model + dim
+  db.prepare("INSERT OR REPLACE INTO settings(key,value) VALUES('embedding_model',?)").run(CURRENT_MODEL);
+  db.prepare("INSERT OR REPLACE INTO settings(key,value) VALUES('embedding_dim',?)").run(String(CURRENT_MODEL_DIM));
+}

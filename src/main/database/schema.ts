@@ -26,6 +26,9 @@ export function getDb(vaultPath: string): Database.Database {
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   db.pragma('synchronous = NORMAL');
+  db.pragma('cache_size = -64000');     // 64MB page cache in memory
+  db.pragma('temp_store = MEMORY');     // Temp tables in memory, not disk
+  db.pragma('mmap_size = 268435456');   // 256MB memory-mapped I/O
 
   runMigrations(db);
   dbCache.set(vaultPath, db);

@@ -10,6 +10,7 @@ import type { NoteDetail, NoteSummary } from '../../shared/types';
 import { getDb } from '../database/schema';
 import { indexFile } from '../indexing/indexer';
 import { broadcastFileChanged } from '../vault/vaultWatcher';
+import { writeLog } from '../logger';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -66,8 +67,8 @@ export function registerNotesHandlers(): void {
             title: string,
             sourceFileId?: string,
             sourcePage?: number,
-        ) => {
-            const fileName = title.endsWith('.md') ? title : `${title}.md`;
+        ) => {            try { writeLog('IPC:received', 'notes:create'); } catch { /* ignore */ }
+            try {            const fileName = title.endsWith('.md') ? title : `${title}.md`;
             const filePath = path.join(targetDirectory, fileName);
 
             assertInsideVault(vaultPath, filePath);
@@ -105,13 +106,16 @@ export function registerNotesHandlers(): void {
 
             const row = db.prepare('SELECT * FROM notes WHERE id = ?').get(id) as NoteRow;
             return rowToSummary(row);
+            } catch (err) { try { writeLog('IPC:ERROR', `channel:notes:create error:${err instanceof Error ? err.message : String(err)}`); } catch { /* ignore */ } throw err; }
         },
     );
 
-    // ── notes:read ────────────────────────────────────────────────────────────
+    // ── notes:read ────────────────────────────────────────────────────
     ipcMain.handle(
         NOTES_CHANNELS.READ,
         async (_event, vaultPath: string, noteId: string) => {
+            try { writeLog('IPC:received', 'notes:read'); } catch { /* ignore */ }
+            try {
             const db = getDb(vaultPath);
             let row = db.prepare('SELECT * FROM notes WHERE id = ?').get(noteId) as NoteRow | undefined;
 
@@ -160,13 +164,16 @@ export function registerNotesHandlers(): void {
                 content,
             };
             return detail;
+            } catch (err) { try { writeLog('IPC:ERROR', `channel:notes:read error:${err instanceof Error ? err.message : String(err)}`); } catch { /* ignore */ } throw err; }
         },
     );
 
-    // ── notes:update ──────────────────────────────────────────────────────────
+    // ── notes:update ──────────────────────────────────────────────────
     ipcMain.handle(
         NOTES_CHANNELS.UPDATE,
         async (event, vaultPath: string, noteId: string, content: string, lastLoadedAt?: number) => {
+            try { writeLog('IPC:received', 'notes:update'); } catch { /* ignore */ }
+            try {
             const db = getDb(vaultPath);
             let row = db.prepare('SELECT * FROM notes WHERE id = ?').get(noteId) as NoteRow | undefined;
 
@@ -238,13 +245,16 @@ export function registerNotesHandlers(): void {
             }
 
             return { ok: true as const };
+            } catch (err) { try { writeLog('IPC:ERROR', `channel:notes:update error:${err instanceof Error ? err.message : String(err)}`); } catch { /* ignore */ } throw err; }
         },
     );
 
-    // ── notes:list ────────────────────────────────────────────────────────────
+    // ── notes:list ────────────────────────────────────────────────────
     ipcMain.handle(
         NOTES_CHANNELS.LIST,
         async (_event, vaultPath: string) => {
+            try { writeLog('IPC:received', 'notes:list'); } catch { /* ignore */ }
+            try {
             const db = getDb(vaultPath);
             const noteRows = db.prepare(
                 'SELECT * FROM notes ORDER BY updated_at DESC',
@@ -273,6 +283,7 @@ export function registerNotesHandlers(): void {
             }
 
             return [...noteRows.map(rowToSummary), ...extraNotes];
+            } catch (err) { try { writeLog('IPC:ERROR', `channel:notes:list error:${err instanceof Error ? err.message : String(err)}`); } catch { /* ignore */ } throw err; }
         },
     );
 
@@ -280,6 +291,8 @@ export function registerNotesHandlers(): void {
     ipcMain.handle(
         NOTES_CHANNELS.DELETE,
         async (_event, vaultPath: string, noteId: string) => {
+            try { writeLog('IPC:received', 'notes:delete'); } catch { /* ignore */ }
+            try {
             const db = getDb(vaultPath);
             const row = db.prepare('SELECT * FROM notes WHERE id = ?').get(noteId) as NoteRow | undefined;
             if (!row) return { ok: false };
@@ -293,6 +306,7 @@ export function registerNotesHandlers(): void {
             // Delete from DB
             db.prepare('DELETE FROM notes WHERE id = ?').run(noteId);
             return { ok: true };
+            } catch (err) { try { writeLog('IPC:ERROR', `channel:notes:delete error:${err instanceof Error ? err.message : String(err)}`); } catch { /* ignore */ } throw err; }
         },
     );
 
@@ -300,6 +314,8 @@ export function registerNotesHandlers(): void {
     ipcMain.handle(
         NOTES_CHANNELS.MOVE,
         async (_event, vaultPath: string, noteId: string, newDirectory: string) => {
+            try { writeLog('IPC:received', 'notes:move'); } catch { /* ignore */ }
+            try {
             const db = getDb(vaultPath);
             const row = db.prepare('SELECT * FROM notes WHERE id = ?').get(noteId) as NoteRow | undefined;
             if (!row || !row.file_path) throw new Error(`Note ${noteId} not found`);
@@ -318,6 +334,7 @@ export function registerNotesHandlers(): void {
 
             const updated = db.prepare('SELECT * FROM notes WHERE id = ?').get(noteId) as NoteRow;
             return rowToSummary(updated);
+            } catch (err) { try { writeLog('IPC:ERROR', `channel:notes:move error:${err instanceof Error ? err.message : String(err)}`); } catch { /* ignore */ } throw err; }
         },
     );
 
@@ -325,6 +342,8 @@ export function registerNotesHandlers(): void {
     ipcMain.handle(
         NOTES_CHANNELS.RENAME,
         async (_event, vaultPath: string, noteId: string, newTitle: string) => {
+            try { writeLog('IPC:received', 'notes:rename'); } catch { /* ignore */ }
+            try {
             const db = getDb(vaultPath);
             const row = db.prepare('SELECT * FROM notes WHERE id = ?').get(noteId) as NoteRow | undefined;
             if (!row || !row.file_path) throw new Error(`Note ${noteId} not found`);
@@ -342,6 +361,7 @@ export function registerNotesHandlers(): void {
 
             const updated = db.prepare('SELECT * FROM notes WHERE id = ?').get(noteId) as NoteRow;
             return rowToSummary(updated);
+            } catch (err) { try { writeLog('IPC:ERROR', `channel:notes:rename error:${err instanceof Error ? err.message : String(err)}`); } catch { /* ignore */ } throw err; }
         },
     );
 
@@ -349,6 +369,8 @@ export function registerNotesHandlers(): void {
     ipcMain.handle(
         NOTES_CHANNELS.EXPORT_PDF,
         async (_event, html: string, mdFilePath: string, vaultPath: string): Promise<string> => {
+            try { writeLog('IPC:received', 'notes:exportPdf'); } catch { /* ignore */ }
+            try {
             const pdfPath = mdFilePath.replace(/\.md$/i, '.pdf');
 
             // Write the full HTML document to a temp file so the hidden window
@@ -387,6 +409,7 @@ export function registerNotesHandlers(): void {
                 win.destroy();
                 try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
             }
+            } catch (err) { try { writeLog('IPC:ERROR', `channel:notes:exportPdf error:${err instanceof Error ? err.message : String(err)}`); } catch { /* ignore */ } throw err; }
         },
     );
 
@@ -401,6 +424,8 @@ export function registerNotesHandlers(): void {
             sourceFile: string,
             sourcePage: number,
         ): Promise<{ ok: boolean; noteTitle?: string; reason?: string }> => {
+            try { writeLog('IPC:received', 'notes:append'); } catch { /* ignore */ }
+            try {
             const db = getDb(vaultPath);
             let row = db.prepare('SELECT * FROM notes WHERE id = ?').get(noteId) as NoteRow | undefined;
 
@@ -464,13 +489,16 @@ export function registerNotesHandlers(): void {
             }
 
             return { ok: true, noteTitle: row.title };
+            } catch (err) { try { writeLog('IPC:ERROR', `channel:notes:append error:${err instanceof Error ? err.message : String(err)}`); } catch { /* ignore */ } throw err; }
         },
     );
 
-    // ── notes:recent ─────────────────────────────────────────────────────────
+    // ── notes:recent ─────────────────────────────────────────────────
     ipcMain.handle(
         NOTES_CHANNELS.RECENT,
         async (_event, vaultPath: string) => {
+            try { writeLog('IPC:received', 'notes:recent'); } catch { /* ignore */ }
+            try {
             const db = getDb(vaultPath);
             const rows = db.prepare(
                 'SELECT * FROM notes ORDER BY updated_at DESC LIMIT 5',
@@ -484,6 +512,7 @@ export function registerNotesHandlers(): void {
                 notes: rows.map(rowToSummary),
                 lastUsedNoteId: lastUsedRow?.value ?? null,
             };
+            } catch (err) { try { writeLog('IPC:ERROR', `channel:notes:recent error:${err instanceof Error ? err.message : String(err)}`); } catch { /* ignore */ } throw err; }
         },
     );
 
@@ -491,11 +520,14 @@ export function registerNotesHandlers(): void {
     ipcMain.handle(
         NOTES_CHANNELS.GET_LAST_USED,
         async (_event, vaultPath: string) => {
+            try { writeLog('IPC:received', 'notes:getLastUsed'); } catch { /* ignore */ }
+            try {
             const db = getDb(vaultPath);
             const row = db.prepare(
                 "SELECT value FROM settings WHERE key = 'lastUsedNoteId'",
             ).get() as { value: string } | undefined;
             return row?.value ?? null;
+            } catch (err) { try { writeLog('IPC:ERROR', `channel:notes:getLastUsed error:${err instanceof Error ? err.message : String(err)}`); } catch { /* ignore */ } throw err; }
         },
     );
 
@@ -503,11 +535,14 @@ export function registerNotesHandlers(): void {
     ipcMain.handle(
         NOTES_CHANNELS.SET_LAST_USED,
         async (_event, vaultPath: string, noteId: string) => {
+            try { writeLog('IPC:received', 'notes:setLastUsed'); } catch { /* ignore */ }
+            try {
             const db = getDb(vaultPath);
             db.prepare(
                 `INSERT INTO settings (key, value) VALUES ('lastUsedNoteId', ?)
                  ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
             ).run(noteId);
+            } catch (err) { try { writeLog('IPC:ERROR', `channel:notes:setLastUsed error:${err instanceof Error ? err.message : String(err)}`); } catch { /* ignore */ } throw err; }
         },
     );
 }

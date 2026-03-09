@@ -372,10 +372,10 @@ export const VaultSidebar: React.FC<VaultSidebarProps> = ({ onVaultOpen, onFileO
       setNewNoteFolder(null);
       // Refresh tree
       await refreshTree(vaultPath);
-      // Open the created note
+      // Open the created note — pass fileId so Workspace doesn't need to query for it
       if (note.file_path) {
         window.dispatchEvent(
-          new CustomEvent('openFile', { detail: { filePath: note.file_path, fileType: 'md' } }),
+          new CustomEvent('openFile', { detail: { filePath: note.file_path, fileType: 'md', fileId: note.id } }),
         );
       }
     } catch (err) {

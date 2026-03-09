@@ -9,14 +9,15 @@ import { getDb } from '../database/schema';
 import { indexFile } from '../indexing/indexer';
 import { embedBatch } from '../workers/embedder';
 import { addVectors } from '../database/vectorStore';
+import { writeLog } from '../logger';
 
 export function registerAnnotationHandlers(): void {
 
   // ── annotation:save ────────────────────────────────────────────────────────
   ipcMain.handle(
     ANNOTATION_CHANNELS.SAVE,
-    async (event, vaultPath: string, annotation: Annotation) => {
-      const db = getDb(vaultPath);
+    async (event, vaultPath: string, annotation: Annotation) => {      try { writeLog('IPC:received', 'annotation:save'); } catch { /* ignore */ }
+      try {      const db = getDb(vaultPath);
       const id = annotation.id ?? uuidv4();
 
       db.prepare(`
@@ -77,8 +78,8 @@ export function registerAnnotationHandlers(): void {
   // content) as searchable chunks with is_annotation = 1.
   ipcMain.handle(
     ANNOTATION_CHANNELS.REINDEX_PDF,
-    async (_event, vaultPath: string, filePath: string, fileId: string) => {
-      // 1. Reindex the PDF's body text (will purge old chunks + re-extract)
+    async (_event, vaultPath: string, filePath: string, fileId: string) => {      try { writeLog('IPC:received', 'annotation:reindexPdf'); } catch { /* ignore */ }
+      try {      // 1. Reindex the PDF's body text (will purge old chunks + re-extract)
       await indexFile(filePath, vaultPath);
 
       // 2. Load all annotations for this file
@@ -144,6 +145,7 @@ export function registerAnnotationHandlers(): void {
       await addVectors(vaultPath, chunksWithVecs);
 
       return { ok: true };
+      } catch (err) { try { writeLog('IPC:ERROR', `channel:annotation:reindexPdf error:${err instanceof Error ? err.message : String(err)}`); } catch { /* ignore */ } throw err; }
     },
   );
 }

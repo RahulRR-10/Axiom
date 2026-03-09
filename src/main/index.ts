@@ -9,23 +9,15 @@ import { registerNotesHandlers } from './ipc/notesHandlers';
 import { setupAISessions, writeWebviewPreload } from './ai/spoofing';
 import { injectPrompt } from './ai/vaultInject';
 import { initAutoUpdater } from './updater';
+import { warmup as warmupEmbedder } from './workers/embedder';
 import { AI_CHANNELS } from '../shared/ipc/channels';
 import type { VaultInjectRequest, VaultInjectResponse } from '../shared/ipc/contracts';
+import { writeLog, logFile } from './logger';
 
 declare const MAIN_WINDOW_WEBPACK_ENTRY: string;
 declare const MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY: string;
 
 /* ── Crash logging ─────────────────────────────────────────────────────────── */
-const logFile = path.join(app.getPath('userData'), 'crash.log');
-
-function writeLog(label: string, err: unknown): void {
-  const msg = err instanceof Error
-    ? `${err.message}\n${err.stack ?? ''}`
-    : String(err);
-  const line = `[${new Date().toISOString()}] ${label}: ${msg}\n`;
-  try { fs.appendFileSync(logFile, line); } catch { /* ignore */ }
-  console.error(line);
-}
 
 function logStep(step: string): void {
   const line = `[${new Date().toISOString()}] STEP: ${step}\n`;
@@ -47,13 +39,13 @@ process.on('uncaughtException', (err) => {
 
 // Catch renderer / GPU / utility process crashes
 app.on('render-process-gone', (_event, wc, details) => {
-  writeLog('render-process-gone', `reason=${details.reason} exitCode=${details.exitCode} url=${wc.getURL()}`);
+  try { writeLog('CRASH:renderer', `reason:${details.reason} exit:${details.exitCode} url:${wc.getURL()}`); } catch { /* ignore */ }
   dialog.showErrorBox('Renderer crashed', `Reason: ${details.reason}\nExit code: ${details.exitCode}\n\nSee crash.log in:\n${logFile}`);
 });
 
 app.on('child-process-gone', (_event, details) => {
   if (details.type === 'GPU' || details.reason !== 'clean-exit') {
-    writeLog('child-process-gone', `type=${details.type} reason=${details.reason} exitCode=${details.exitCode}`);
+    try { writeLog('CRASH:child', `type:${details.type} reason:${details.reason} exit:${details.exitCode}`); } catch { /* ignore */ }
   }
 });
 
@@ -86,10 +78,12 @@ const emitMaximizedChanged = (): void => {
 
 const registerWindowIpcHandlers = (): void => {
   ipcMain.handle('window:minimize', (e) => {
+    try { writeLog('IPC:received', 'window:minimize'); } catch { /* ignore */ }
     BrowserWindow.fromWebContents(e.sender)?.minimize();
   });
 
   ipcMain.handle('window:toggle-maximize', (e) => {
+    try { writeLog('IPC:received', 'window:toggle-maximize'); } catch { /* ignore */ }
     const windowInstance = BrowserWindow.fromWebContents(e.sender);
     if (!windowInstance) {
       return;
@@ -104,6 +98,7 @@ const registerWindowIpcHandlers = (): void => {
   });
 
   ipcMain.handle('window:close', (e) => {
+    try { writeLog('IPC:received', 'window:close'); } catch { /* ignore */ }
     const win = BrowserWindow.fromWebContents(e.sender);
     if (!win) return;
     // If this is the main window, close it normally (triggers 'closed' → app.quit)
@@ -116,19 +111,23 @@ const registerWindowIpcHandlers = (): void => {
   });
 
   ipcMain.handle('window:is-maximized', (e) => {
+    try { writeLog('IPC:received', 'window:is-maximized'); } catch { /* ignore */ }
     return BrowserWindow.fromWebContents(e.sender)?.isMaximized() ?? false;
   });
 
   // ── Shell / file operations ──────────────────────────────────────────────
   ipcMain.handle('shell:openExternal', (_e, url: string) => {
+    try { writeLog('IPC:received', 'shell:openExternal'); } catch { /* ignore */ }
     return shell.openPath(url);
   });
 
   ipcMain.handle('shell:showItemInFolder', (_e, filePath: string) => {
+    try { writeLog('IPC:received', 'shell:showItemInFolder'); } catch { /* ignore */ }
     shell.showItemInFolder(filePath);
   });
 
   ipcMain.handle('file:makeCopy', (_e, filePath: string) => {
+    try { writeLog('IPC:received', 'file:makeCopy'); } catch { /* ignore */ }
     const dir = path.dirname(filePath);
     const ext = path.extname(filePath);
     const base = path.basename(filePath, ext);
@@ -143,6 +142,7 @@ const registerWindowIpcHandlers = (): void => {
   });
 
   ipcMain.handle('file:move', (_e, src: string, destDir: string) => {
+    try { writeLog('IPC:received', 'file:move'); } catch { /* ignore */ }
     const name = path.basename(src);
     const dest = path.join(destDir, name);
     if (fs.existsSync(dest)) throw new Error(`File already exists: ${dest}`);
@@ -154,6 +154,7 @@ const registerWindowIpcHandlers = (): void => {
   });
 
   ipcMain.handle('file:rename', (_e, filePath: string, newName: string) => {
+    try { writeLog('IPC:received', 'file:rename'); } catch { /* ignore */ }
     const dir = path.dirname(filePath);
     const dest = path.join(dir, newName);
     if (fs.existsSync(dest)) throw new Error(`File already exists: ${dest}`);
@@ -165,14 +166,17 @@ const registerWindowIpcHandlers = (): void => {
   });
 
   ipcMain.handle('file:delete', (_e, filePath: string) => {
+    try { writeLog('IPC:received', 'file:delete'); } catch { /* ignore */ }
     shell.trashItem(filePath);
   });
 
   ipcMain.handle('file:createFolder', (_e, folderPath: string) => {
+    try { writeLog('IPC:received', 'file:createFolder'); } catch { /* ignore */ }
     fs.mkdirSync(folderPath, { recursive: true });
   });
 
   ipcMain.handle('file:saveImage', (_e, dirPath: string, fileName: string, data: Buffer) => {
+    try { writeLog('IPC:received', 'file:saveImage'); } catch { /* ignore */ }
     fs.mkdirSync(dirPath, { recursive: true });
     const fullPath = path.join(dirPath, fileName);
     fs.writeFileSync(fullPath, data);
@@ -180,6 +184,7 @@ const registerWindowIpcHandlers = (): void => {
   });
 
   ipcMain.handle('file:selectFolder', async (_e, defaultPath: string) => {
+    try { writeLog('IPC:received', 'file:selectFolder'); } catch { /* ignore */ }
     const result = await dialog.showOpenDialog({
       properties: ['openDirectory'],
       title: 'Select Destination Folder',
@@ -189,6 +194,7 @@ const registerWindowIpcHandlers = (): void => {
   });
 
   ipcMain.handle('window:openNew', (_e, filePath: string, fileType: string, vaultPathArg?: string) => {
+    try { writeLog('IPC:received', 'window:openNew'); } catch { /* ignore */ }
     const child = new BrowserWindow({
       width: 1000,
       height: 700,
@@ -238,6 +244,14 @@ const createWindow = (): void => {
     },
   });
 
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    try { writeLog('CRASH:webcontents', `reason:${details.reason} exit:${details.exitCode}`); } catch { /* ignore */ }
+  });
+
+  mainWindow.on('unresponsive', () => {
+    try { writeLog('CRASH:unresponsive', 'window unresponsive'); } catch { /* ignore */ }
+  });
+
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show();
     emitMaximizedChanged();
@@ -281,15 +295,20 @@ app.whenReady().then(() => {
   setupAISessions();
   logStep('writeWebviewPreload');
   const aiPreloadURL = writeWebviewPreload();
-  ipcMain.handle('ai:getPreloadPath', () => aiPreloadURL);
+  ipcMain.handle('ai:getPreloadPath', () => {
+    try { writeLog('IPC:received', 'ai:getPreloadPath'); } catch { /* ignore */ }
+    return aiPreloadURL;
+  });
 
   // ── AI vault-inject IPC ──────────────────────────────────────────────────
   ipcMain.on(AI_CHANNELS.REGISTER_WEBVIEW, (_, { provider, webContentsId }: { provider: string; webContentsId: number }) => {
+    try { writeLog('IPC:received', `ai:registerWebview provider:${provider}`); } catch { /* ignore */ }
     const wc = webContents.fromId(webContentsId);
     if (wc) webviewMap.set(provider, wc);
   });
 
   ipcMain.handle(AI_CHANNELS.VAULT_INJECT, async (_, req: VaultInjectRequest): Promise<VaultInjectResponse> => {
+    try { writeLog('IPC:received', `ai:vaultInject provider:${req.provider}`); } catch { /* ignore */ }
     const wc = webviewMap.get(req.provider);
     if (!wc) {
       return { success: false, error: `Webview for ${req.provider} not ready` };
@@ -301,9 +320,20 @@ app.whenReady().then(() => {
   createWindow();
   logStep('initAutoUpdater');
   initAutoUpdater(() => mainWindow);
+
+  // Warm up the embedder worker — load model into memory before first query
+  // Don't await — do it in the background so app launch stays fast
+  warmupEmbedder().catch((err) => {
+    try { writeLog('embedder:warmup', `Failed: ${err}`); } catch { /* ignore */ }
+  });
+
   logStep('startup complete');
 }).catch((err) => {
   writeLog('app.whenReady error', err);
+});
+
+app.on('before-quit', () => {
+  try { writeLog('APP:quit', 'before-quit fired'); } catch { /* ignore */ }
 });
 
 app.on('window-all-closed', () => {
