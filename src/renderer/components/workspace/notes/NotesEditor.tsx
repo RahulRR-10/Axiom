@@ -6,7 +6,7 @@ import rehypeKatex from 'rehype-katex';
 import rehypeRaw from 'rehype-raw';
 
 import { EditorState, StateField, type Range } from '@codemirror/state';
-import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, rectangularSelection, Decoration, WidgetType, type DecorationSet } from '@codemirror/view';
+import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, rectangularSelection, scrollPastEnd, Decoration, WidgetType, type DecorationSet } from '@codemirror/view';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { syntaxHighlighting, defaultHighlightStyle, bracketMatching } from '@codemirror/language';
@@ -448,6 +448,7 @@ export const NotesEditor: React.FC<NotesEditorProps> = ({ filePath, noteId, vaul
             indentWithTab,
         ]),
         EditorView.lineWrapping,
+        scrollPastEnd(),
         EditorView.theme({
             '&': { height: '100%', background: '#141414' },
             '.cm-scroller': { overflow: 'auto', fontFamily: "'JetBrains Mono', 'Fira Code', 'Consolas', monospace", fontSize: '14px' },
