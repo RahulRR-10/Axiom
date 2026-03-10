@@ -430,9 +430,9 @@ export const VaultSidebar: React.FC<VaultSidebarProps> = ({ onVaultOpen, onFileO
       const active = document.activeElement as HTMLElement;
       if (active?.tagName === 'INPUT' || active?.tagName === 'TEXTAREA') return;
       if (selectedPaths.size === 0) return;
-      const ok = window.confirm(`Move ${selectedPaths.size} item(s) to trash?`);
-      if (!ok) return;
       void (async () => {
+        const ok = await window.electronAPI.confirmTrash(`Move ${selectedPaths.size} item(s) to trash?`);
+        if (!ok) return;
         for (const path of Array.from(selectedPaths)) {
           try {
             await window.electronAPI.deleteFile(path);
@@ -843,7 +843,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({ node, depth, activeFile, vaultPath,
       setRenaming(true);
     },
     deleteFile: async () => {
-      const ok = window.confirm(`Move "${node.name}" to trash?`);
+      const ok = await window.electronAPI.confirmTrash(`Move "${node.name}" to trash?`);
       if (!ok) return;
       try {
         await window.electronAPI.deleteFile(node.path);
@@ -1034,7 +1034,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({ node, depth, activeFile, vaultPath,
               type="button"
               onClick={async () => {
                 setCtxMenu(null);
-                const ok = window.confirm(`Move "${node.name}" to trash?`);
+                const ok = await window.electronAPI.confirmTrash(`Move "${node.name}" to trash?`);
                 if (!ok) return;
                 try {
                   await window.electronAPI.deleteFile(node.path);

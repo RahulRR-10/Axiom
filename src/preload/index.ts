@@ -162,6 +162,9 @@ const electronAPI = {
   deleteFile: (filePath: string): Promise<void> =>
     ipcRenderer.invoke('file:delete', filePath),
 
+  confirmTrash: (message: string): Promise<boolean> =>
+    ipcRenderer.invoke('dialog:confirmTrash', message),
+
   createFolder: (folderPath: string): Promise<void> =>
     ipcRenderer.invoke('file:createFolder', folderPath),
 

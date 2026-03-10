@@ -171,6 +171,21 @@ const registerWindowIpcHandlers = (): void => {
     await shell.trashItem(filePath);
   });
 
+  // Confirmation dialog routed through the main process so it doesn't break
+  // keyboard input on Windows (window.confirm leaves webContents unfocused).
+  ipcMain.handle('dialog:confirmTrash', async (e, message: string) => {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    if (!win) return false;
+    const { response } = await dialog.showMessageBox(win, {
+      type: 'question',
+      buttons: ['Move to Trash', 'Cancel'],
+      defaultId: 0,
+      cancelId: 1,
+      message,
+    });
+    return response === 0;
+  });
+
   ipcMain.handle('file:createFolder', (_e, folderPath: string) => {
     try { writeLog('IPC:received', 'file:createFolder'); } catch { /* ignore */ }
     fs.mkdirSync(folderPath, { recursive: true });
