@@ -124,6 +124,8 @@ export const SearchPanel: React.FC<SearchPanelProps> = ({ vaultPath }) => {
   // ── Open / close via spotlight:open event ──────────────────────────────
   useEffect(() => {
     const onOpen = (): void => {
+      // Dismiss any open vault context menus so they don't overlay the search
+      window.dispatchEvent(new Event('dismissFileCtxMenu'));
       setOpen(true);
       setQuery("");
       setResults([]);
@@ -135,7 +137,12 @@ export const SearchPanel: React.FC<SearchPanelProps> = ({ vaultPath }) => {
   }, []);
 
   useEffect(() => {
-    if (open) setTimeout(() => inputRef.current?.focus(), 50);
+    if (!open) return;
+    // Use rAF + short delay to ensure the input is rendered before focusing
+    const raf = requestAnimationFrame(() => {
+      inputRef.current?.focus();
+    });
+    return () => cancelAnimationFrame(raf);
   }, [open]);
 
   // ── Debounced search ──────────────────────────────────────────────────
@@ -157,9 +164,13 @@ export const SearchPanel: React.FC<SearchPanelProps> = ({ vaultPath }) => {
         })
         .catch((err) => {
           console.error("[search]", err);
+          setResults([]);
           setSearching(false);
         });
     }, 300);
+    return () => {
+      if (debounce.current) clearTimeout(debounce.current);
+    };
   }, [query, vaultPath]);
 
   // ── Derived data ──────────────────────────────────────────────────────
@@ -245,8 +256,8 @@ export const SearchPanel: React.FC<SearchPanelProps> = ({ vaultPath }) => {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center pt-[10vh]"
-      style={{ background: "rgba(0,0,0,0.7)" }}
+      className="fixed inset-0 flex items-start justify-center pt-[10vh]"
+      style={{ background: "rgba(0,0,0,0.7)", zIndex: 10000 }}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) close();
       }}

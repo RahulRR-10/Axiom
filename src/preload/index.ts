@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
 import { VAULT_CHANNELS, WINDOW_CHANNELS, SEARCH_CHANNELS, ANNOTATION_CHANNELS, NOTES_CHANNELS, AI_CHANNELS } from '../shared/ipc/channels';
 import type { FileNode, IndexStatus, SearchResult, Annotation, NoteSummary, NoteDetail } from '../shared/types';
@@ -150,11 +150,20 @@ const electronAPI = {
   moveFile: (src: string, destDir: string): Promise<string> =>
     ipcRenderer.invoke('file:move', src, destDir),
 
+  importExternalFiles: (srcPaths: string[], destDir: string): Promise<string[]> =>
+    ipcRenderer.invoke('file:importExternal', srcPaths, destDir),
+
+  getPathForFile: (file: File): string =>
+    webUtils.getPathForFile(file),
+
   renameFile: (filePath: string, newName: string): Promise<string> =>
     ipcRenderer.invoke('file:rename', filePath, newName),
 
   deleteFile: (filePath: string): Promise<void> =>
     ipcRenderer.invoke('file:delete', filePath),
+
+  confirmTrash: (message: string): Promise<boolean> =>
+    ipcRenderer.invoke('dialog:confirmTrash', message),
 
   createFolder: (folderPath: string): Promise<void> =>
     ipcRenderer.invoke('file:createFolder', folderPath),

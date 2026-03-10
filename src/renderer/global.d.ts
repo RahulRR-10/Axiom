@@ -52,8 +52,11 @@ declare global {
       showItemInFolder: (filePath: string) => void;
       makeCopy: (filePath: string) => Promise<string>;
       moveFile: (src: string, destDir: string) => Promise<string>;
+      importExternalFiles: (srcPaths: string[], destDir: string) => Promise<string[]>;
+      getPathForFile: (file: File) => string;
       renameFile: (filePath: string, newName: string) => Promise<string>;
       deleteFile: (filePath: string) => Promise<void>;
+      confirmTrash: (message: string) => Promise<boolean>;
       selectFolder: (defaultPath: string) => Promise<string | null>;
       openNewWindow: (filePath: string, fileType: string, vaultPath?: string) => Promise<void>;
       broadcastAnnotationsSaved: (fileId: string) => void;

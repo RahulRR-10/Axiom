@@ -17,7 +17,7 @@ export function registerAnnotationHandlers(): void {
   ipcMain.handle(
     ANNOTATION_CHANNELS.SAVE,
     async (event, vaultPath: string, annotation: Annotation) => {      try { writeLog('IPC:received', 'annotation:save'); } catch { /* ignore */ }
-      try {      const db = getDb(vaultPath);
+      const db = getDb(vaultPath);
       const id = annotation.id ?? uuidv4();
 
       db.prepare(`

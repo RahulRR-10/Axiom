@@ -266,6 +266,7 @@ export const VaultSidebar: React.FC<VaultSidebarProps> = ({ onVaultOpen, onFileO
   const [vaultPath, setVaultPath] = useState<string | null>(null);
   const [files, setFiles] = useState<FileNode[]>([]);
   const [indexStatus, setIndexStatus] = useState<IndexStatus | null>(null);
+  const [fileProgress, setFileProgress] = useState<{ currentFile?: string; currentPage?: number | null; totalPages?: number | null } | null>(null);
   const [activeFile, setActiveFile] = useState<string | null>(null);
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
   const [lastClickedPath, setLastClickedPath] = useState<string | null>(null);
@@ -273,10 +274,33 @@ export const VaultSidebar: React.FC<VaultSidebarProps> = ({ onVaultOpen, onFileO
   const [newFolderParent, setNewFolderParent] = useState<string | null>(null);
   const [emptySpaceMenu, setEmptySpaceMenu] = useState<{ x: number; y: number } | null>(null);
 
+  // Prevent Electron's default file-drop navigation (which loads the file URL in the window)
+  useEffect(() => {
+    const preventNav = (e: DragEvent) => e.preventDefault();
+    document.addEventListener('dragover', preventNav);
+    document.addEventListener('drop', preventNav);
+    return () => {
+      document.removeEventListener('dragover', preventNav);
+      document.removeEventListener('drop', preventNav);
+    };
+  }, []);
+
   // Subscribe to background indexing progress and file-change events
   useEffect(() => {
     const unsubProgress = window.electronAPI.onIndexProgress((payload) => {
-      setIndexStatus({ ...payload });
+      // Only update global index status from vault-handler payloads (which include inProgress)
+      if (payload.inProgress !== undefined) {
+        setIndexStatus({ ...payload });
+        if (payload.inProgress === false) setFileProgress(null);
+      }
+      // Update per-file page progress from indexer payloads
+      if (payload.currentFile || payload.currentPage != null) {
+        setFileProgress({
+          currentFile: payload.currentFile,
+          currentPage: payload.currentPage,
+          totalPages: payload.totalPages,
+        });
+      }
     });
     const unsubChanged = window.electronAPI.onFileChanged(({ vaultPath: vp }) => {
       if (vp === vaultPath) void refreshTree(vp);
@@ -406,9 +430,9 @@ export const VaultSidebar: React.FC<VaultSidebarProps> = ({ onVaultOpen, onFileO
       const active = document.activeElement as HTMLElement;
       if (active?.tagName === 'INPUT' || active?.tagName === 'TEXTAREA') return;
       if (selectedPaths.size === 0) return;
-      const ok = window.confirm(`Move ${selectedPaths.size} item(s) to trash?`);
-      if (!ok) return;
       void (async () => {
+        const ok = await window.electronAPI.confirmTrash(`Move ${selectedPaths.size} item(s) to trash?`);
+        if (!ok) return;
         for (const path of Array.from(selectedPaths)) {
           try {
             await window.electronAPI.deleteFile(path);
@@ -480,6 +504,11 @@ export const VaultSidebar: React.FC<VaultSidebarProps> = ({ onVaultOpen, onFileO
               style={{ width: `${indexPercent ?? 0}%` }}
             />
           </div>
+          {fileProgress?.currentFile && fileProgress.currentPage != null && fileProgress.totalPages != null && fileProgress.totalPages > 0 && (
+            <div className="text-[10px] text-[#6a6a6a] mt-1 truncate">
+              {fileProgress.currentFile} — page {fileProgress.currentPage} of {fileProgress.totalPages} — {Math.round((fileProgress.currentPage / fileProgress.totalPages) * 100)}%
+            </div>
+          )}
         </div>
       )}
 
@@ -501,11 +530,30 @@ export const VaultSidebar: React.FC<VaultSidebarProps> = ({ onVaultOpen, onFileO
         // Drop target for root vault area
         onDragOver={(e) => {
           e.preventDefault();
-          e.dataTransfer.dropEffect = 'move';
+          e.dataTransfer.dropEffect = e.dataTransfer.types.includes('Files') ? 'copy' : 'move';
         }}
         onDrop={(e) => {
           e.preventDefault();
           if (!vaultPath) return;
+          // Handle external file drops from OS
+          if (e.dataTransfer.files && e.dataTransfer.files.length > 0 && !e.dataTransfer.getData('text/vault-path') && !e.dataTransfer.getData('text/vault-paths')) {
+            const extPaths: string[] = [];
+            for (let i = 0; i < e.dataTransfer.files.length; i++) {
+              const p = window.electronAPI.getPathForFile(e.dataTransfer.files[i]);
+              if (p) extPaths.push(p);
+            }
+            if (extPaths.length > 0) {
+              void (async () => {
+                try {
+                  await window.electronAPI.importExternalFiles(extPaths, vaultPath);
+                  await refreshTree(vaultPath);
+                } catch (err) {
+                  console.error('[VaultSidebar] External drop to root failed:', err);
+                }
+              })();
+              return;
+            }
+          }
           const multiPathsStr = e.dataTransfer.getData('text/vault-paths');
           if (multiPathsStr) {
             let paths: string[] = [];
@@ -688,7 +736,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({ node, depth, activeFile, vaultPath,
   const handleFolderDragOver = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    e.dataTransfer.dropEffect = 'move';
+    e.dataTransfer.dropEffect = e.dataTransfer.types.includes('Files') ? 'copy' : 'move';
     setDropTarget(true);
   };
 
@@ -700,6 +748,25 @@ const TreeNode: React.FC<TreeNodeProps> = ({ node, depth, activeFile, vaultPath,
     e.preventDefault();
     e.stopPropagation();
     setDropTarget(false);
+    // Handle external file drops from OS
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0 && !e.dataTransfer.getData('text/vault-path') && !e.dataTransfer.getData('text/vault-paths')) {
+      const extPaths: string[] = [];
+      for (let i = 0; i < e.dataTransfer.files.length; i++) {
+        const p = window.electronAPI.getPathForFile(e.dataTransfer.files[i]);
+        if (p) extPaths.push(p);
+      }
+      if (extPaths.length > 0) {
+        void (async () => {
+          try {
+            await window.electronAPI.importExternalFiles(extPaths, node.path);
+            onTreeChanged?.();
+          } catch (err) {
+            console.error('[VaultSidebar] External drop to folder failed:', err);
+          }
+        })();
+        return;
+      }
+    }
     const multiPathsStr = e.dataTransfer.getData('text/vault-paths');
     if (multiPathsStr) {
       let paths: string[] = [];
@@ -776,7 +843,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({ node, depth, activeFile, vaultPath,
       setRenaming(true);
     },
     deleteFile: async () => {
-      const ok = window.confirm(`Move "${node.name}" to trash?`);
+      const ok = await window.electronAPI.confirmTrash(`Move "${node.name}" to trash?`);
       if (!ok) return;
       try {
         await window.electronAPI.deleteFile(node.path);
@@ -967,7 +1034,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({ node, depth, activeFile, vaultPath,
               type="button"
               onClick={async () => {
                 setCtxMenu(null);
-                const ok = window.confirm(`Move "${node.name}" to trash?`);
+                const ok = await window.electronAPI.confirmTrash(`Move "${node.name}" to trash?`);
                 if (!ok) return;
                 try {
                   await window.electronAPI.deleteFile(node.path);
@@ -1067,6 +1134,66 @@ const TreeNode: React.FC<TreeNodeProps> = ({ node, depth, activeFile, vaultPath,
         data-tree-node
         draggable
         onDragStart={handleDragStart}
+        onDragOver={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          e.dataTransfer.dropEffect = e.dataTransfer.types.includes('Files') ? 'copy' : 'move';
+          setDropTarget(true);
+        }}
+        onDragLeave={() => setDropTarget(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setDropTarget(false);
+          const parentDir = node.path.substring(0, Math.max(node.path.lastIndexOf('/'), node.path.lastIndexOf('\\')));
+          // Handle external file drops from OS
+          if (e.dataTransfer.files && e.dataTransfer.files.length > 0 && !e.dataTransfer.getData('text/vault-path') && !e.dataTransfer.getData('text/vault-paths')) {
+            const extPaths: string[] = [];
+            for (let i = 0; i < e.dataTransfer.files.length; i++) {
+              const p = window.electronAPI.getPathForFile(e.dataTransfer.files[i]);
+              if (p) extPaths.push(p);
+            }
+            if (extPaths.length > 0) {
+              void (async () => {
+                try {
+                  await window.electronAPI.importExternalFiles(extPaths, parentDir);
+                  onTreeChanged?.();
+                } catch (err) {
+                  console.error('[VaultSidebar] External drop on file failed:', err);
+                }
+              })();
+              return;
+            }
+          }
+          const multiPathsStr = e.dataTransfer.getData('text/vault-paths');
+          if (multiPathsStr) {
+            let paths: string[] = [];
+            try { paths = JSON.parse(multiPathsStr) as string[]; } catch { return; }
+            void (async () => {
+              for (const srcPath of paths) {
+                if (srcPath === node.path || parentDir.startsWith(srcPath)) continue;
+                try {
+                  await window.electronAPI.moveFile(srcPath, parentDir);
+                } catch (err) {
+                  console.error('[VaultSidebar] Multi-drop on file failed:', err);
+                }
+              }
+              onTreeChanged?.();
+            })();
+            return;
+          }
+          const srcPath = e.dataTransfer.getData('text/vault-path');
+          if (!srcPath || srcPath === node.path) return;
+          if (parentDir.startsWith(srcPath)) return;
+          void (async () => {
+            try {
+              await window.electronAPI.moveFile(srcPath, parentDir);
+              onTreeChanged?.();
+            } catch (err) {
+              console.error('[VaultSidebar] Drop on file failed:', err);
+            }
+          })();
+        }}
         onClick={(e) => onFileClick(node, e.shiftKey, e.ctrlKey || e.metaKey)}
         onContextMenu={(e) => {
           e.preventDefault();
@@ -1074,7 +1201,11 @@ const TreeNode: React.FC<TreeNodeProps> = ({ node, depth, activeFile, vaultPath,
           window.dispatchEvent(new Event('dismissFileCtxMenu'));
           setCtxMenu({ x: e.clientX, y: e.clientY });
         }}
-        style={{ paddingLeft: depth * 12 + 20 }}
+        style={{
+          paddingLeft: depth * 12 + 20,
+          background: dropTarget ? 'rgba(74, 158, 255, 0.15)' : undefined,
+          borderLeft: dropTarget ? '2px solid #4a9eff' : '2px solid transparent',
+        }}
         className={`w-full flex items-center gap-1.5 py-1 pr-2 text-left rounded transition-colors ${
           selectedPaths.has(node.path) ? 'bg-[#1e3a5f]' : isActive ? 'bg-[#3a3a3a]' : 'hover:bg-[#2a2a2a]'
         }`}

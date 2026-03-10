@@ -32,7 +32,11 @@ export type VaultGetIndexStatusRequest = { vaultPath: string };
 export type VaultGetIndexStatusResponse = IndexStatus;
 
 // ── vault:indexProgress (push, main → renderer) ────────────────────────────
-export type VaultIndexProgressPayload = IndexStatus & { currentFile?: string };
+export type VaultIndexProgressPayload = IndexStatus & {
+  currentFile?: string;
+  currentPage?: number | null;
+  totalPages?: number | null;
+};
 
 // ── search:query ─────────────────────────────────────────────────────────────
 export type SearchQueryRequest = {
