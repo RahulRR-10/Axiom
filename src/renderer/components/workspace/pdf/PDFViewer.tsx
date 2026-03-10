@@ -859,6 +859,10 @@ export const PDFViewer: React.FC<Props> = ({
   const isPanning = useRef(false);
   const panStart = useRef({ x: 0, y: 0, scrollLeft: 0, scrollTop: 0 });
   const prevActiveRef = useRef(isActive);
+  // Keep a ref to the latest DB annotations so onAnnotationUpdated can check
+  // whether an annotation is already persisted without needing it as a dep.
+  const annotationsRef = useRef<Annotation[]>([]);
+  useEffect(() => { annotationsRef.current = annotations; }, [annotations]);
 
   /* ── Load PDF (fast — only reads page 1 for sizing) ──────────────────────── */
   useEffect(() => {
@@ -1035,36 +1039,38 @@ export const PDFViewer: React.FC<Props> = ({
   }, []);
 
   const onAnnotationUpdated = useCallback((ann: Annotation) => {
-    // Update in pending if it exists there, otherwise delete+re-create
-    setPendingAnnotations((prev) => {
-      const idx = prev.findIndex((a) => a.id === ann.id);
-      if (idx >= 0) {
+    const isInDb = annotationsRef.current.some((a) => a.id === ann.id);
+
+    if (isInDb) {
+      // DB annotation: optimistically update DB state, mark old version for
+      // deletion, and queue the updated version as pending.
+      setAnnotations((prev) => {
+        const idx = prev.findIndex((a) => a.id === ann.id);
+        if (idx < 0) return prev;
         const next = [...prev];
         next[idx] = ann;
         return next;
-      }
-      return prev;
-    });
-    // If it was a DB annotation, mark old for deletion and add updated as pending
-    setAnnotations((prev) => {
-      const idx = prev.findIndex((a) => a.id === ann.id);
-      if (idx >= 0) {
+      });
+      setDeletedAnnotationIds((prev) => {
+        const copy = new Set(prev);
+        copy.add(ann.id);
+        return copy;
+      });
+      setPendingAnnotations((prev) => {
+        if (prev.find((a) => a.id === ann.id)) return prev;
+        return [...prev, ann];
+      });
+    } else {
+      // Purely pending annotation (not yet saved to DB): just update it
+      // in-place so we never accidentally mark it for DB deletion.
+      setPendingAnnotations((prev) => {
+        const idx = prev.findIndex((a) => a.id === ann.id);
+        if (idx < 0) return prev;
         const next = [...prev];
         next[idx] = ann;
         return next;
-      }
-      return prev;
-    });
-    // Mark as dirty — delete the old DB version and re-add as pending
-    setDeletedAnnotationIds((prev) => {
-      const copy = new Set(prev);
-      copy.add(ann.id);
-      return copy;
-    });
-    setPendingAnnotations((prev) => {
-      if (prev.find((a) => a.id === ann.id)) return prev;
-      return [...prev, ann];
-    });
+      });
+    }
   }, []);
 
   /* ── Save PDF ────────────────────────────────────────────────────────────── */
@@ -1135,13 +1141,18 @@ export const PDFViewer: React.FC<Props> = ({
       pdfCache.delete(filePath);
       await window.electronAPI.writeFile(filePath, new Uint8Array(savedBytes));
 
-      // 4. Reindex PDF with annotation text
+      // 4. Reindex PDF with annotation text.
+      // Non-fatal: a reindex failure must never block the dirty-state clear.
       if (vaultPath) {
-        await window.electronAPI.reindexPdf(
-          vaultPath,
-          filePath,
-          effectiveFileId,
-        );
+        try {
+          await window.electronAPI.reindexPdf(
+            vaultPath,
+            filePath,
+            effectiveFileId,
+          );
+        } catch (indexErr) {
+          console.warn('[PDFViewer] Reindex after save failed (non-fatal):', indexErr);
+        }
       }
 
       // 5. Clear pending state and reload from DB
