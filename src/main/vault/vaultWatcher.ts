@@ -88,6 +88,7 @@ async function handleUnlink(filePath: string, vaultPath: string): Promise<void> 
     console.error('[watcher] Failed to purge deleted file:', filePath, err);
   }
   // Always notify the renderer so the file tree refreshes, even if purge failed
+  broadcastFileDeleted(filePath);
   broadcastFileChanged(vaultPath);
 }
 
@@ -109,5 +110,11 @@ function broadcastIndexStatus(vaultPath: string): void {
 export function broadcastFileChanged(vaultPath: string): void {
   for (const win of BrowserWindow.getAllWindows()) {
     win.webContents.send(VAULT_CHANNELS.FILE_CHANGED, { vaultPath });
+  }
+}
+
+function broadcastFileDeleted(filePath: string): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.webContents.send(VAULT_CHANNELS.FILE_DELETED, filePath);
   }
 }

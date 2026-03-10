@@ -15,6 +15,7 @@ export const VAULT_CHANNELS = {
   SET_LAST_VAULT: 'vault:setLastVault',
   INDEX_PROGRESS: 'vault:indexProgress',   // main → renderer push event
   FILE_CHANGED: 'vault:fileChanged',     // main → renderer push event
+  FILE_DELETED: 'vault:fileDeleted',     // main → renderer push event (deleted file path)
 } as const;
 
 export const SEARCH_CHANNELS = {

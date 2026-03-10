@@ -425,6 +425,34 @@ export const Workspace: React.FC<WorkspaceProps> = ({ vaultPath }) => {
 
   // ── Drag and drop ─────────────────────────────────────────────────────
 
+  // ── Auto-close tab when file is deleted ───────────────────────────────
+  useEffect(() => {
+    const unsub = window.electronAPI.onFileDeleted((deletedPath) => {
+      const normalizedDeleted = normalizePath(deletedPath);
+      setOpenFiles((prev) => {
+        const match = prev.find((f) => normalizePath(f.filePath) === normalizedDeleted);
+        if (!match) return prev;
+        return prev.filter((f) => normalizePath(f.filePath) !== normalizedDeleted);
+      });
+      setActiveFilePath((prev) => {
+        if (normalizePath(prev) === normalizedDeleted) {
+          // Pick an adjacent tab
+          const idx = openFiles.findIndex((f) => normalizePath(f.filePath) === normalizedDeleted);
+          const next = openFiles[idx + 1] ?? openFiles[idx - 1] ?? null;
+          return next?.filePath ?? null;
+        }
+        return prev;
+      });
+      // Remove from any tab groups
+      setTabGroups((prev) =>
+        prev
+          .map((g) => ({ ...g, filePaths: g.filePaths.filter((p) => normalizePath(p) !== normalizedDeleted) }))
+          .filter((g) => g.filePaths.length > 0),
+      );
+    });
+    return unsub;
+  }, [normalizePath, openFiles]);
+
   // ── Cross-window sync: close md tab when saved elsewhere ───────────────
   useEffect(() => {
     const unsub = window.electronAPI.onNoteSaved((savedFilePath) => {

@@ -208,6 +208,12 @@ const electronAPI = {
     return () => ipcRenderer.removeListener('file:pathChanged', listener);
   },
 
+  onFileDeleted: (callback: (filePath: string) => void): (() => void) => {
+    const listener = (_: unknown, filePath: string): void => callback(filePath);
+    ipcRenderer.on('vault:fileDeleted', listener);
+    return () => ipcRenderer.removeListener('vault:fileDeleted', listener);
+  },
+
 
   // ── AI panel ─────────────────────────────────────────────────────────────
   getAIPreloadPath: (): Promise<string> =>
