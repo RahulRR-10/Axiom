@@ -10,14 +10,18 @@ import { WindowControlsToolbar } from "./WindowControlsToolbar";
 
 const AI_MIN_WIDTH = 200;
 const AI_MAX_WIDTH = 700;
+const VAULT_MIN_WIDTH = 160;
+const VAULT_MAX_WIDTH = 500;
 
 export const AppLayout: React.FC = () => {
   const [vaultCollapsed, setVaultCollapsed] = useState<boolean>(false);
   const [aiCollapsed, setAiCollapsed] = useState<boolean>(false);
   const [vaultPath, setVaultPath] = useState<string | null>(null);
   const [aiWidth, setAiWidth] = useState<number>(340);
+  const [vaultWidth, setVaultWidth] = useState<number>(240);
   const [updateReady, setUpdateReady] = useState<boolean>(false);
   const [isResizingAI, setIsResizingAI] = useState<boolean>(false);
+  const [isResizingVault, setIsResizingVault] = useState<boolean>(false);
   const [aiQuestion, setAiQuestion] = useState<string>('');
   const [aiSources, setAiSources] = useState<SearchResult[]>([]);
   const [sourcesOpen, setSourcesOpen] = useState(false);
@@ -25,6 +29,9 @@ export const AppLayout: React.FC = () => {
   const isDraggingAI = useRef<boolean>(false);
   const dragStartX = useRef<number>(0);
   const dragStartW = useRef<number>(340);
+  const isDraggingVault = useRef<boolean>(false);
+  const vaultDragStartX = useRef<number>(0);
+  const vaultDragStartW = useRef<number>(240);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -57,6 +64,37 @@ export const AppLayout: React.FC = () => {
       window.addEventListener("mouseup", onMouseUp);
     },
     [aiWidth],
+  );
+
+  const onVaultResizeMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      isDraggingVault.current = true;
+      setIsResizingVault(true);
+      vaultDragStartX.current = e.clientX;
+      vaultDragStartW.current = vaultWidth;
+
+      const onMouseMove = (ev: MouseEvent): void => {
+        if (!isDraggingVault.current) return;
+        const delta = ev.clientX - vaultDragStartX.current;
+        const newW = Math.min(
+          VAULT_MAX_WIDTH,
+          Math.max(VAULT_MIN_WIDTH, vaultDragStartW.current + delta),
+        );
+        setVaultWidth(newW);
+      };
+
+      const onMouseUp = (): void => {
+        isDraggingVault.current = false;
+        setIsResizingVault(false);
+        window.removeEventListener("mousemove", onMouseMove);
+        window.removeEventListener("mouseup", onMouseUp);
+      };
+
+      window.addEventListener("mousemove", onMouseMove);
+      window.addEventListener("mouseup", onMouseUp);
+    },
+    [vaultWidth],
   );
 
   const handleOpenNewVault = useCallback(() => {
@@ -163,19 +201,36 @@ export const AppLayout: React.FC = () => {
       {/* ── Three-panel row ── fills remaining height */}
       <div className="flex flex-1 min-h-0 overflow-hidden" style={{ position: 'relative' }}>
         {/* Drag overlay — blocks webviews/iframes from swallowing mouse events */}
-        {isResizingAI && (
+        {(isResizingAI || isResizingVault) && (
           <div style={{ position: 'absolute', inset: 0, zIndex: 9999, cursor: 'col-resize' }} />
         )}
         {/* Vault sidebar */}
         <section
           style={{
-            width: vaultCollapsed ? "36px" : "240px",
-            transition: "width 200ms ease-in-out",
+            width: vaultCollapsed ? "36px" : `${vaultWidth}px`,
+            transition: isResizingVault ? "none" : "width 200ms ease-in-out",
             background: "#1e1e1e",
             borderRight: "1px solid #2a2a2a",
+            position: "relative",
           }}
           className="h-full overflow-hidden shrink-0 flex flex-col"
         >
+          {/* Resize handle */}
+          {!vaultCollapsed && (
+            <div
+              onMouseDown={onVaultResizeMouseDown}
+              style={{
+                position: "absolute",
+                right: 0,
+                top: 0,
+                bottom: 0,
+                width: "4px",
+                cursor: "col-resize",
+                zIndex: 10,
+              }}
+              className="hover:bg-[#4a9eff]/40"
+            />
+          )}
           {/* Header — always shown */}
           {vaultCollapsed ? (
             <div className="h-10 border-b border-[#2a2a2a] flex items-center justify-center shrink-0">
