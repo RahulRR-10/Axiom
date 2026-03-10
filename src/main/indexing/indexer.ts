@@ -278,16 +278,48 @@ async function indexFileInner(filePath: string, vaultPath: string): Promise<void
 }
 
 /**
- * Remove all chunks, FTS rows, and vectors for a file ID (cascade handles
- * chunks deletion; we manually clean FTS and vectors).
+ * Remove all chunks, FTS rows, and vectors for a file ID.
+ * FTS5 content-sync tables require the special 'delete' command with original
+ * row values — a plain DELETE statement corrupts the index.
  */
 export async function purgeFile(
   fileId: string,
   vaultPath: string,
   db: ReturnType<typeof getDb>,
 ): Promise<void> {
-  db.prepare("DELETE FROM chunks_fts WHERE file_id = ?").run(fileId);
-  db.prepare("DELETE FROM files WHERE id = ?").run(fileId);
+  // Fetch chunk data needed for proper FTS5 content-sync removal
+  const chunks = db.prepare(
+    'SELECT rowid, text, file_id, page_or_slide FROM chunks WHERE file_id = ?'
+  ).all(fileId) as Array<{ rowid: number; text: string; file_id: string; page_or_slide: number | null }>;
+
+  // Issue the proper FTS5 delete command for each chunk
+  const deleteFts = db.prepare(
+    "INSERT INTO chunks_fts(chunks_fts, rowid, text, file_id, page_or_slide) VALUES('delete', ?, ?, ?, ?)"
+  );
+  const purgeTransaction = db.transaction(() => {
+    for (const c of chunks) {
+      deleteFts.run(c.rowid, c.text, c.file_id, c.page_or_slide);
+    }
+    // Delete chunks explicitly, then the file record
+    db.prepare('DELETE FROM chunks WHERE file_id = ?').run(fileId);
+    db.prepare('DELETE FROM files WHERE id = ?').run(fileId);
+  });
+
+  try {
+    purgeTransaction();
+  } catch (err) {
+    // If FTS5 delete failed (e.g. pre-existing corruption), fall back to
+    // rebuilding the entire FTS index so search keeps working.
+    console.warn('[purge] Transaction failed, rebuilding FTS5 index:', err);
+    db.prepare('DELETE FROM chunks WHERE file_id = ?').run(fileId);
+    db.prepare('DELETE FROM files WHERE id = ?').run(fileId);
+    try {
+      db.exec("INSERT INTO chunks_fts(chunks_fts) VALUES('rebuild')");
+    } catch (rebuildErr) {
+      console.error('[purge] FTS5 rebuild failed:', rebuildErr);
+    }
+  }
+
   await deleteVectorsByFileId(vaultPath, fileId);
 }
 

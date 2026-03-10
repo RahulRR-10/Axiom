@@ -83,11 +83,12 @@ async function handleUnlink(filePath: string, vaultPath: string): Promise<void> 
 
     if (row) {
       await purgeFile(row.id, vaultPath, db);
-      broadcastFileChanged(vaultPath);
     }
   } catch (err) {
     console.error('[watcher] Failed to purge deleted file:', filePath, err);
   }
+  // Always notify the renderer so the file tree refreshes, even if purge failed
+  broadcastFileChanged(vaultPath);
 }
 
 function broadcastIndexStatus(vaultPath: string): void {

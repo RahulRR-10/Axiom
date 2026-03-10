@@ -162,7 +162,7 @@ async function handleSearch(
   }
 
   // ── 2. Await semantic results and merge ─────────────────────────────────
-  {
+  try {
     const semRows = await semanticPromise;
 
     for (const r of semRows) {
@@ -205,6 +205,8 @@ async function handleSearch(
         }
       }
     }
+  } catch (err) {
+    console.warn('[search] Semantic merge error:', err);
   }
 
   // ── 3. Notes search ────────────────────────────────────────────────────

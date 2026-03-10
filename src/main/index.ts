@@ -166,14 +166,41 @@ const registerWindowIpcHandlers = (): void => {
     return dest;
   });
 
-  ipcMain.handle('file:delete', (_e, filePath: string) => {
+  ipcMain.handle('file:delete', async (_e, filePath: string) => {
     try { writeLog('IPC:received', 'file:delete'); } catch { /* ignore */ }
-    shell.trashItem(filePath);
+    await shell.trashItem(filePath);
   });
 
   ipcMain.handle('file:createFolder', (_e, folderPath: string) => {
     try { writeLog('IPC:received', 'file:createFolder'); } catch { /* ignore */ }
     fs.mkdirSync(folderPath, { recursive: true });
+  });
+
+  ipcMain.handle('file:importExternal', (_e, srcPaths: string[], destDir: string) => {
+    try { writeLog('IPC:received', 'file:importExternal'); } catch { /* ignore */ }
+    const imported: string[] = [];
+    for (const src of srcPaths) {
+      const name = path.basename(src);
+      let dest = path.join(destDir, name);
+      // Handle name conflicts
+      if (fs.existsSync(dest)) {
+        const ext = path.extname(name);
+        const base = path.basename(name, ext);
+        let n = 1;
+        do {
+          dest = path.join(destDir, `${base} (${n})${ext}`);
+          n++;
+        } while (fs.existsSync(dest));
+      }
+      const stat = fs.statSync(src);
+      if (stat.isDirectory()) {
+        fs.cpSync(src, dest, { recursive: true });
+      } else {
+        fs.copyFileSync(src, dest);
+      }
+      imported.push(dest);
+    }
+    return imported;
   });
 
   ipcMain.handle('file:saveImage', (_e, dirPath: string, fileName: string, data: Buffer) => {

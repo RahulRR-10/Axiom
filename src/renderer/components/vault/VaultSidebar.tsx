@@ -274,6 +274,17 @@ export const VaultSidebar: React.FC<VaultSidebarProps> = ({ onVaultOpen, onFileO
   const [newFolderParent, setNewFolderParent] = useState<string | null>(null);
   const [emptySpaceMenu, setEmptySpaceMenu] = useState<{ x: number; y: number } | null>(null);
 
+  // Prevent Electron's default file-drop navigation (which loads the file URL in the window)
+  useEffect(() => {
+    const preventNav = (e: DragEvent) => e.preventDefault();
+    document.addEventListener('dragover', preventNav);
+    document.addEventListener('drop', preventNav);
+    return () => {
+      document.removeEventListener('dragover', preventNav);
+      document.removeEventListener('drop', preventNav);
+    };
+  }, []);
+
   // Subscribe to background indexing progress and file-change events
   useEffect(() => {
     const unsubProgress = window.electronAPI.onIndexProgress((payload) => {
@@ -519,11 +530,30 @@ export const VaultSidebar: React.FC<VaultSidebarProps> = ({ onVaultOpen, onFileO
         // Drop target for root vault area
         onDragOver={(e) => {
           e.preventDefault();
-          e.dataTransfer.dropEffect = 'move';
+          e.dataTransfer.dropEffect = e.dataTransfer.types.includes('Files') ? 'copy' : 'move';
         }}
         onDrop={(e) => {
           e.preventDefault();
           if (!vaultPath) return;
+          // Handle external file drops from OS
+          if (e.dataTransfer.files && e.dataTransfer.files.length > 0 && !e.dataTransfer.getData('text/vault-path') && !e.dataTransfer.getData('text/vault-paths')) {
+            const extPaths: string[] = [];
+            for (let i = 0; i < e.dataTransfer.files.length; i++) {
+              const p = window.electronAPI.getPathForFile(e.dataTransfer.files[i]);
+              if (p) extPaths.push(p);
+            }
+            if (extPaths.length > 0) {
+              void (async () => {
+                try {
+                  await window.electronAPI.importExternalFiles(extPaths, vaultPath);
+                  await refreshTree(vaultPath);
+                } catch (err) {
+                  console.error('[VaultSidebar] External drop to root failed:', err);
+                }
+              })();
+              return;
+            }
+          }
           const multiPathsStr = e.dataTransfer.getData('text/vault-paths');
           if (multiPathsStr) {
             let paths: string[] = [];
@@ -706,7 +736,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({ node, depth, activeFile, vaultPath,
   const handleFolderDragOver = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    e.dataTransfer.dropEffect = 'move';
+    e.dataTransfer.dropEffect = e.dataTransfer.types.includes('Files') ? 'copy' : 'move';
     setDropTarget(true);
   };
 
@@ -718,6 +748,25 @@ const TreeNode: React.FC<TreeNodeProps> = ({ node, depth, activeFile, vaultPath,
     e.preventDefault();
     e.stopPropagation();
     setDropTarget(false);
+    // Handle external file drops from OS
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0 && !e.dataTransfer.getData('text/vault-path') && !e.dataTransfer.getData('text/vault-paths')) {
+      const extPaths: string[] = [];
+      for (let i = 0; i < e.dataTransfer.files.length; i++) {
+        const p = window.electronAPI.getPathForFile(e.dataTransfer.files[i]);
+        if (p) extPaths.push(p);
+      }
+      if (extPaths.length > 0) {
+        void (async () => {
+          try {
+            await window.electronAPI.importExternalFiles(extPaths, node.path);
+            onTreeChanged?.();
+          } catch (err) {
+            console.error('[VaultSidebar] External drop to folder failed:', err);
+          }
+        })();
+        return;
+      }
+    }
     const multiPathsStr = e.dataTransfer.getData('text/vault-paths');
     if (multiPathsStr) {
       let paths: string[] = [];
@@ -1085,6 +1134,66 @@ const TreeNode: React.FC<TreeNodeProps> = ({ node, depth, activeFile, vaultPath,
         data-tree-node
         draggable
         onDragStart={handleDragStart}
+        onDragOver={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          e.dataTransfer.dropEffect = e.dataTransfer.types.includes('Files') ? 'copy' : 'move';
+          setDropTarget(true);
+        }}
+        onDragLeave={() => setDropTarget(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setDropTarget(false);
+          const parentDir = node.path.substring(0, Math.max(node.path.lastIndexOf('/'), node.path.lastIndexOf('\\')));
+          // Handle external file drops from OS
+          if (e.dataTransfer.files && e.dataTransfer.files.length > 0 && !e.dataTransfer.getData('text/vault-path') && !e.dataTransfer.getData('text/vault-paths')) {
+            const extPaths: string[] = [];
+            for (let i = 0; i < e.dataTransfer.files.length; i++) {
+              const p = window.electronAPI.getPathForFile(e.dataTransfer.files[i]);
+              if (p) extPaths.push(p);
+            }
+            if (extPaths.length > 0) {
+              void (async () => {
+                try {
+                  await window.electronAPI.importExternalFiles(extPaths, parentDir);
+                  onTreeChanged?.();
+                } catch (err) {
+                  console.error('[VaultSidebar] External drop on file failed:', err);
+                }
+              })();
+              return;
+            }
+          }
+          const multiPathsStr = e.dataTransfer.getData('text/vault-paths');
+          if (multiPathsStr) {
+            let paths: string[] = [];
+            try { paths = JSON.parse(multiPathsStr) as string[]; } catch { return; }
+            void (async () => {
+              for (const srcPath of paths) {
+                if (srcPath === node.path || parentDir.startsWith(srcPath)) continue;
+                try {
+                  await window.electronAPI.moveFile(srcPath, parentDir);
+                } catch (err) {
+                  console.error('[VaultSidebar] Multi-drop on file failed:', err);
+                }
+              }
+              onTreeChanged?.();
+            })();
+            return;
+          }
+          const srcPath = e.dataTransfer.getData('text/vault-path');
+          if (!srcPath || srcPath === node.path) return;
+          if (parentDir.startsWith(srcPath)) return;
+          void (async () => {
+            try {
+              await window.electronAPI.moveFile(srcPath, parentDir);
+              onTreeChanged?.();
+            } catch (err) {
+              console.error('[VaultSidebar] Drop on file failed:', err);
+            }
+          })();
+        }}
         onClick={(e) => onFileClick(node, e.shiftKey, e.ctrlKey || e.metaKey)}
         onContextMenu={(e) => {
           e.preventDefault();
@@ -1092,7 +1201,11 @@ const TreeNode: React.FC<TreeNodeProps> = ({ node, depth, activeFile, vaultPath,
           window.dispatchEvent(new Event('dismissFileCtxMenu'));
           setCtxMenu({ x: e.clientX, y: e.clientY });
         }}
-        style={{ paddingLeft: depth * 12 + 20 }}
+        style={{
+          paddingLeft: depth * 12 + 20,
+          background: dropTarget ? 'rgba(74, 158, 255, 0.15)' : undefined,
+          borderLeft: dropTarget ? '2px solid #4a9eff' : '2px solid transparent',
+        }}
         className={`w-full flex items-center gap-1.5 py-1 pr-2 text-left rounded transition-colors ${
           selectedPaths.has(node.path) ? 'bg-[#1e3a5f]' : isActive ? 'bg-[#3a3a3a]' : 'hover:bg-[#2a2a2a]'
         }`}
