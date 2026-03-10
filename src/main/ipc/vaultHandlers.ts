@@ -151,8 +151,8 @@ async function handleOpen(vaultPath: string): Promise<VaultOpenResponse> {
         if (!abort.aborted) {
           broadcastProgress({ total, indexed, failed, inProgress: indexed < total, currentFile: path.basename(filePath) }, vaultPath);
         }
-        // Yield to event loop between files so the renderer stays responsive
-        await new Promise((r) => setTimeout(r, 0));
+        // Yield to event loop and give GC time to reclaim WASM memory between files
+        await new Promise((r) => setTimeout(r, 100));
       }
     } catch (fatal) {
       console.error('[vault:open] Fatal indexing error — aborting loop:', fatal);

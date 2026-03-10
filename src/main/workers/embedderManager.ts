@@ -22,6 +22,8 @@ type PendingCall = {
 const searchPending = new Map<number, PendingCall>();
 const indexPending  = new Map<number, PendingCall>();
 
+let shuttingDown = false;
+
 // ── Inline worker source (same isolate as embedder.ts) ───────────────────────
 const EMBEDDER_WORKER_CODE = String.raw`
 'use strict';
@@ -107,6 +109,18 @@ function spawnWorker(label: string, pending: Map<number, PendingCall>): Worker {
     if (code !== 0) {
       try { writeLog(`embedder:${label}:ERROR`, `Worker exited code:${code}`); } catch { /* ignore */ }
     }
+    if (code !== 0 && !shuttingDown) {
+      // Crash recovery: respawn the worker and reinitialize the model
+      try { writeLog(`embedder:${label}`, `Respawning after crash (code ${code})`); } catch { /* ignore */ }
+      const replacement = spawnWorker(label, pending);
+      if (label === 'search') searchWorker = replacement;
+      else indexWorker = replacement;
+      sendWarmup(replacement).then(() => {
+        try { writeLog(`embedder:${label}`, 'Respawned worker ready'); } catch { /* ignore */ }
+      }).catch((err) => {
+        try { writeLog(`embedder:${label}:ERROR`, `Respawn warmup failed: ${err instanceof Error ? err.message : String(err)}`); } catch { /* ignore */ }
+      });
+    }
     if (pending.size > 0) {
       const exitError = new Error(`${label} worker exited unexpectedly (code ${code})`);
       for (const [, p] of pending) p.reject(exitError);
@@ -181,6 +195,7 @@ export function embedChunks(texts: string[]): Promise<number[][]> {
 }
 
 export function teardownEmbedders(): void {
+  shuttingDown = true;
   searchWorker?.terminate();
   indexWorker?.terminate();
   searchWorker = null;
