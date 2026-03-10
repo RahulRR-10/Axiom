@@ -137,7 +137,9 @@ async function indexFileInner(filePath: string, vaultPath: string): Promise<void
   // ── Extract text ─────────────────────────────────────────────────────────
   try { writeLog('indexer:start', `${path.basename(filePath)} size:${Math.round(stat.size / 1024)}kb`); } catch { /* ignore */ }
   console.log(`[indexer] Starting: ${path.basename(filePath)}`);
-  const pages = await extractPages(filePath, fileType, raw);
+  const pages = await extractPages(filePath, fileType, raw, (currentPage, totalPages) => {
+    emitProgress(fileId, 0, undefined, currentPage, totalPages, path.basename(filePath));
+  });
   if (pages.length === 0) {
     try { writeLog('indexer:skip', `${path.basename(filePath)} no extractable text`); } catch { /* ignore */ }
     db.prepare("UPDATE files SET indexed_at = unixepoch() WHERE id = ?").run(fileId);
@@ -297,6 +299,7 @@ async function extractPages(
   filePath: string,
   fileType: SupportedType,
   raw: Buffer,
+  onPageProgress?: (currentPage: number, totalPages: number) => void,
 ): Promise<PageText[]> {
   switch (fileType) {
     case 'md':
@@ -305,7 +308,7 @@ async function extractPages(
 
     case 'pdf': {
       if (!ENABLE_PDF_INDEXING) return [];
-      return extractPdfPages(filePath, raw);
+      return extractPdfPages(filePath, raw, onPageProgress);
     }
 
     case 'pptx': {
@@ -381,31 +384,44 @@ const fs = require('fs');
 
       const pages = [];
       let consecutiveTimeouts = 0;
-      for (let i = 1; i <= totalPages; i++) {
-        try {
-          const text = await Promise.race([
+      const PAGE_BATCH_SIZE = 4;
+      let abortExtraction = false;
+
+      for (let batchStart = 1; batchStart <= totalPages && !abortExtraction; batchStart += PAGE_BATCH_SIZE) {
+        const batchEnd = Math.min(batchStart + PAGE_BATCH_SIZE - 1, totalPages);
+        const batchIndices = [];
+        for (let i = batchStart; i <= batchEnd; i++) batchIndices.push(i);
+
+        const batchResults = await Promise.all(batchIndices.map(function(i) {
+          return Promise.race([
             (async () => {
               const pg = await doc.getPage(i);
               const tc = await pg.getTextContent();
-              return tc.items.map(function(it) { return (it && it.str) || ''; }).join(' ').trim();
+              const text = tc.items.map(function(it) { return (it && it.str) || ''; }).join(' ').trim();
+              return { page: i, text: text, timedOut: false };
             })(),
-            new Promise(function(r) { setTimeout(function() { r(null); }, cfg.perPageTimeoutMs); }),
-          ]);
+            new Promise(function(r) { setTimeout(function() { r({ page: i, text: null, timedOut: true }); }, cfg.perPageTimeoutMs); }),
+          ]).catch(function() { return { page: i, text: null, timedOut: false }; });
+        }));
 
-          if (text === null) {
-            consecutiveTimeouts++;
-            if (consecutiveTimeouts >= cfg.maxConsecutiveTimeouts) break;
+        for (const result of batchResults) {
+          if (result.text === null) {
+            if (result.timedOut) {
+              consecutiveTimeouts++;
+              if (consecutiveTimeouts >= cfg.maxConsecutiveTimeouts) { abortExtraction = true; break; }
+            }
             continue;
           }
 
           consecutiveTimeouts = 0;
-          const wordCount = text.split(/\s+/).filter(Boolean).length;
+          const wordCount = result.text.split(/\s+/).filter(Boolean).length;
           if (wordCount < cfg.minWordsPerPage) continue;
 
-          pages.push({ page: i, text: text });
-        } catch (e) {
-          // skip page
+          pages.push({ page: result.page, text: result.text });
         }
+
+        // Report page progress back to main thread
+        parentPort.postMessage({ type: 'pageProgress', currentPage: batchEnd, totalPages: totalPages });
       }
 
       parentPort.postMessage({ type: 'done', pages: pages });
@@ -427,7 +443,7 @@ const fs = require('fs');
  */
 const PDF_OVERALL_TIMEOUT_MS = 120_000; // 2 min max per PDF
 
-async function extractPdfPages(filePath: string, _raw: Buffer): Promise<PageText[]> {
+async function extractPdfPages(filePath: string, _raw: Buffer, onPageProgress?: (currentPage: number, totalPages: number) => void): Promise<PageText[]> {
   return new Promise<PageText[]>((resolve, reject) => {
     let settled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -468,7 +484,13 @@ async function extractPdfPages(filePath: string, _raw: Buffer): Promise<PageText
       settle(new Error(`PDF extraction timed out for ${path.basename(filePath)}`));
     }, PDF_OVERALL_TIMEOUT_MS);
 
-    w.on('message', (msg: { type: string; pages?: PageText[]; error?: string; skipped?: boolean }) => {
+    w.on('message', (msg: { type: string; pages?: PageText[]; error?: string; skipped?: boolean; currentPage?: number; totalPages?: number }) => {
+      if (msg.type === 'pageProgress') {
+        if (onPageProgress && msg.currentPage != null && msg.totalPages != null) {
+          onPageProgress(msg.currentPage, msg.totalPages);
+        }
+        return;
+      }
       if (msg.type === 'error') {
         try { writeLog('indexer:ERROR', `PDF worker error: ${msg.error} file:${path.basename(filePath)}`); } catch { /* ignore */ }
         settle(new Error(msg.error));
@@ -523,13 +545,23 @@ function extractHeadingContext(pageText: string, charOffset?: number): string {
 
 // ── Progress reporting ───────────────────────────────────────────────────────
 
-function emitProgress(fileId: string, chunksProcessed: number, totalChunks?: number) {
+function emitProgress(
+  fileId: string,
+  chunksProcessed: number,
+  totalChunks?: number,
+  currentPage?: number,
+  totalPages?: number,
+  fileName?: string,
+) {
   for (const win of BrowserWindow.getAllWindows()) {
     win.webContents.send('vault:indexProgress', {
       fileId,
       chunksProcessed,
       totalChunks: totalChunks ?? null,
       timestamp: Date.now(),
+      currentPage: currentPage ?? null,
+      totalPages: totalPages ?? null,
+      currentFile: fileName ?? null,
     });
   }
 }

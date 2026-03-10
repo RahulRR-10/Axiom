@@ -119,6 +119,16 @@ async function handleOpen(vaultPath: string): Promise<VaultOpenResponse> {
 
   // 3. Build file list and kick off indexing for new/changed files
   const allFiles = walkVault(vaultPath);
+
+  // Sort by file size ascending so small files index first (large textbooks go last)
+  allFiles.sort((a, b) => {
+    try {
+      return fs.statSync(a).size - fs.statSync(b).size;
+    } catch {
+      return 0;
+    }
+  });
+
   const total = allFiles.length;
   let indexed = 0;
   let failed = 0;
@@ -139,7 +149,7 @@ async function handleOpen(vaultPath: string): Promise<VaultOpenResponse> {
         }
         indexed++;
         if (!abort.aborted) {
-          broadcastProgress({ total, indexed, failed, inProgress: indexed < total }, vaultPath);
+          broadcastProgress({ total, indexed, failed, inProgress: indexed < total, currentFile: path.basename(filePath) }, vaultPath);
         }
         // Yield to event loop between files so the renderer stays responsive
         await new Promise((r) => setTimeout(r, 0));

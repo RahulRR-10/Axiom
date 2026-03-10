@@ -266,6 +266,7 @@ export const VaultSidebar: React.FC<VaultSidebarProps> = ({ onVaultOpen, onFileO
   const [vaultPath, setVaultPath] = useState<string | null>(null);
   const [files, setFiles] = useState<FileNode[]>([]);
   const [indexStatus, setIndexStatus] = useState<IndexStatus | null>(null);
+  const [fileProgress, setFileProgress] = useState<{ currentFile?: string; currentPage?: number | null; totalPages?: number | null } | null>(null);
   const [activeFile, setActiveFile] = useState<string | null>(null);
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
   const [lastClickedPath, setLastClickedPath] = useState<string | null>(null);
@@ -276,7 +277,19 @@ export const VaultSidebar: React.FC<VaultSidebarProps> = ({ onVaultOpen, onFileO
   // Subscribe to background indexing progress and file-change events
   useEffect(() => {
     const unsubProgress = window.electronAPI.onIndexProgress((payload) => {
-      setIndexStatus({ ...payload });
+      // Only update global index status from vault-handler payloads (which include inProgress)
+      if (payload.inProgress !== undefined) {
+        setIndexStatus({ ...payload });
+        if (payload.inProgress === false) setFileProgress(null);
+      }
+      // Update per-file page progress from indexer payloads
+      if (payload.currentFile || payload.currentPage != null) {
+        setFileProgress({
+          currentFile: payload.currentFile,
+          currentPage: payload.currentPage,
+          totalPages: payload.totalPages,
+        });
+      }
     });
     const unsubChanged = window.electronAPI.onFileChanged(({ vaultPath: vp }) => {
       if (vp === vaultPath) void refreshTree(vp);
@@ -480,6 +493,11 @@ export const VaultSidebar: React.FC<VaultSidebarProps> = ({ onVaultOpen, onFileO
               style={{ width: `${indexPercent ?? 0}%` }}
             />
           </div>
+          {fileProgress?.currentFile && fileProgress.currentPage != null && fileProgress.totalPages != null && fileProgress.totalPages > 0 && (
+            <div className="text-[10px] text-[#6a6a6a] mt-1 truncate">
+              {fileProgress.currentFile} — page {fileProgress.currentPage} of {fileProgress.totalPages} — {Math.round((fileProgress.currentPage / fileProgress.totalPages) * 100)}%
+            </div>
+          )}
         </div>
       )}
 

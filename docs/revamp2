@@ -1,0 +1,76 @@
+# Axiom — Textbook-Scale Indexing Improvements
+
+You are making targeted improvements to the Axiom indexing pipeline to handle large textbooks (500–1000+ pages) without blocking the app or making users think it has crashed.
+
+The project is an Electron + TypeScript desktop app using `pdfjs-dist` for PDF extraction in a worker thread, `better-sqlite3` for metadata and FTS5, LanceDB for vector storage, and `chokidar` for file watching. The pipeline already streams chunks into SQLite and LanceDB during indexing — do not change this.
+
+Read every section before writing any code. Implement strictly in the order listed.
+
+---
+
+## CRITICAL RULES — Read Before Touching Anything
+
+Only make minimal targeted changes. Never refactor unrelated code. Never rewrite a function when a small edit will do.
+
+Do NOT modify any of the following under any circumstances:
+
+- `indexFile` per-file locking logic
+- `purgeFile` logic
+- Embedding pipeline, embed cache, or dual-worker architecture
+- `EMBED_SUB_BATCH = 32` and `MAX_CHUNKS_PER_FILE = 5000` constants
+- `MODEL_BATCH = 48`
+- Chokidar watcher configuration including `awaitWriteFinish` and debounce
+- SQLite schema or LanceDB schema
+- Per-page extraction timeout (2000ms) and overall file timeout (120000ms)
+- Minimum page word count check (20 words)
+- Image-only PDF detection probe logic
+- The `vault:indexProgress` IPC channel name
+- Existing fields on the progress payload (`chunksProcessed`, `totalChunks`, `fileId`, `timestamp`) — only add new fields, never remove or rename existing ones
+
+---
+
+## Change 1 — Queue Ordering: Small Files First
+
+Locate where the initial vault scan assembles the list of files to index on vault open. This is likely in `indexer.ts` or `vaultWatcher.ts`.
+
+Before the indexing loop begins, sort the pending files queue by file size ascending so the smallest files index first. Large textbooks move to the back of the queue and index in the background while smaller files become searchable within seconds.
+
+This ordering applies ONLY to the initial vault scan queue. Do NOT apply it to incremental chokidar events — `add` and `change` events must still trigger indexing immediately without any reordering.
+
+---
+
+## Change 2 — Parallel PDF Page Extraction
+
+Locate the PDF page extraction loop inside the PDF worker in `indexer.ts`. It currently extracts pages sequentially one at a time.
+
+Change it to extract pages in concurrent batches of 4 at a time. Pages within each batch run in parallel. Batches themselves must still execute in order so that page numbers remain correct and the overall file timeout applies cleanly across the whole file.
+
+Keep every existing safety constraint exactly as-is — the per-page timeout, the overall file timeout, the minimum word count filter, and the image-only detection probe. The only thing changing is sequential execution becoming batched parallel execution.
+
+---
+
+## Change 3 — Granular Per-File Progress Reporting
+
+Locate `emitProgress` in `indexer.ts`. Add two new fields to the progress payload: `currentPage` (the page number just processed) and `totalPages` (total page count for the file). Do not remove or rename any existing fields.
+
+Emit a progress event after every page is extracted, not only after chunk batches are written. This gives fine-grained updates for large files so the UI can show meaningful progress on a 1000-page textbook rather than long gaps between updates.
+
+In the renderer, locate the `vault:indexProgress` event handler. Update the UI to display per-file progress showing the filename, current page, total pages, and percentage complete. Format it as: `filename — page X of Y — Z%`. This should be a per-file indicator, not a single global spinner. Do not change the IPC channel name.
+
+---
+
+## Change 4 — Allow Search During Active Indexing
+
+Locate the search query in `searchHandlers.ts`. Check whether there is any condition filtering on `indexed_at IS NOT NULL` or equivalent logic that prevents partially-indexed files from returning results.
+
+If such a filter exists, remove or relax it. Chunks already written to SQLite and LanceDB during an in-progress indexing run must be immediately searchable even if their parent file has not yet finished indexing. The streaming pipeline already writes in batches as it processes — this change ensures the search handler does not gate results on full file completion.
+
+Do not add any partial-indexing indicators to search results. Return them normally.
+
+---
+
+## Implementation Order
+
+1 → 2 → 3 → 4
+
+Change 1 is a single sort — do it first and verify it does not affect chokidar events before moving on. Change 2 is the highest impact change — test it on a large PDF (100+ pages) before proceeding. Changes 3 and 4 carry the lowest risk and go last.
