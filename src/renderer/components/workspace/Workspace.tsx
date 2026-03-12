@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef, useMemo } from "react";
+import ReactDOM from "react-dom";
 import { X, ChevronRight, ZoomIn, ZoomOut } from "lucide-react";
 
 import { PDFViewer } from "./pdf/PDFViewer";
@@ -199,6 +200,12 @@ export const Workspace: React.FC<WorkspaceProps> = ({ vaultPath }) => {
     name: string;
   } | null>(null);
   const groupNameRef = useRef<HTMLInputElement>(null);
+
+  // Portal target for rendering tab bar in the title bar
+  const [tabPortalTarget, setTabPortalTarget] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    setTabPortalTarget(document.getElementById('workspace-tab-portal'));
+  }, []);
 
   // Drag state
   const dragRef = useRef<
@@ -976,16 +983,10 @@ export const Workspace: React.FC<WorkspaceProps> = ({ vaultPath }) => {
 
   return (
     <section className="h-full w-full flex flex-col overflow-hidden">
-      {/* ── Tab bar ── */}
-      {openFiles.length > 0 && (
+      {/* ── Tab bar (rendered in title bar via portal) ── */}
+      {openFiles.length > 0 && tabPortalTarget && ReactDOM.createPortal(
         <div
-          style={{
-            height: "36px",
-            background: "#181818",
-            borderBottom: "1px solid #2a2a2a",
-            flexShrink: 0,
-          }}
-          className="flex items-stretch overflow-hidden"
+          className="flex items-stretch overflow-hidden w-full h-full"
         >
           {tabOrder.map((slot) => {
             if (slot.kind === "group") {
@@ -1120,7 +1121,8 @@ export const Workspace: React.FC<WorkspaceProps> = ({ vaultPath }) => {
             onDragOver={(e) => handleDragOver(e, "__END__")}
             onDrop={(e) => handleDrop(e, "__END__")}
           />
-        </div>
+        </div>,
+        tabPortalTarget,
       )}
 
       {/* ── Context menu ── */}

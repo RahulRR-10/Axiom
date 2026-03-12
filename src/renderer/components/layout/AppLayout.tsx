@@ -159,41 +159,46 @@ export const AppLayout: React.FC = () => {
             WebkitAppRegion: "drag",
           } as React.CSSProperties
         }
-        className="h-10 shrink-0 w-full flex items-center px-4 relative"
+        className="h-10 shrink-0 w-full flex items-stretch"
       >
-        {/* Left: Axiom branding */}
-        <div className="flex items-center gap-1.5 text-xs text-[#8a8a8a] shrink-0 mr-4 select-none">
-          <img src={new URL('axiom-logo.png', window.location.href).href} alt="" className="w-4 h-4 object-contain" />
-          Axiom
-        </div>
-
-        {/* Center: Search bar — absolute so it's perfectly centered */}
+        {/* Left: Logo + Search bar — matches vault sidebar width */}
         <div
-          className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-[400px] px-4"
-          style={noDragStyle}
+          className="flex items-center shrink-0 gap-3 px-4 border-r border-[#2a2a2a]"
+          style={{
+            ...noDragStyle,
+            width: vaultCollapsed ? '36px' : `${vaultWidth}px`,
+            transition: isResizingVault ? 'none' : 'width 200ms ease-in-out',
+            overflow: 'hidden',
+          }}
         >
-          <div className="relative">
-            <Search
-              size={14}
-              className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#5a5a5a] pointer-events-none"
-            />
-            <input
-              ref={searchInputRef}
-              placeholder="Search your vault... (Ctrl+K)"
-              onClick={() =>
-                window.dispatchEvent(new CustomEvent("spotlight:open"))
-              }
-              readOnly
-              className="w-full rounded-md bg-[#141414] border border-[#2a2a2a] pl-8 pr-3 py-1.5 text-sm text-[#d4d4d4] outline-none focus:border-[#3a3a3a] cursor-pointer"
-            />
-          </div>
+          <img src={new URL('axiom-logo.png', window.location.href).href} alt="" className="w-4 h-4 object-contain shrink-0" />
+          {!vaultCollapsed && (
+            <div className="relative flex-1 min-w-0">
+              <Search
+                size={14}
+                className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#5a5a5a] pointer-events-none"
+              />
+              <input
+                ref={searchInputRef}
+                placeholder="Search... (Ctrl+K)"
+                onClick={() =>
+                  window.dispatchEvent(new CustomEvent("spotlight:open"))
+                }
+                readOnly
+                className="w-full rounded-md bg-[#141414] border border-[#2a2a2a] pl-8 pr-3 py-1.5 text-sm text-[#d4d4d4] outline-none focus:border-[#3a3a3a] cursor-pointer"
+              />
+            </div>
+          )}
         </div>
 
-        {/* Spacer to push right section */}
-        <div className="flex-1" />
+        {/* Tab portal — workspace tabs render here via portal */}
+        <div id="workspace-tab-portal" className="flex-1 flex items-stretch min-w-0 overflow-hidden px-1" style={noDragStyle} />
+
+        {/* Spacer before window controls */}
+        <div className="shrink-0 w-2" />
 
         {/* Right: window controls */}
-        <div className="flex items-center shrink-0 ml-4" style={noDragStyle}>
+        <div className="flex items-center shrink-0 pr-1" style={noDragStyle}>
           <WindowControlsToolbar />
         </div>
       </header>
