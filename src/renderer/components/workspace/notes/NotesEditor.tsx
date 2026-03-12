@@ -96,16 +96,16 @@ const TOOLBAR_ACTIONS: ToolbarAction[] = [
 
 function preprocessMathDelimiters(text: string): string {
     // \[ ... \] → $$ ... $$ (LaTeX display math)
-    let result = text.replace(/\\\[([\\s\\S]*?)\\\]/g, (_, math) => `$$${math}$$`);
+    let result = text.replace(/\\\[([\s\S]*?)\\\]/g, (_, math) => `$$${math}$$`);
     // \( ... \) → $ ... $ (LaTeX inline math)
-    result = result.replace(/\\\(([\\s\\S]*?)\\\)/g, (_, math) => `$${math}$`);
+    result = result.replace(/\\\(([\s\S]*?)\\\)/g, (_, math) => `$${math}$`);
     // Standalone bare brackets on their own lines:
     //   [
     //   S \div R = T(X)
     //   ]
     // → $$\nS \div R = T(X)\n$$
     result = result.replace(
-        /^[ \t]*\[[ \t]*$([\\s\\S]*?)^[ \t]*\][ \t]*$/gm,
+        /^[ \t]*\[[ \t]*\n([\s\S]*?)\n[ \t]*\][ \t]*$/gm,
         (_, math) => `$$\n${math.trim()}\n$$`,
     );
     return result;
@@ -622,6 +622,17 @@ export const NotesEditor: React.FC<NotesEditorProps> = ({ filePath, noteId, vaul
         img: ({ src, alt, ...props }: any) => (
             <NoteImage src={src} alt={alt} fileDir={fileDir} />
         ),
+        // Open links in the user's default browser instead of navigating in-app
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        a: ({ href, children, ...props }: any) => {
+            const handleClick = (e: React.MouseEvent) => {
+                if (href && /^https?:\/\//i.test(href)) {
+                    e.preventDefault();
+                    window.electronAPI.openExternal(href);
+                }
+            };
+            return <a href={href} onClick={handleClick} {...props}>{children}</a>;
+        },
     }), [fileDir]);
 
     // For PDF export hidden view: uses raw relative paths that the PDF export
