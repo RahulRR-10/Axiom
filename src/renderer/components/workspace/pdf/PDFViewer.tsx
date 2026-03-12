@@ -1091,8 +1091,30 @@ export const PDFViewer: React.FC<Props> = ({
 
       // 3. Bake visual annotations into the PDF binary
       const allAnns = mergedAnnotations;
-      const fileBytes = await window.electronAPI.readFile(filePath);
-      const pdfDoc = await PDFDocument.load(fileBytes);
+      let fileBytes: Uint8Array;
+      try {
+        fileBytes = await window.electronAPI.readFile(filePath);
+      } catch (readErr) {
+        console.error("[PDFViewer] Failed to read PDF for save:", readErr);
+        setToastMessage("Save failed: could not read PDF file");
+        if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+        toastTimerRef.current = setTimeout(() => setToastMessage(null), 5000);
+        return;
+      }
+
+      let pdfDoc;
+      try {
+        pdfDoc = await PDFDocument.load(fileBytes, {
+          throwOnInvalidObject: false,
+        });
+      } catch (loadErr) {
+        console.error("[PDFViewer] Failed to parse PDF for save:", loadErr);
+        setToastMessage("Save failed: PDF may be corrupted");
+        if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+        toastTimerRef.current = setTimeout(() => setToastMessage(null), 5000);
+        return;
+      }
+
       const pages = pdfDoc.getPages();
 
       for (const ann of allAnns) {
@@ -1136,10 +1158,28 @@ export const PDFViewer: React.FC<Props> = ({
         }
       }
 
-      const savedBytes = await pdfDoc.save();
+      let savedBytes: Uint8Array;
+      try {
+        savedBytes = await pdfDoc.save();
+      } catch (saveErr) {
+        console.error("[PDFViewer] Failed to serialize PDF:", saveErr);
+        setToastMessage("Save failed: could not serialize PDF");
+        if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+        toastTimerRef.current = setTimeout(() => setToastMessage(null), 5000);
+        return;
+      }
+
       // Invalidate cache since file changed
       pdfCache.delete(filePath);
-      await window.electronAPI.writeFile(filePath, new Uint8Array(savedBytes));
+      try {
+        await window.electronAPI.writeFile(filePath, new Uint8Array(savedBytes));
+      } catch (writeErr) {
+        console.error("[PDFViewer] Failed to write PDF:", writeErr);
+        setToastMessage("Save failed: could not write PDF file");
+        if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+        toastTimerRef.current = setTimeout(() => setToastMessage(null), 5000);
+        return;
+      }
 
       // 4. Reindex PDF with annotation text.
       // Non-fatal: a reindex failure must never block the dirty-state clear.
@@ -1161,6 +1201,9 @@ export const PDFViewer: React.FC<Props> = ({
       loadAnnotations();
     } catch (err) {
       console.error("[PDFViewer] Save failed", err);
+      setToastMessage("Save failed: unexpected error");
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+      toastTimerRef.current = setTimeout(() => setToastMessage(null), 5000);
     } finally {
       setSaving(false);
     }
