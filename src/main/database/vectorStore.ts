@@ -118,6 +118,17 @@ export async function searchVectors(
   }
 }
 
+export async function deleteVectorsByIds(vaultPath: string, ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  try {
+    const table = await getTable(vaultPath);
+    const filter = ids.map(id => `id = '${id.replace(/'/g, "''")}'`).join(' OR ');
+    await (table as unknown as { delete: (f: string) => Promise<void> }).delete(filter);
+  } catch (err) {
+    try { writeLog('lancedb:ERROR', err); } catch { /* ignore */ }
+  }
+}
+
 export async function deleteVectorsByFileId(vaultPath: string, fileId: string): Promise<void> {
   try {
     const t = Date.now();

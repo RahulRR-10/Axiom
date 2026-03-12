@@ -1,3 +1,5 @@
+import * as crypto from 'crypto';
+import * as fs from 'fs';
 import * as path from 'path';
 
 import { BrowserWindow, ipcMain } from 'electron';
@@ -6,9 +8,9 @@ import { v4 as uuidv4 } from 'uuid';
 import { ANNOTATION_CHANNELS } from '../../shared/ipc/channels';
 import type { Annotation } from '../../shared/types';
 import { getDb } from '../database/schema';
-import { indexFile } from '../indexing/indexer';
 import { embedBatch } from '../workers/embedder';
-import { addVectors } from '../database/vectorStore';
+import { addVectors, deleteVectorsByIds } from '../database/vectorStore';
+import { suppressPath, unsuppressPath } from '../vault/vaultWatcher';
 import { writeLog } from '../logger';
 
 export function registerAnnotationHandlers(): void {
@@ -74,23 +76,58 @@ export function registerAnnotationHandlers(): void {
   );
 
   // ── annotation:reindexPdf ──────────────────────────────────────────────────
-  // Re-indexes the PDF's own text AND inserts annotation text (sticky/textbox
-  // content) as searchable chunks with is_annotation = 1.
+  // Updates annotation-text chunks (sticky/textbox content) without
+  // re-extracting the full PDF body text.  Body-text chunks stay untouched;
+  // only is_annotation=1 rows are purged and rebuilt.
   ipcMain.handle(
     ANNOTATION_CHANNELS.REINDEX_PDF,
     async (_event, vaultPath: string, filePath: string, fileId: string) => {      try { writeLog('IPC:received', 'annotation:reindexPdf'); } catch { /* ignore */ }
-      try {      // 1. Reindex the PDF's body text (will purge old chunks + re-extract)
-      await indexFile(filePath, vaultPath);
+      try {
+      // Suppress the watcher so the on-disk write (baked annotations) doesn't
+      // trigger a redundant full indexFile() for this PDF (or siblings on Windows).
+      suppressPath(filePath);
 
-      // 2. Load all annotations for this file
       const db = getDb(vaultPath);
+
+      // 1. Update the file record's mtime + hash so future watcher events
+      //    see the file as "unchanged" and skip it.
+      if (fs.existsSync(filePath)) {
+        const stat = fs.statSync(filePath);
+        const raw = fs.readFileSync(filePath);
+        const contentHash = crypto.createHash('sha256').update(raw).digest('hex');
+        db.prepare(
+          'UPDATE files SET mtime_ms = ?, content_hash = ?, size = ? WHERE id = ?',
+        ).run(stat.mtimeMs, contentHash, stat.size, fileId);
+      }
+
+      // 2. Purge old annotation chunks (FTS5 + SQLite + LanceDB)
+      const oldChunks = db.prepare(
+        'SELECT rowid, id, text, file_id, page_or_slide FROM chunks WHERE file_id = ? AND is_annotation = 1',
+      ).all(fileId) as Array<{ rowid: number; id: string; text: string; file_id: string; page_or_slide: number | null }>;
+
+      if (oldChunks.length > 0) {
+        const deleteFts = db.prepare(
+          "INSERT INTO chunks_fts(chunks_fts, rowid, text, file_id, page_or_slide) VALUES('delete', ?, ?, ?, ?)",
+        );
+        const purge = db.transaction(() => {
+          for (const c of oldChunks) {
+            deleteFts.run(c.rowid, c.text, c.file_id, c.page_or_slide);
+          }
+          db.prepare('DELETE FROM chunks WHERE file_id = ? AND is_annotation = 1').run(fileId);
+        });
+        purge();
+
+        await deleteVectorsByIds(vaultPath, oldChunks.map(c => c.id));
+      }
+
+      // 3. Load all annotations for this file
       const rows = db.prepare(
         'SELECT data_json FROM annotations WHERE file_id = ? ORDER BY page, created_at',
       ).all(fileId) as Array<{ data_json: string }>;
 
       const annotations = rows.map(r => JSON.parse(r.data_json) as Annotation);
 
-      // 3. Collect text from sticky and textbox annotations
+      // 4. Collect text from sticky and textbox annotations
       const annotationChunks: Array<{
         id: string; file_id: string; page_or_slide: number;
         text: string; chunk_index: number;
@@ -109,9 +146,13 @@ export function registerAnnotationHandlers(): void {
         }
       }
 
-      if (annotationChunks.length === 0) return { ok: true };
+      if (annotationChunks.length === 0) {
+        // Unsuppress after a delay so the watcher's pending event is ignored
+        setTimeout(() => unsuppressPath(filePath), 2000);
+        return { ok: true };
+      }
 
-      // 4. Insert annotation chunks into SQLite
+      // 5. Insert annotation chunks into SQLite
       const insertChunk = db.prepare(`
         INSERT INTO chunks (id, file_id, page_or_slide, text, chunk_index, is_annotation)
         VALUES (?, ?, ?, ?, ?, 1)
@@ -124,7 +165,7 @@ export function registerAnnotationHandlers(): void {
       });
       insertAll();
 
-      // 5. Populate FTS5 for annotation chunks
+      // 6. Populate FTS5 for annotation chunks
       for (const c of annotationChunks) {
         db.prepare(`
           INSERT INTO chunks_fts(rowid, text, file_id, page_or_slide)
@@ -132,7 +173,7 @@ export function registerAnnotationHandlers(): void {
         `).run(c.id);
       }
 
-      // 6. Generate embeddings and add to vector store
+      // 7. Generate embeddings and add to vector store
       const texts = annotationChunks.map(c => c.text);
       const vectors = await embedBatch(texts);
 
@@ -144,8 +185,16 @@ export function registerAnnotationHandlers(): void {
 
       await addVectors(vaultPath, chunksWithVecs);
 
+      // Unsuppress after a delay so the watcher's pending event is ignored
+      setTimeout(() => unsuppressPath(filePath), 2000);
+
       return { ok: true };
-      } catch (err) { try { writeLog('IPC:ERROR', `channel:annotation:reindexPdf error:${err instanceof Error ? err.message : String(err)}`); } catch { /* ignore */ } throw err; }
+      } catch (err) {
+        // Ensure we unsuppress even on error
+        setTimeout(() => unsuppressPath(filePath), 2000);
+        try { writeLog('IPC:ERROR', `channel:annotation:reindexPdf error:${err instanceof Error ? err.message : String(err)}`); } catch { /* ignore */ }
+        throw err;
+      }
     },
   );
 }

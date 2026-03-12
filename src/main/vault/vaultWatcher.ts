@@ -14,6 +14,18 @@ const DEBOUNCE_MS = 500;
 
 let activeWatcher: FSWatcher | null = null;
 
+// Paths temporarily suppressed from watcher-triggered indexing
+// (e.g. during annotation save where reindexPdf handles it)
+const suppressedPaths = new Set<string>();
+
+export function suppressPath(filePath: string): void {
+  suppressedPaths.add(filePath.toLowerCase());
+}
+
+export function unsuppressPath(filePath: string): void {
+  suppressedPaths.delete(filePath.toLowerCase());
+}
+
 /**
  * Start watching `vaultPath` for file changes.
  * Calling startWatching again stops the previous watcher first.
@@ -65,6 +77,11 @@ async function handleAdd(filePath: string, vaultPath: string): Promise<void> {
 }
 
 async function handleChange(filePath: string, vaultPath: string): Promise<void> {
+  if (suppressedPaths.has(filePath.toLowerCase())) {
+    broadcastIndexStatus(vaultPath);
+    broadcastFileChanged(vaultPath);
+    return;
+  }
   try {
     await indexFile(filePath, vaultPath);
   } catch (err) {
