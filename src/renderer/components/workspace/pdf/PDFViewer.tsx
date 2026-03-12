@@ -34,6 +34,19 @@ const BUFFER_PX = 1200; // render pages within this many pixels of the viewport
 /* ─── PDF document cache ───────────────────────────────────────────────────── */
 const pdfCache = new Map<string, PDFDocumentProxy>();
 
+// Evict cache entries when files are deleted (e.g. during note → PDF re-export)
+// so reopening the same path reads the fresh file from disk.
+if (typeof window !== 'undefined' && window.electronAPI?.onFileDeleted) {
+  window.electronAPI.onFileDeleted((deletedPath) => {
+    const norm = deletedPath.replace(/\\/g, '/').toLowerCase();
+    for (const [key] of pdfCache) {
+      if (key.replace(/\\/g, '/').toLowerCase() === norm) {
+        pdfCache.delete(key);
+      }
+    }
+  });
+}
+
 /* ─── Types ─────────────────────────────────────────────────────────────────── */
 type PageMeta = { width: number; height: number };
 

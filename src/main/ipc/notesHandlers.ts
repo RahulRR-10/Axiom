@@ -8,7 +8,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { NOTES_CHANNELS } from '../../shared/ipc/channels';
 import type { NoteDetail, NoteSummary } from '../../shared/types';
 import { getDb } from '../database/schema';
-import { indexFile } from '../indexing/indexer';
+import { indexFile, purgeFile } from '../indexing/indexer';
 import { broadcastFileChanged } from '../vault/vaultWatcher';
 import { writeLog } from '../logger';
 
@@ -400,9 +400,27 @@ export function registerNotesHandlers(): void {
                     const tmpPdf = pdfPath + '.tmp';
                     fs.writeFileSync(tmpPdf, pdfData);
 
-                    // Delete the existing PDF using shell.trashItem (same as the
-                    // right-click → Delete flow in the sidebar).
+                    // Delete the existing PDF exactly like the sidebar Delete flow:
+                    // purge DB/vector entries, broadcast fileDeleted (closes open tabs),
+                    // then trash the file from disk.
                     if (fs.existsSync(pdfPath)) {
+                        // 1. Purge DB entry + vector embeddings for the old PDF
+                        try {
+                            const db = getDb(vaultPath);
+                            const oldRow = db.prepare('SELECT id FROM files WHERE path = ?').get(pdfPath) as { id: string } | undefined;
+                            if (oldRow) {
+                                await purgeFile(oldRow.id, vaultPath, db);
+                            }
+                        } catch (purgeErr) {
+                            console.error('[exportPdf] Failed to purge old PDF from DB (non-fatal):', purgeErr);
+                        }
+
+                        // 2. Notify renderer to close any open tab for the old PDF
+                        for (const w of BrowserWindow.getAllWindows()) {
+                            w.webContents.send('vault:fileDeleted', pdfPath);
+                        }
+
+                        // 3. Trash the file from disk
                         try {
                             await shell.trashItem(pdfPath);
                         } catch {
