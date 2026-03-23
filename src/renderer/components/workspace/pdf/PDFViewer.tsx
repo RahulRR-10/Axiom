@@ -1263,14 +1263,17 @@ export const PDFViewer: React.FC<Props> = ({
       const texts = new Map<number, { items: string[]; fullText: string }>();
       for (let i = 1; i <= numPages; i++) {
         if (cancelled) return;
-        const page = await pdf.getPage(i);
-        const content = await page.getTextContent();
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const items = content.items
-          .filter((item: any) => "str" in item)
-          .map((item: any) => item.str as string);
-        texts.set(i, { items, fullText: items.join("") });
-        page.cleanup();
+        try {
+          const page = await pdf.getPage(i);
+          if (cancelled) { page.cleanup(); return; }
+          const content = await page.getTextContent();
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const items = content.items
+            .filter((item: any) => "str" in item)
+            .map((item: any) => item.str as string);
+          texts.set(i, { items, fullText: items.join("") });
+          page.cleanup();
+        } catch { break; /* PDF was destroyed or page invalid — stop extraction */ }
       }
       if (!cancelled) pageTextsRef.current = texts;
       // trigger match recomputation
@@ -1320,9 +1323,16 @@ export const PDFViewer: React.FC<Props> = ({
     // Always scroll to top-of-page so the text layer is guaranteed to render;
     // applySearchHighlights will adjust to the exact match position afterward.
     el.scrollTop = target;
-  }, [currentMatchIdx, searchMatches, pageMeta, zoom]);
+
+    // Eagerly update visibleRange so React renders the target page immediately
+    const viewportH = el.clientHeight || 600;
+    const firstVisible = Math.max(1, Math.floor((target - BUFFER_PX) / pageH) + 1);
+    const lastVisible = Math.min(numPages, Math.ceil((target + viewportH + BUFFER_PX) / pageH));
+    setVisibleRange([firstVisible, lastVisible]);
+  }, [currentMatchIdx, searchMatches, pageMeta, zoom, numPages]);
 
   // Apply CSS Custom Highlight API to visible text layers
+  const lastScrolledMatchRef = useRef<number>(-1);
   const applySearchHighlights = useCallback(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const cssHighlights = (CSS as any).highlights;
@@ -1337,86 +1347,86 @@ export const PDFViewer: React.FC<Props> = ({
     const allRanges: Range[] = [];
     const currentRanges: Range[] = [];
 
-    // Determine which match index is current for each page
-    let matchCounter = 0;
-    const pageMatchOffsets = new Map<number, number>(); // page -> global offset of first match on this page
-    for (let p = 1; p <= numPages; p++) {
-      pageMatchOffsets.set(p, matchCounter);
-      const info = pageTextsRef.current.get(p);
-      if (!info) continue;
-      const lowerText = info.fullText.toLowerCase();
-      let idx = 0;
-      while ((idx = lowerText.indexOf(lowerQ, idx)) !== -1) {
-        matchCounter++;
-        idx += lowerQ.length;
-      }
-    }
+    // Walk visible text layers
+    const textLayers = container.querySelectorAll(".textLayer");
+    textLayers.forEach((layer) => {
+      const pageWrapper = layer.closest(".pdf-page-wrapper");
+      if (!pageWrapper) return;
+      const pageIdx = Array.from(
+        container.querySelectorAll(".pdf-page-wrapper"),
+      ).indexOf(pageWrapper);
+      const pageNum = pageIdx + 1;
 
-    // Find all text layers in the scroll container
-    const scrollInner = container.querySelector(".pdf-scroll-inner");
-    if (!scrollInner) return;
-    const pageWrappers = scrollInner.children;
-
-    for (let pIdx = 0; pIdx < pageWrappers.length; pIdx++) {
-      const pageNum = pIdx + 1;
       const info = pageTextsRef.current.get(pageNum);
-      if (!info) continue;
-      const wrapper = pageWrappers[pIdx];
-      const textLayer = wrapper.querySelector(".textLayer");
-      if (!textLayer) continue;
+      if (!info) return;
 
-      // Get all text spans
-      const spans = Array.from(textLayer.querySelectorAll("span"))
-        .filter((s) => !s.querySelector("span") && s.textContent);
+      // Collect all text nodes inside the text layer
+      const walker = document.createTreeWalker(
+        layer,
+        NodeFilter.SHOW_TEXT,
+        null,
+      );
+      const textNodes: Text[] = [];
+      while (walker.nextNode()) textNodes.push(walker.currentNode as Text);
 
-      // Map character positions to spans
-      let charPos = 0;
-      const spanMap: Array<{ node: Text; start: number; end: number }> = [];
-      for (const span of spans) {
-        const walker = document.createTreeWalker(span, NodeFilter.SHOW_TEXT);
-        let textNode: Text | null;
-        while ((textNode = walker.nextNode() as Text | null)) {
-          const len = textNode.textContent?.length || 0;
-          if (len > 0) {
-            spanMap.push({ node: textNode, start: charPos, end: charPos + len });
-            charPos += len;
-          }
-        }
+      // Build a concatenated string from text nodes so we can map match
+      // character offsets back to individual node + local offsets.
+      let concat = "";
+      const nodeMap: Array<{ node: Text; start: number; end: number }> = [];
+      for (const node of textNodes) {
+        const text = node.textContent || "";
+        nodeMap.push({ node, start: concat.length, end: concat.length + text.length });
+        concat += text;
       }
 
-      // Find matches on this page and create ranges
-      const lowerText = info.fullText.toLowerCase();
+      const lowerConcat = concat.toLowerCase();
       let searchIdx = 0;
-      let localMatchIdx = 0;
-      const globalOffset = pageMatchOffsets.get(pageNum) ?? 0;
-
-      while ((searchIdx = lowerText.indexOf(lowerQ, searchIdx)) !== -1) {
+      let matchInPage = 0;
+      while ((searchIdx = lowerConcat.indexOf(lowerQ, searchIdx)) !== -1) {
         const matchStart = searchIdx;
         const matchEnd = searchIdx + lowerQ.length;
-        const globalIdx = globalOffset + localMatchIdx;
 
-        // Find the spans covering this match
-        for (const sm of spanMap) {
-          const rangeStart = Math.max(matchStart, sm.start);
-          const rangeEnd = Math.min(matchEnd, sm.end);
-          if (rangeStart >= rangeEnd) continue;
+        // Determine which text nodes contain the match range
+        let startNode: Text | null = null;
+        let startOffset = 0;
+        let endNode: Text | null = null;
+        let endOffset = 0;
 
+        for (const entry of nodeMap) {
+          if (!startNode && matchStart < entry.end) {
+            startNode = entry.node;
+            startOffset = matchStart - entry.start;
+          }
+          if (matchEnd <= entry.end) {
+            endNode = entry.node;
+            endOffset = matchEnd - entry.start;
+            break;
+          }
+        }
+
+        if (startNode && endNode) {
           try {
             const range = document.createRange();
-            range.setStart(sm.node, rangeStart - sm.start);
-            range.setEnd(sm.node, rangeEnd - sm.start);
-            allRanges.push(range);
-            if (globalIdx === currentMatchIdx) {
+            range.setStart(startNode, startOffset);
+            range.setEnd(endNode, endOffset);
+
+            const isCurrentMatch =
+              searchMatches[currentMatchIdx]?.page === pageNum &&
+              searchMatches[currentMatchIdx]?.indexInPage === matchInPage;
+
+            if (isCurrentMatch) {
               currentRanges.push(range);
+            } else {
+              allRanges.push(range);
             }
           } catch {
             /* offset out of bounds — skip */
           }
         }
+        matchInPage++;
         searchIdx += lowerQ.length;
-        localMatchIdx++;
       }
-    }
+    });
 
     if (allRanges.length > 0) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1426,8 +1436,11 @@ export const PDFViewer: React.FC<Props> = ({
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       cssHighlights.set("pdf-search-current", new (window as any).Highlight(...currentRanges));
 
-      // Scroll to the precise position of the match within the page
-      if (scrollRef.current) {
+      // Only scroll to center the match when the match index actually changed,
+      // NOT when the user manually scrolls (which changes visibleRange and
+      // re-triggers this callback). This prevents the infinite scroll-snap loop.
+      if (lastScrolledMatchRef.current !== currentMatchIdx && scrollRef.current) {
+        lastScrolledMatchRef.current = currentMatchIdx;
         const el = scrollRef.current;
         const rect = currentRanges[0].getBoundingClientRect();
         const containerRect = el.getBoundingClientRect();
@@ -1475,10 +1488,19 @@ export const PDFViewer: React.FC<Props> = ({
 
   const scrollToPage = useCallback((page: number) => {
     if (!scrollRef.current || !pageMeta) return;
+    const el = scrollRef.current;
     const pageH = Math.floor(pageMeta.height * zoom) + PAGE_GAP;
     const target = (page - 1) * pageH;
-    scrollRef.current.scrollTop = target;
-  }, [pageMeta, zoom]);
+    
+    // Eagerly update visibleRange BEFORE setting scrollTop so React renders
+    // the target pages immediately instead of showing blank placeholders.
+    const viewportH = el.clientHeight || 800; // fallback if not yet measured
+    const firstVisible = Math.max(1, Math.floor((target - BUFFER_PX) / pageH) + 1);
+    const lastVisible = Math.min(numPages, Math.ceil((target + viewportH + BUFFER_PX) / pageH));
+    setVisibleRange([firstVisible, lastVisible]);
+    
+    el.scrollTop = target;
+  }, [pageMeta, zoom, numPages]);
 
   /* ── Escape to deactivate tool / Ctrl+S to save / Ctrl+F to search ──────── */
   useEffect(() => {
@@ -1668,11 +1690,13 @@ export const PDFViewer: React.FC<Props> = ({
   useEffect(() => {
     const el = scrollRef.current;
     if (!el || !pdf || loading) return;
+    let cancelled = false;
 
     let prevW = el.clientWidth;
     let prevH = el.clientHeight;
 
     const ro = new ResizeObserver(() => {
+      if (cancelled) return;
       const w = el.clientWidth;
       const h = el.clientHeight;
       const wasHidden = prevW === 0 || prevH === 0;
@@ -1682,18 +1706,22 @@ export const PDFViewer: React.FC<Props> = ({
         // Recompute the fit-scale with the real container width in case the
         // PDF was loaded while the tab was hidden (display:none → clientWidth=0)
         (async () => {
-          const page1 = await pdf.getPage(1);
-          const vp1 = page1.getViewport({ scale: 1 });
-          const newBase = (w - 32) / vp1.width;
-          baseScaleRef.current = newBase;
-          const vp = page1.getViewport({ scale: newBase });
-          setPageMeta({
-            width: Math.floor(vp.width),
-            height: Math.floor(vp.height),
-          });
-          // Force GPU-discarded canvases to re-render
-          setRenderNonce((n) => n + 1);
-        })().catch(console.error);
+          if (cancelled) return;
+          try {
+            const page1 = await pdf.getPage(1);
+            if (cancelled) { page1.cleanup(); return; }
+            const vp1 = page1.getViewport({ scale: 1 });
+            const newBase = (w - 32) / vp1.width;
+            baseScaleRef.current = newBase;
+            const vp = page1.getViewport({ scale: newBase });
+            setPageMeta({
+              width: Math.floor(vp.width),
+              height: Math.floor(vp.height),
+            });
+            // Force GPU-discarded canvases to re-render
+            setRenderNonce((n) => n + 1);
+          } catch { /* PDF was destroyed — ignore */ }
+        })();
       }
 
       prevW = w;
@@ -1701,7 +1729,7 @@ export const PDFViewer: React.FC<Props> = ({
     });
 
     ro.observe(el);
-    return () => ro.disconnect();
+    return () => { cancelled = true; ro.disconnect(); };
   }, [pdf, loading]);
 
   /* ── Build page list with virtualization ──────────────────────────────────── */
