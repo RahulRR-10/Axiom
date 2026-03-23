@@ -165,44 +165,53 @@ async function handleSearch(
   try {
     const semRows = await semanticPromise;
 
+    // Collect IDs of semantic results not already in resultMap for a batch query
+    const uncachedIds: string[] = [];
+    const semScores = new Map<string, number>();
     for (const r of semRows) {
-      const existing = resultMap.get(r.id);
       const semScore = semWeight * r.score;
-
+      const existing = resultMap.get(r.id);
       if (existing) {
         existing.score += semScore;
       } else {
-        const meta = db.prepare(`
-          SELECT c.text, c.is_annotation, c.page_or_slide,
-                 f.name AS file_name, f.path AS file_path, f.type AS file_type, f.subject
-          FROM chunks c JOIN files f ON f.id = c.file_id
-          WHERE c.id = ?
-        `).get(r.id) as {
-          text: string; is_annotation: number; page_or_slide: number | null;
-          file_name: string; file_path: string; file_type: string; subject: string | null;
-        } | undefined;
+        uncachedIds.push(r.id);
+        semScores.set(r.id, semScore);
+      }
+    }
 
-        if (meta) {
-          if (subject && meta.subject !== subject) continue;
-          if (fileType && meta.file_type !== fileType) continue;
+    // Batch lookup: single query instead of N individual queries
+    if (uncachedIds.length > 0) {
+      const placeholders = uncachedIds.map(() => '?').join(',');
+      const metaRows = db.prepare(`
+        SELECT c.id, c.text, c.is_annotation, c.page_or_slide, c.file_id,
+               f.name AS file_name, f.path AS file_path, f.type AS file_type, f.subject
+        FROM chunks c JOIN files f ON f.id = c.file_id
+        WHERE c.id IN (${placeholders})
+      `).all(...uncachedIds) as Array<{
+        id: string; text: string; is_annotation: number; page_or_slide: number | null;
+        file_id: string; file_name: string; file_path: string; file_type: string; subject: string | null;
+      }>;
 
-          let score = semScore;
-          if (meta.is_annotation) score *= 1.3;
-          resultMap.set(r.id, {
-            id: r.id,
-            file_id: r.file_id,
-            file_name: meta.file_name,
-            file_path: meta.file_path,
-            file_type: meta.file_type,
-            subject: meta.subject,
-            page_or_slide: meta.page_or_slide,
-            text: meta.text,
-            score,
-            is_annotation: meta.is_annotation,
-            category: categorize(meta),
-            source: 'semantic',
-          });
-        }
+      for (const meta of metaRows) {
+        if (subject && meta.subject !== subject) continue;
+        if (fileType && meta.file_type !== fileType) continue;
+
+        let score = semScores.get(meta.id) ?? 0;
+        if (meta.is_annotation) score *= 1.3;
+        resultMap.set(meta.id, {
+          id: meta.id,
+          file_id: meta.file_id,
+          file_name: meta.file_name,
+          file_path: meta.file_path,
+          file_type: meta.file_type,
+          subject: meta.subject,
+          page_or_slide: meta.page_or_slide,
+          text: meta.text,
+          score,
+          is_annotation: meta.is_annotation,
+          category: categorize(meta),
+          source: 'semantic',
+        });
       }
     }
   } catch (err) {
@@ -266,8 +275,12 @@ async function handleSearch(
       id: string; name: string; path: string; type: string; subject: string | null;
     }>;
 
+    // Build a Set of file_ids already represented in results for O(1) lookup
+    const coveredFileIds = new Set<string>();
+    for (const v of resultMap.values()) coveredFileIds.add(v.file_id);
+
     for (const r of fileRows) {
-      const hasChunk = Array.from(resultMap.values()).some((v) => v.file_id === r.id);
+      const hasChunk = coveredFileIds.has(r.id);
       if (!hasChunk) {
         const key = `fname:${r.id}`;
         if (!resultMap.has(key)) {

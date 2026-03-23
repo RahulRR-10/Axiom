@@ -5,6 +5,7 @@ import { AppLayout } from './components/layout/AppLayout';
 import { PDFViewer } from './components/workspace/pdf/PDFViewer';
 import { NotesEditor } from './components/workspace/notes/NotesEditor';
 import { WindowControlsToolbar } from './components/layout/WindowControlsToolbar';
+import { bytesToDataUri } from './utils/binaryUtils';
 
 /**
  * Detect single-file mode via ?singleFile= query param (used by "Open in new window").
@@ -34,16 +35,7 @@ const StandaloneImageViewer: React.FC<{ filePath: string }> = ({ filePath }) => 
     window.electronAPI.readFile(filePath)
       .then((bytes) => {
         const ext = filePath.split('.').pop()?.toLowerCase() || 'png';
-        const mimeMap: Record<string, string> = {
-          png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
-          gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml', bmp: 'image/bmp',
-        };
-        const mime = mimeMap[ext] || 'image/png';
-        let binary = '';
-        for (let i = 0; i < bytes.length; i++) {
-          binary += String.fromCharCode(bytes[i]);
-        }
-        setSrc(`data:${mime};base64,${btoa(binary)}`);
+        setSrc(bytesToDataUri(bytes, ext));
       })
       .catch(() => setError(true));
   }, [filePath]);
