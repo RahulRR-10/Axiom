@@ -425,6 +425,11 @@ export const Workspace: React.FC<WorkspaceProps> = ({ vaultPath }) => {
         setActiveFilePath(next?.filePath ?? null);
       }
 
+      // Steal focus away from the closing tab to prevent the renderer from losing global focus
+      if (document.activeElement instanceof HTMLElement) {
+        document.activeElement.blur();
+      }
+
       setOpenFiles((prev) => prev.filter((f) => f.filePath !== filePath));
     },
     [openFiles, dirtyFiles, activeFilePath],

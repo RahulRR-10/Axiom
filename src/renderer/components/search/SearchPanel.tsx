@@ -138,11 +138,14 @@ export const SearchPanel: React.FC<SearchPanelProps> = ({ vaultPath }) => {
 
   useEffect(() => {
     if (!open) return;
-    // Use rAF + short delay to ensure the input is rendered before focusing
-    const raf = requestAnimationFrame(() => {
-      inputRef.current?.focus();
-    });
-    return () => cancelAnimationFrame(raf);
+    // Use a small delay to ensure the modal is fully mounted and painted 
+    // before stealing focus. rAF can sometimes be too early in Electron.
+    const tm1 = setTimeout(() => inputRef.current?.focus(), 10);
+    const tm2 = setTimeout(() => inputRef.current?.focus(), 50); // Fallback
+    return () => {
+      clearTimeout(tm1);
+      clearTimeout(tm2);
+    };
   }, [open]);
 
   // ── Debounced search ──────────────────────────────────────────────────
