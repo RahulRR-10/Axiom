@@ -56,6 +56,7 @@ declare global {
       getPathForFile: (file: File) => string;
       renameFile: (filePath: string, newName: string) => Promise<string>;
       deleteFile: (filePath: string) => Promise<void>;
+      confirm: (message: string, confirmLabel: string) => Promise<boolean>;
       confirmTrash: (message: string) => Promise<boolean>;
       selectFolder: (defaultPath: string) => Promise<string | null>;
       openNewWindow: (filePath: string, fileType: string, vaultPath?: string) => Promise<void>;

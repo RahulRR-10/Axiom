@@ -416,10 +416,19 @@ const PDFPage = React.memo(function PDFPage({
       const onMouseDown = (evt: MouseEvent) => {
         if (evt.button !== 0) return;
         const caretRange = getCaretRangeFromPoint(evt.clientX, evt.clientY);
-        if (!caretRange) return;
+        if (!caretRange) {
+          cachedSel?.removeAllRanges();
+          return;
+        }
         const caretSpan = getSelectableSpan(caretRange.startContainer);
-        if (!caretSpan) return;
-        if (!isPointInsideSpanBand(caretSpan, evt.clientX, evt.clientY, false)) return;
+        if (!caretSpan) {
+          cachedSel?.removeAllRanges();
+          return;
+        }
+        if (!isPointInsideSpanBand(caretSpan, evt.clientX, evt.clientY, false)) {
+          cachedSel?.removeAllRanges();
+          return;
+        }
 
         evt.preventDefault();
 
@@ -925,30 +934,43 @@ export const PDFViewer: React.FC<Props> = ({
   useEffect(() => {
     const wasActive = prevActiveRef.current;
     prevActiveRef.current = isActive;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+
     if (!wasActive && isActive && pageMeta && !loading) {
-      // Recompute visible range — it may have been frozen at [1,2] while
-      // the container was display:none (clientHeight was 0).
-      const el = scrollRef.current;
-      if (el) {
+      const recomputeVisibleRange = () => {
+        const el = scrollRef.current;
+        if (!el) return false;
         const scrollTop = el.scrollTop;
         const viewportH = el.clientHeight;
         const pageH = Math.floor(pageMeta.height * zoom) + PAGE_GAP;
-        if (pageH > 0 && viewportH > 0) {
-          const firstVisible = Math.max(
-            1,
-            Math.floor((scrollTop - BUFFER_PX) / pageH) + 1,
-          );
-          const lastVisible = Math.min(
-            numPages,
-            Math.ceil((scrollTop + viewportH + BUFFER_PX) / pageH),
-          );
-          setVisibleRange([firstVisible, lastVisible]);
-        }
+        if (pageH <= 0 || viewportH <= 0) return false; // still hidden
+        const firstVisible = Math.max(
+          1,
+          Math.floor((scrollTop - BUFFER_PX) / pageH) + 1,
+        );
+        const lastVisible = Math.min(
+          numPages,
+          Math.ceil((scrollTop + viewportH + BUFFER_PX) / pageH),
+        );
+        setVisibleRange([firstVisible, lastVisible]);
+        return true;
+      };
+
+      // Try immediately, then retry with increasing delays to let the DOM settle.
+      // When a tab was display:none, clientHeight is 0 until the browser
+      // finishes layout, which can take a frame or two.
+      if (!recomputeVisibleRange()) {
+        timers.push(setTimeout(() => recomputeVisibleRange(), 16));
+        timers.push(setTimeout(() => recomputeVisibleRange(), 80));
+        timers.push(setTimeout(() => recomputeVisibleRange(), 200));
       }
+
       // Canvas backing stores may have been discarded by the GPU while hidden.
       // Bump renderNonce so every visible PDFPage re-paints its canvas.
       setRenderNonce((n) => n + 1);
     }
+
+    return () => { for (const t of timers) clearTimeout(t); };
   }, [isActive, pageMeta, loading, zoom, numPages]);
 
   /* ── Scroll to initialPage after load ───────────────────────────────────── */

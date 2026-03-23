@@ -407,12 +407,13 @@ export const Workspace: React.FC<WorkspaceProps> = ({ vaultPath }) => {
 
   // ── Close a tab ────────────────────────────────────────────────────────
   const closeTab = useCallback(
-    (filePath: string, e?: React.MouseEvent) => {
+    async (filePath: string, e?: React.MouseEvent) => {
       e?.stopPropagation();
 
       if (dirtyFiles.has(filePath)) {
-        const confirmed = window.confirm(
+        const confirmed = await window.electronAPI.confirm(
           'You have unsaved annotation changes. Close without saving?',
+          'Close without saving',
         );
         if (!confirmed) return;
       }
@@ -420,17 +421,21 @@ export const Workspace: React.FC<WorkspaceProps> = ({ vaultPath }) => {
       const idx = openFiles.findIndex((f) => f.filePath === filePath);
       if (idx < 0) return;
 
-      if (filePath === activeFilePath) {
-        const next = openFiles[idx + 1] ?? openFiles[idx - 1] ?? null;
-        setActiveFilePath(next?.filePath ?? null);
-      }
-
       // Steal focus away from the closing tab to prevent the renderer from losing global focus
       if (document.activeElement instanceof HTMLElement) {
         document.activeElement.blur();
       }
+      // Force Electron to reclaim focus, especially after a native dialog
+      window.focus();
 
-      setOpenFiles((prev) => prev.filter((f) => f.filePath !== filePath));
+      // Defer the actual unmount by a tick so the OS has time to restore window focus
+      setTimeout(() => {
+        if (filePath === activeFilePath) {
+          const next = openFiles[idx + 1] ?? openFiles[idx - 1] ?? null;
+          setActiveFilePath(next?.filePath ?? null);
+        }
+        setOpenFiles((prev) => prev.filter((f) => f.filePath !== filePath));
+      }, 10);
     },
     [openFiles, dirtyFiles, activeFilePath],
   );
