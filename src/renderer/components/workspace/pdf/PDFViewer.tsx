@@ -864,6 +864,7 @@ export const PDFViewer: React.FC<Props> = ({
   const pageTextsRef = useRef<Map<number, { items: string[]; fullText: string }>>(new Map());
   const searchInputRef = useRef<HTMLInputElement>(null);
   const highlightTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastScrolledMatchRef = useRef<number>(-1);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -1280,23 +1281,34 @@ export const PDFViewer: React.FC<Props> = ({
       }
     }
     setSearchMatches(matches);
-    setCurrentMatchIdx((prev) => (prev >= matches.length ? 0 : prev));
-  }, [numPages]);
+    // Pick the first match at or after the current viewport position
+    if (matches.length > 0) {
+      const viewPage = currentPage;
+      let startIdx = matches.findIndex((m) => m.page >= viewPage);
+      if (startIdx < 0) startIdx = 0; // wrap to beginning if all matches are before
+      setCurrentMatchIdx(startIdx);
+      lastScrolledMatchRef.current = -1;
+      prevScrolledForIdx.current = -1;
+    }
+  }, [numPages, currentPage]);
 
   // Run search whenever query changes
   useEffect(() => { doSearch(searchQuery); }, [searchQuery, doSearch]);
 
-  // Scroll to current match's page first (brings it into the viewport so the
-  // text layer renders); applySearchHighlights will then refine the position.
+  // Scroll to current match's page when the user navigates to a new match.
+  // We track lastScrolledMatchRef so we only scroll on actual navigation,
+  // not when visibleRange or renderNonce change (which would lock scrolling).
   useEffect(() => {
     if (searchMatches.length === 0 || !scrollRef.current || !pageMeta) return;
+    if (lastScrolledMatchRef.current === currentMatchIdx) return;
+    lastScrolledMatchRef.current = currentMatchIdx;
     const match = searchMatches[currentMatchIdx];
     if (!match) return;
     const el = scrollRef.current;
     const pageH = Math.floor(pageMeta.height * zoom) + PAGE_GAP;
     const target = (match.page - 1) * pageH;
-    // Always scroll to top-of-page so the text layer is guaranteed to render;
-    // applySearchHighlights will adjust to the exact match position afterward.
+    // Scroll to top-of-page so the text layer is guaranteed to render;
+    // applySearchHighlights will then refine to the exact match position.
     el.scrollTop = target;
   }, [currentMatchIdx, searchMatches, pageMeta, zoom]);
 
@@ -1403,16 +1415,6 @@ export const PDFViewer: React.FC<Props> = ({
     if (currentRanges.length > 0) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       cssHighlights.set("pdf-search-current", new (window as any).Highlight(...currentRanges));
-
-      // Scroll to the precise position of the match within the page
-      if (scrollRef.current) {
-        const el = scrollRef.current;
-        const rect = currentRanges[0].getBoundingClientRect();
-        const containerRect = el.getBoundingClientRect();
-        const relativeTop = rect.top - containerRect.top + el.scrollTop;
-        // Center the match vertically in the viewport
-        el.scrollTop = Math.max(0, relativeTop - el.clientHeight / 2 + rect.height / 2);
-      }
     }
   }, [showSearch, searchQuery, searchMatches, currentMatchIdx, numPages]);
 
@@ -1422,6 +1424,38 @@ export const PDFViewer: React.FC<Props> = ({
     highlightTimeoutRef.current = setTimeout(applySearchHighlights, 150);
     return () => { if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current); };
   }, [applySearchHighlights, visibleRange, renderNonce]);
+
+  // After highlights are applied for a NEW match navigation, scroll to the
+  // precise position within the page. We use a separate effect so the scroll
+  // only fires when the user navigates matches, not on every visibleRange tick.
+  const prevScrolledForIdx = useRef<number>(-1);
+  useEffect(() => {
+    if (searchMatches.length === 0 || !scrollRef.current || !pageMeta) return;
+    if (prevScrolledForIdx.current === currentMatchIdx) return;
+    // Wait for text layer to render & highlights to be applied, then scroll
+    const timer = setTimeout(() => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const cssHighlights = (CSS as any).highlights;
+      if (!cssHighlights) return;
+      const currentHL = cssHighlights.get("pdf-search-current");
+      if (!currentHL || !scrollRef.current) return;
+      // Get the first range from the current highlight
+      const ranges = Array.from(currentHL.values()) as Range[];
+      if (ranges.length === 0) return;
+      const rect = ranges[0].getBoundingClientRect();
+      const el = scrollRef.current;
+      const containerRect = el.getBoundingClientRect();
+      // Only scroll if the match is outside the visible viewport
+      if (rect.top >= containerRect.top && rect.bottom <= containerRect.bottom) {
+        prevScrolledForIdx.current = currentMatchIdx;
+        return;
+      }
+      const relativeTop = rect.top - containerRect.top + el.scrollTop;
+      el.scrollTop = Math.max(0, relativeTop - el.clientHeight / 2 + rect.height / 2);
+      prevScrolledForIdx.current = currentMatchIdx;
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [currentMatchIdx, searchMatches, pageMeta, visibleRange]);
 
   // Clean up highlights when search is dismissed
   useEffect(() => {
@@ -1436,11 +1470,16 @@ export const PDFViewer: React.FC<Props> = ({
   // Search navigation helpers
   const searchNext = useCallback(() => {
     if (searchMatches.length === 0) return;
+    // Reset scroll tracking so the new match gets scrolled to
+    lastScrolledMatchRef.current = -1;
+    prevScrolledForIdx.current = -1;
     setCurrentMatchIdx((prev) => (prev + 1) % searchMatches.length);
   }, [searchMatches.length]);
 
   const searchPrev = useCallback(() => {
     if (searchMatches.length === 0) return;
+    lastScrolledMatchRef.current = -1;
+    prevScrolledForIdx.current = -1;
     setCurrentMatchIdx((prev) => (prev - 1 + searchMatches.length) % searchMatches.length);
   }, [searchMatches.length]);
 
@@ -1449,6 +1488,8 @@ export const PDFViewer: React.FC<Props> = ({
     setSearchQuery("");
     setSearchMatches([]);
     setCurrentMatchIdx(0);
+    lastScrolledMatchRef.current = -1;
+    prevScrolledForIdx.current = -1;
   }, []);
 
   const scrollToPage = useCallback((page: number) => {
@@ -1473,9 +1514,12 @@ export const PDFViewer: React.FC<Props> = ({
         if (showSearch) { closeSearch(); return; }
         if (!isTyping) setActiveTool("none");
       }
-      if (!isTyping && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
         e.preventDefault();
-        setShowSearch(true);
+        if (!showSearch) {
+          setShowSearch(true);
+        }
+        // Always focus the search input, whether new or already open
         setTimeout(() => searchInputRef.current?.focus(), 50);
       }
       if (!isTyping && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
@@ -1814,7 +1858,7 @@ export const PDFViewer: React.FC<Props> = ({
             ref={searchInputRef}
             type="text"
             value={searchQuery}
-            onChange={(e) => { setSearchQuery(e.target.value); setCurrentMatchIdx(0); }}
+            onChange={(e) => { setSearchQuery(e.target.value); lastScrolledMatchRef.current = -1; prevScrolledForIdx.current = -1; }}
             onKeyDown={(e) => {
               if (e.key === "Enter") { e.shiftKey ? searchPrev() : searchNext(); e.preventDefault(); }
               if (e.key === "Escape") { closeSearch(); e.preventDefault(); }

@@ -69,7 +69,7 @@ export const AIPanel: React.FC<AIPanelProps> = ({ vaultPath, onSourcesUpdate }) 
   const webviewRefs = useRef<Record<string, Electron.WebviewTag | null>>({});
 
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [, setError] = useState<string | null>(null);
 
   // ── Close picker on outside click ─────────────────────────────────────────
 
@@ -311,13 +311,6 @@ export const AIPanel: React.FC<AIPanelProps> = ({ vaultPath, onSourcesUpdate }) 
           )}
         </div>
       </div>
-
-      {/* ── Error message ── */}
-      {error && (
-        <div className="shrink-0 px-2.5 py-1 bg-[#1a1a1a] border-b border-[#2a2a2a]">
-          <p className="text-[10px] text-red-400">{error}</p>
-        </div>
-      )}
 
       {/* ── Loading indicator ── */}
       {loading && (

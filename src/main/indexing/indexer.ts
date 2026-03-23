@@ -88,8 +88,26 @@ async function indexFileInner(filePath: string, vaultPath: string): Promise<void
   const stat = fs.statSync(filePath);
   const mtimeMs = stat.mtimeMs;
 
-  const raw = fs.readFileSync(filePath);
-  const contentHash = crypto.createHash('sha256').update(raw).digest('hex');
+  // For binary files (pdf, pptx) that have their own extraction workers,
+  // use streaming hash to avoid loading the entire file into RAM.
+  // For text files (md, txt), read into memory since we need the bytes for extraction anyway.
+  let raw: Buffer | null = null;
+  let contentHash: string;
+
+  if (ext === '.pdf' || ext === '.pptx') {
+    // Streaming hash — process in chunks without buffering the full file
+    contentHash = await new Promise<string>((resolve, reject) => {
+      const hash = crypto.createHash('sha256');
+      const stream = fs.createReadStream(filePath);
+      stream.on('data', (chunk) => hash.update(chunk));
+      stream.on('end', () => resolve(hash.digest('hex')));
+      stream.on('error', reject);
+    });
+  } else {
+    // Text files: read into memory (needed for text extraction below)
+    raw = fs.readFileSync(filePath);
+    contentHash = crypto.createHash('sha256').update(raw).digest('hex');
+  }
 
   // ── Check if already indexed and unchanged ───────────────────────────────
   const existing = db
@@ -212,10 +230,11 @@ async function indexFileInner(filePath: string, vaultPath: string): Promise<void
         return;
       }
 
-      // Persist to embed_cache
+      // Persist to embed_cache as binary blobs (Float32Array → Buffer)
       const cacheAll = db.transaction(() => {
         toEmbed.forEach((chunk, i) => {
-          insertCache.run(chunk.text_hash, JSON.stringify(vectors[i]), MODEL_NAME);
+          const f32 = new Float32Array(vectors[i]);
+          insertCache.run(chunk.text_hash, Buffer.from(f32.buffer), MODEL_NAME);
         });
       });
       cacheAll();
@@ -330,13 +349,15 @@ type PageText = { page: number; text: string };
 async function extractPages(
   filePath: string,
   fileType: SupportedType,
-  raw: Buffer,
+  raw: Buffer | null,
   onPageProgress?: (currentPage: number, totalPages: number) => void,
 ): Promise<PageText[]> {
   switch (fileType) {
     case 'md':
-    case 'txt':
-      return [{ page: 1, text: raw.toString('utf-8') }];
+    case 'txt': {
+      const buf = raw ?? fs.readFileSync(filePath);
+      return [{ page: 1, text: buf.toString('utf-8') }];
+    }
 
     case 'pdf': {
       if (!ENABLE_PDF_INDEXING) return [];
