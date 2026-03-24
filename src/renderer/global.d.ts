@@ -1,4 +1,4 @@
-import type { Annotation, FileNode, IndexStatus, NoteDetail, NoteSummary, SearchResult } from '../shared/types';
+import type { Annotation, AppUpdateState, FileNode, IndexStatus, NoteDetail, NoteSummary, SearchResult } from '../shared/types';
 import type { VaultIndexProgressPayload } from '../shared/ipc/contracts';
 
 declare global {
@@ -84,8 +84,9 @@ declare global {
       onWindowMaximizedChange: (callback: (isMaximized: boolean) => void) => () => void;
 
       // ── Auto-updater ──────────────────────────────────────────────────
-      onUpdateDownloaded: (callback: () => void) => () => void;
-      installAndRestart: () => Promise<void>;
+      getAppUpdateState: () => Promise<AppUpdateState>;
+      onAppUpdateStateChange: (callback: (state: AppUpdateState) => void) => () => void;
+      downloadLatestRelease: () => Promise<void>;
     };
   }
 }

@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
-import { VAULT_CHANNELS, WINDOW_CHANNELS, SEARCH_CHANNELS, ANNOTATION_CHANNELS, NOTES_CHANNELS, AI_CHANNELS } from '../shared/ipc/channels';
-import type { FileNode, IndexStatus, SearchResult, Annotation, NoteSummary, NoteDetail } from '../shared/types';
+import { VAULT_CHANNELS, WINDOW_CHANNELS, SEARCH_CHANNELS, ANNOTATION_CHANNELS, NOTES_CHANNELS, AI_CHANNELS, UPDATER_CHANNELS } from '../shared/ipc/channels';
+import type { FileNode, IndexStatus, SearchResult, Annotation, NoteSummary, NoteDetail, AppUpdateState } from '../shared/types';
 import type { VaultIndexProgressPayload } from '../shared/ipc/contracts';
 
 const electronAPI = {
@@ -248,14 +248,17 @@ const electronAPI = {
   },
 
   // ── Auto-updater ─────────────────────────────────────────────────────────
-  onUpdateDownloaded: (callback: () => void): (() => void) => {
-    const listener = (): void => callback();
-    ipcRenderer.on('updater:update-downloaded', listener);
-    return () => ipcRenderer.removeListener('updater:update-downloaded', listener);
+  getAppUpdateState: (): Promise<AppUpdateState> =>
+    ipcRenderer.invoke(UPDATER_CHANNELS.GET_STATE),
+
+  onAppUpdateStateChange: (callback: (state: AppUpdateState) => void): (() => void) => {
+    const listener = (_: unknown, state: AppUpdateState): void => callback(state);
+    ipcRenderer.on(UPDATER_CHANNELS.STATE_CHANGED, listener);
+    return () => ipcRenderer.removeListener(UPDATER_CHANNELS.STATE_CHANGED, listener);
   },
 
-  installAndRestart: (): Promise<void> =>
-    ipcRenderer.invoke('updater:install-and-restart'),
+  downloadLatestRelease: (): Promise<void> =>
+    ipcRenderer.invoke(UPDATER_CHANNELS.DOWNLOAD_LATEST),
 };
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI);

@@ -57,3 +57,9 @@ export const AI_CHANNELS = {
   VAULT_INJECT: 'ai:vault-inject',
   REGISTER_WEBVIEW: 'ai:register-webview',
 } as const;
+
+export const UPDATER_CHANNELS = {
+  GET_STATE: 'updater:get-state',
+  STATE_CHANGED: 'updater:state-changed',
+  DOWNLOAD_LATEST: 'updater:download-latest',
+} as const;

@@ -1,5 +1,6 @@
 import type {
   Annotation,
+  AppUpdateState,
   FileNode,
   IndexStatus,
   NoteDetail,
@@ -131,3 +132,11 @@ export type AnnotationSaveResponse = void;
 // ── annotation:load ──────────────────────────────────────────────────────────
 export type AnnotationLoadRequest = { vaultPath: string; fileId: string };
 export type AnnotationLoadResponse = Annotation[];
+
+// updater:get-state
+export type UpdaterGetStateRequest = void;
+export type UpdaterGetStateResponse = AppUpdateState;
+
+// updater:download-latest
+export type UpdaterDownloadLatestRequest = void;
+export type UpdaterDownloadLatestResponse = void;

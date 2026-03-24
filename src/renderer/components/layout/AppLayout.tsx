@@ -102,7 +102,6 @@ export const AppLayout: React.FC = () => {
   }, []);
 
   /* ── Auto-updater: listen for downloaded update ── */
-  useEffect(() => window.electronAPI.onUpdateDownloaded(() => setUpdateReady(true)), []);
 
   /* ── sendToAI → auto-expand AI panel ── */
   useEffect(() => {
@@ -135,7 +134,7 @@ export const AppLayout: React.FC = () => {
           <div className="flex items-center gap-2 ml-4">
             <button
               type="button"
-              onClick={() => void window.electronAPI.installAndRestart()}
+              onClick={() => void window.electronAPI.downloadLatestRelease()}
               className="px-2.5 py-1 rounded bg-[#2a6a4a] hover:bg-[#3a7a5a] text-[#a0dfbf] font-medium transition-colors"
             >
               Restart &amp; Update

@@ -1,23 +1,47 @@
 import React, { useEffect, useState } from 'react';
+import { Download } from 'lucide-react';
+
+import type { AppUpdateState } from '../../../shared/types';
 
 export const WindowControlsToolbar: React.FC = () => {
   const [isMaximized, setIsMaximized] = useState<boolean>(false);
+  const [updateState, setUpdateState] = useState<AppUpdateState | null>(null);
 
   useEffect(() => {
-    let unsubscribe = (): void => undefined;
+    let unsubscribeWindow = (): void => undefined;
+    let unsubscribeUpdater = (): void => undefined;
 
     window.electronAPI.isWindowMaximized().then(setIsMaximized).catch((): void => undefined);
-    unsubscribe = window.electronAPI.onWindowMaximizedChange((nextState) => {
+    window.electronAPI.getAppUpdateState().then(setUpdateState).catch((): void => undefined);
+
+    unsubscribeWindow = window.electronAPI.onWindowMaximizedChange((nextState) => {
       setIsMaximized(nextState);
+    });
+    unsubscribeUpdater = window.electronAPI.onAppUpdateStateChange((nextState) => {
+      setUpdateState(nextState);
     });
 
     return () => {
-      unsubscribe();
+      unsubscribeWindow();
+      unsubscribeUpdater();
     };
   }, []);
 
   return (
     <div className="h-8 px-1 flex items-center gap-1" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+      {updateState?.available && (
+        <button
+          type="button"
+          onClick={() => void window.electronAPI.downloadLatestRelease()}
+          aria-label="Download update"
+          title={updateState.latestVersion ? `Download Axiom ${updateState.latestVersion}` : 'Download the latest Axiom release'}
+          className="h-8 px-3 rounded-md bg-[#1f4f39] text-[#b8f1d3] hover:bg-[#276449] flex items-center gap-1.5 text-xs font-medium"
+        >
+          <Download size={14} />
+          <span>Update</span>
+        </button>
+      )}
+
       <button
         type="button"
         onClick={() => void window.electronAPI.minimizeWindow()}

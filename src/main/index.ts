@@ -8,7 +8,7 @@ import { registerAnnotationHandlers } from './ipc/annotationHandlers';
 import { registerNotesHandlers } from './ipc/notesHandlers';
 import { setupAISessions, writeWebviewPreload } from './ai/spoofing';
 import { injectPrompt } from './ai/vaultInject';
-import { initAutoUpdater } from './updater';
+import { initAppUpdater } from './updater';
 import { initEmbedders, teardownEmbedders } from './workers/embedderManager';
 import { AI_CHANNELS } from '../shared/ipc/channels';
 import type { VaultInjectRequest, VaultInjectResponse } from '../shared/ipc/contracts';
@@ -374,8 +374,8 @@ app.whenReady().then(() => {
 
   logStep('createWindow');
   createWindow();
-  logStep('initAutoUpdater');
-  initAutoUpdater(() => mainWindow);
+  logStep('initAppUpdater');
+  initAppUpdater();
 
   // Spawn and load both embedder workers (search + indexing)
   // so the first query has a warm worker ready

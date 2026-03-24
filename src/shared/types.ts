@@ -20,6 +20,16 @@ export type IndexStatus = {
   inProgress: boolean;
 };
 
+export type AppUpdateState = {
+  checked: boolean;
+  available: boolean;
+  currentVersion: string;
+  latestVersion: string | null;
+  downloadUrl: string | null;
+  releaseUrl: string | null;
+  error: string | null;
+};
+
 export type IndexedFile = {
   id: string;
   path: string;
