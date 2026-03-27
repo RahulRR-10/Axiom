@@ -124,7 +124,15 @@ export const PDFToolbar: React.FC<Props> = ({
           <div className="flex items-center">
             <button
               type="button"
-              onClick={() => toggle('highlight')}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                const sel = window.getSelection();
+                if (sel && !sel.isCollapsed && sel.rangeCount > 0) {
+                  window.dispatchEvent(new CustomEvent('toolbarHighlight'));
+                  return;
+                }
+                toggle('highlight');
+              }}
               className={btnClass('highlight')}
               title="Highlight"
             >

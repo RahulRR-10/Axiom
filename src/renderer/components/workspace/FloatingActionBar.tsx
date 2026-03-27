@@ -27,6 +27,8 @@ type Props = {
   filePath:     string;
   fileId:       string;
   vaultPath:    string;
+  highlightColor: string;
+  onHighlightColorChange: (color: string) => void;
   /** Subject of the currently open source file (folder name), for ranking notes */
   sourceSubject?: string | null;
   onAnnotationCreated: (ann: Annotation) => void;
@@ -97,6 +99,8 @@ export const FloatingActionBar: React.FC<Props> = ({
   filePath,
   fileId,
   vaultPath,
+  highlightColor,
+  onHighlightColorChange,
   sourceSubject,
   onAnnotationCreated,
   annotations,
@@ -105,7 +109,7 @@ export const FloatingActionBar: React.FC<Props> = ({
   const [pos, setPos]                   = useState<Position | null>(null);
   const [selectedText, setSelectedText] = useState('');
   const [hlOpen, setHlOpen]             = useState(false);
-  const [defaultColor, setDefaultColor] = useState('#fde68a');
+  const [barHighlightColor, setBarHighlightColor] = useState(highlightColor);
   const [notePopoverOpen, setNotePopoverOpen] = useState(false);
   const [aiDropdownOpen, setAiDropdownOpen] = useState(false);
   const [customPrompt, setCustomPrompt]     = useState('');
@@ -121,6 +125,10 @@ export const FloatingActionBar: React.FC<Props> = ({
       setTimeout(() => textareaRef.current?.focus(), 0);
     }
   }, [aiDropdownOpen]);
+
+  useEffect(() => {
+    setBarHighlightColor(highlightColor);
+  }, [highlightColor]);
 
   // ── Calculate bar position relative to the scrollable container ─────────
   const computePosition = useCallback(() => {
@@ -151,7 +159,9 @@ export const FloatingActionBar: React.FC<Props> = ({
     const container = containerRef.current;
     if (!container) return;
 
-    const onMouseUp = () => {
+    const onMouseUp = (e: MouseEvent) => {
+      if (barRef.current?.contains(e.target as Node)) return;
+
       // Only show the bar when the selection is inside a PDF text layer (not annotations)
       const sel = window.getSelection();
       if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
@@ -240,6 +250,12 @@ export const FloatingActionBar: React.FC<Props> = ({
     setHlOpen(false);
   }, [fileId, onAnnotationCreated, currentPage, annotations, onAnnotationDeleted]);
 
+  useEffect(() => {
+    const handler = () => doHighlight(barHighlightColor);
+    window.addEventListener('toolbarHighlight', handler);
+    return () => window.removeEventListener('toolbarHighlight', handler);
+  }, [doHighlight, barHighlightColor]);
+
   // Dispatch helpers
   const dispatchSendToAI = (prompt?: string) => {
     window.dispatchEvent(new CustomEvent('sendToAI', { detail: { text: selectedText, customPrompt: prompt || undefined } }));
@@ -306,20 +322,22 @@ export const FloatingActionBar: React.FC<Props> = ({
       <div className="relative flex items-center">
         <button
           type="button"
-          onClick={() => doHighlight(defaultColor)}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => doHighlight(barHighlightColor)}
           className="flex items-center gap-1 px-2 py-1 text-xs text-[#d4d4d4] rounded-l hover:bg-[#3a3a3a] transition-colors"
-          title={`Highlight (${HL_COLORS.find(c => c.value === defaultColor)?.label ?? 'Yellow'})`}
+          title={`Highlight (${HL_COLORS.find(c => c.value === barHighlightColor)?.label ?? 'Yellow'})`}
         >
           <Highlighter size={13} />
           <span
-            style={defaultColor === 'clear'
+            style={barHighlightColor === 'clear'
               ? { background: 'repeating-conic-gradient(#555 0% 25%, #333 0% 50%) 50% / 6px 6px' }
-              : { background: defaultColor }}
+              : { background: barHighlightColor }}
             className="inline-block w-2.5 h-2.5 rounded-sm border border-[#555]"
           />
         </button>
         <button
           type="button"
+          onMouseDown={(e) => e.preventDefault()}
           onClick={() => { setHlOpen(o => !o); }}
           className="px-1 py-1 text-xs text-[#8a8a8a] rounded-r hover:bg-[#3a3a3a] transition-colors"
           title="Pick highlight color"
@@ -347,16 +365,18 @@ export const FloatingActionBar: React.FC<Props> = ({
               <button
                 key={c.value}
                 type="button"
+                onMouseDown={(e) => e.preventDefault()}
                 onClick={() => {
-                  setDefaultColor(c.value);
-                  doHighlight(c.value);
+                  setBarHighlightColor(c.value);
+                  onHighlightColorChange(c.value);
+                  setHlOpen(false);
                 }}
                 title={c.label}
                 style={c.value === 'clear'
                   ? { background: 'repeating-conic-gradient(#555 0% 25%, #333 0% 50%) 50% / 8px 8px' }
                   : { background: c.value }}
                 className={`w-6 h-6 rounded border-2 hover:scale-110 transition-transform ${
-                  defaultColor === c.value ? 'border-white' : 'border-transparent'
+                  barHighlightColor === c.value ? 'border-white' : 'border-transparent'
                 }`}
               />
             ))}

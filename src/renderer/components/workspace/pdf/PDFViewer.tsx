@@ -7,7 +7,7 @@ import React, {
   useState,
 } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import { PDFDocument, rgb } from "pdf-lib";
+import { BlendMode, PDFDocument, rgb } from "pdf-lib";
 import type {
   Annotation,
   HighlightAnnotation,
@@ -1063,13 +1063,18 @@ export const PDFViewer: React.FC<Props> = ({
   }, []);
 
   const onAnnotationDeleted = useCallback((annId: string) => {
-    // If it's a pending annotation, just remove from pending
+    const isInDb = annotationsRef.current.some((a) => a.id === annId);
+
+    // If it's pending, remove the queued version first.
     setPendingAnnotations((prev) => {
       const found = prev.find((a) => a.id === annId);
       if (found) return prev.filter((a) => a.id !== annId);
       return prev;
     });
-    // If it was already in DB, mark for deletion
+
+    // Only persisted annotations need a DB delete on save.
+    if (!isInDb) return;
+
     setDeletedAnnotationIds((prev) => {
       const copy = new Set(prev);
       copy.add(annId);
@@ -1081,8 +1086,9 @@ export const PDFViewer: React.FC<Props> = ({
     const isInDb = annotationsRef.current.some((a) => a.id === ann.id);
 
     if (isInDb) {
-      // DB annotation: optimistically update DB state, mark old version for
-      // deletion, and queue the updated version as pending.
+      // DB annotation: optimistically update local state and queue the latest
+      // version for persistence. Saving with the same id already replaces the
+      // existing DB row, so this must not also be marked for deletion.
       setAnnotations((prev) => {
         const idx = prev.findIndex((a) => a.id === ann.id);
         if (idx < 0) return prev;
@@ -1091,13 +1097,17 @@ export const PDFViewer: React.FC<Props> = ({
         return next;
       });
       setDeletedAnnotationIds((prev) => {
+        if (!prev.has(ann.id)) return prev;
         const copy = new Set(prev);
-        copy.add(ann.id);
+        copy.delete(ann.id);
         return copy;
       });
       setPendingAnnotations((prev) => {
-        if (prev.find((a) => a.id === ann.id)) return prev;
-        return [...prev, ann];
+        const idx = prev.findIndex((a) => a.id === ann.id);
+        if (idx < 0) return [...prev, ann];
+        const next = [...prev];
+        next[idx] = ann;
+        return next;
       });
     } else {
       // Purely pending annotation (not yet saved to DB): just update it
@@ -1175,7 +1185,8 @@ export const PDFViewer: React.FC<Props> = ({
               width: r.w * pw,
               height: r.h * ph,
               color: rgb(cr, cg, cb),
-              opacity: 0.35,
+              opacity: 0.4,
+              blendMode: BlendMode.Multiply,
             });
           }
         } else if (ann.type === "draw") {
@@ -1978,6 +1989,8 @@ export const PDFViewer: React.FC<Props> = ({
             filePath={filePath}
             fileId={effectiveFileId}
             vaultPath={vaultPath ?? ""}
+            highlightColor={hlColor}
+            onHighlightColorChange={setHlColor}
             onAnnotationCreated={onAnnotationCreated}
             annotations={mergedAnnotations}
             onAnnotationDeleted={onAnnotationDeleted}
