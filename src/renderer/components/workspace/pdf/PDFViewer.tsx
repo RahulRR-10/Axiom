@@ -31,6 +31,9 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
 const PAGE_GAP = 16;
 const BUFFER_PX = 1200; // render pages within this many pixels of the viewport
 
+const shouldRenderPersistedOverlay = (annotation: Annotation) =>
+  annotation.type === "sticky" || annotation.type === "textbox";
+
 /* ─── PDF document cache ───────────────────────────────────────────────────── */
 const pdfCache = new Map<string, PDFDocumentProxy>();
 
@@ -403,6 +406,17 @@ const PDFPage = React.memo(function PDFPage({
         cachedSel.addRange(reusableRange);
       };
 
+      const clearTextLayerSelection = () => {
+        if (!cachedSel || cachedSel.rangeCount === 0) return;
+        const range = cachedSel.getRangeAt(0);
+        if (
+          textLayerDiv.contains(range.startContainer) ||
+          textLayerDiv.contains(range.endContainer)
+        ) {
+          cachedSel.removeAllRanges();
+        }
+      };
+
       const onDblClick = (evt: MouseEvent) => {
         const caretRange = getCaretRangeFromPoint(evt.clientX, evt.clientY);
         if (!caretRange) return;
@@ -416,10 +430,19 @@ const PDFPage = React.memo(function PDFPage({
       const onMouseDown = (evt: MouseEvent) => {
         if (evt.button !== 0) return;
         const caretRange = getCaretRangeFromPoint(evt.clientX, evt.clientY);
-        if (!caretRange) return;
+        if (!caretRange) {
+          clearTextLayerSelection();
+          return;
+        }
         const caretSpan = getSelectableSpan(caretRange.startContainer);
-        if (!caretSpan) return;
-        if (!isPointInsideSpanBand(caretSpan, evt.clientX, evt.clientY, false)) return;
+        if (!caretSpan) {
+          clearTextLayerSelection();
+          return;
+        }
+        if (!isPointInsideSpanBand(caretSpan, evt.clientX, evt.clientY, false)) {
+          clearTextLayerSelection();
+          return;
+        }
 
         evt.preventDefault();
 
@@ -977,7 +1000,9 @@ export const PDFViewer: React.FC<Props> = ({
     if (!vaultPath) return;
     window.electronAPI
       .loadAnnotations(vaultPath, effectiveFileId)
-      .then(setAnnotations)
+      // Highlights and pen strokes are flattened into the PDF on save,
+      // so reloading them as live overlays would draw them a second time.
+      .then((data) => setAnnotations(data.filter(shouldRenderPersistedOverlay)))
       .catch(console.error);
   }, [effectiveFileId, vaultPath]);
   useEffect(() => {
@@ -1213,6 +1238,7 @@ export const PDFViewer: React.FC<Props> = ({
       setPendingAnnotations([]);
       setDeletedAnnotationIds(new Set());
       loadAnnotations();
+      setPdfLoadNonce((n) => n + 1);
     } catch (err) {
       console.error("[PDFViewer] Save failed", err);
       setToastMessage("Save failed: unexpected error");
