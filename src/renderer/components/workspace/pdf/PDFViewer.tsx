@@ -869,6 +869,9 @@ export const PDFViewer: React.FC<Props> = ({
   const [renderNonce, setRenderNonce] = useState(0);
   /** Scroll position to restore after a save-triggered reload */
   const pendingRestoreScrollRef = useRef<number | null>(null);
+  /** Scroll position saved when the tab becomes inactive, so we can restore it
+   *  when the tab becomes visible again (browsers reset scrollTop on display:none). */
+  const savedScrollTopRef = useRef<number | null>(null);
 
   /* ── Toast state for "Note saved" notification ───────────────────────────── */
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -984,33 +987,53 @@ export const PDFViewer: React.FC<Props> = ({
     });
   }, [filePath, pdfLoadNonce]);
 
-  /* ── Force canvas repaint when tab becomes active again ──────────────────── */
+  /* ── Restore scroll position + repaint when tab becomes active again ─────── */
   useEffect(() => {
     const wasActive = prevActiveRef.current;
     prevActiveRef.current = isActive;
+
+    // Tab just became ACTIVE — restore scroll and recompute visible range.
+    // Scroll position was saved continuously by the scroll handler (see
+    // computeRange below).  We cannot save it on deactivation because
+    // the useEffect fires AFTER display:none is applied and scrollTop is
+    // already reset to 0.
     if (!wasActive && isActive && pageMeta && !loading) {
-      // Recompute visible range — it may have been frozen at [1,2] while
-      // the container was display:none (clientHeight was 0).
       const el = scrollRef.current;
       if (el) {
-        const scrollTop = el.scrollTop;
-        const viewportH = el.clientHeight;
-        const pageH = Math.floor(pageMeta.height * zoom) + PAGE_GAP;
-        if (pageH > 0 && viewportH > 0) {
-          const firstVisible = Math.max(
-            1,
-            Math.floor((scrollTop - BUFFER_PX) / pageH) + 1,
-          );
-          const lastVisible = Math.min(
-            numPages,
-            Math.ceil((scrollTop + viewportH + BUFFER_PX) / pageH),
-          );
-          setVisibleRange([firstVisible, lastVisible]);
+        // Restore the saved scroll position (the browser has reset it to 0).
+        if (savedScrollTopRef.current != null) {
+          el.scrollTop = savedScrollTopRef.current;
         }
+        // Use rAF to wait for the element to be visible and laid out before
+        // recomputing the visible range; clientHeight is 0 until layout.
+        requestAnimationFrame(() => {
+          if (!scrollRef.current) return;
+          // Re-apply saved scroll in case DOM wasn't ready on the first set.
+          if (savedScrollTopRef.current != null) {
+            scrollRef.current.scrollTop = savedScrollTopRef.current;
+          }
+          const scrollTop = scrollRef.current.scrollTop;
+          const viewportH = scrollRef.current.clientHeight;
+          const pageH = Math.floor(pageMeta.height * zoom) + PAGE_GAP;
+          if (pageH > 0 && viewportH > 0) {
+            const firstVisible = Math.max(
+              1,
+              Math.floor((scrollTop - BUFFER_PX) / pageH) + 1,
+            );
+            const lastVisible = Math.min(
+              numPages,
+              Math.ceil((scrollTop + viewportH + BUFFER_PX) / pageH),
+            );
+            setVisibleRange([firstVisible, lastVisible]);
+            // Update currentPage to match restored scroll position
+            const centerY = scrollTop + viewportH / 2;
+            setCurrentPage(Math.max(1, Math.min(numPages, Math.ceil(centerY / pageH))));
+          }
+          // Canvas backing stores may have been discarded by the GPU while hidden.
+          // Bump renderNonce so every visible PDFPage re-paints its canvas.
+          setRenderNonce((n) => n + 1);
+        });
       }
-      // Canvas backing stores may have been discarded by the GPU while hidden.
-      // Bump renderNonce so every visible PDFPage re-paints its canvas.
-      setRenderNonce((n) => n + 1);
     }
   }, [isActive, pageMeta, loading, zoom, numPages]);
 
@@ -1740,7 +1763,13 @@ export const PDFViewer: React.FC<Props> = ({
       const scrollTop = el.scrollTop;
       const viewportH = el.clientHeight;
       const pageH = Math.floor(pageMeta.height * zoom) + PAGE_GAP;
-      if (pageH <= 0 || viewportH <= 0) return; // skip when hidden (display:none)
+      // Skip when hidden (display:none) — viewportH is 0 and we'd compute
+      // a bogus range that replaces real pages with blank placeholders.
+      if (pageH <= 0 || viewportH <= 0) return;
+
+      // Continuously save scroll position so we can restore it when the tab
+      // becomes active again after being hidden (display:none resets scrollTop).
+      savedScrollTopRef.current = scrollTop;
 
       // Current page = which page is at the center of the viewport
       const centerY = scrollTop + viewportH / 2;
@@ -1793,8 +1822,14 @@ export const PDFViewer: React.FC<Props> = ({
             width: Math.floor(vp.width),
             height: Math.floor(vp.height),
           });
-          // Force GPU-discarded canvases to re-render
-          setRenderNonce((n) => n + 1);
+          // Restore saved scroll position after pageMeta update triggers layout
+          requestAnimationFrame(() => {
+            if (savedScrollTopRef.current != null && el) {
+              el.scrollTop = savedScrollTopRef.current;
+            }
+            // Force GPU-discarded canvases to re-render
+            setRenderNonce((n) => n + 1);
+          });
         })().catch(console.error);
       }
 

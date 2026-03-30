@@ -60,6 +60,7 @@ export const AnnotationLayer: React.FC<Props> = ({
   const [editingTextboxId, setEditingTextboxId] = useState<string | null>(null);
   const [editingTextboxContent, setEditingTextboxContent] = useState('');
   const [editingTextboxColor, setEditingTextboxColor] = useState('#ffffff');
+  const [editingTextboxFontSize, setEditingTextboxFontSize] = useState(14);
 
   // ID of sticky note being edited
   const [editingStickyId, setEditingStickyId] = useState<string | null>(null);
@@ -708,7 +709,7 @@ export const AnnotationLayer: React.FC<Props> = ({
           onClick={() => {
             const tb = allTextboxes.find(t => t.id === editingTextboxId);
             if (tb && editingTextboxContent.trim()) {
-              onAnnotationUpdated({ ...tb, content: editingTextboxContent, color: editingTextboxColor });
+              onAnnotationUpdated({ ...tb, content: editingTextboxContent, color: editingTextboxColor, fontSize: editingTextboxFontSize });
             } else if (tb && !editingTextboxContent.trim()) {
               onAnnotationDeleted(editingTextboxId);
             }
@@ -742,6 +743,7 @@ export const AnnotationLayer: React.FC<Props> = ({
               setEditingTextboxId(tb.id);
               setEditingTextboxContent(tb.content);
               setEditingTextboxColor(tb.color);
+              setEditingTextboxFontSize(tb.fontSize);
               setShowEditColorPicker(false);
             }}
           >
@@ -749,31 +751,21 @@ export const AnnotationLayer: React.FC<Props> = ({
               <div
                 onClick={e => e.stopPropagation()}
                 onMouseDown={e => e.stopPropagation()}
+                onDoubleClick={e => e.stopPropagation()}
               >
                 <textarea
                   autoFocus
-                  rows={1}
-                  ref={ta => {
-                    if (!ta) return;
-                    ta.style.height = 'auto';
-                    const lineH = parseFloat(getComputedStyle(ta).lineHeight) || (tb.fontSize * 1.4);
-                    const maxH = lineH * 5;
-                    ta.style.height = `${Math.min(ta.scrollHeight, maxH)}px`;
-                    ta.style.overflowY = ta.scrollHeight > maxH ? 'auto' : 'hidden';
-                  }}
                   value={editingTextboxContent}
                   onChange={e => {
                     setEditingTextboxContent(e.target.value);
-                    const ta = e.target;
-                    ta.style.height = 'auto';
-                    const lineH = parseFloat(getComputedStyle(ta).lineHeight) || (tb.fontSize * 1.4);
-                    const maxH = lineH * 5;
-                    ta.style.height = `${Math.min(ta.scrollHeight, maxH)}px`;
-                    ta.style.overflowY = ta.scrollHeight > maxH ? 'auto' : 'hidden';
                   }}
                   onKeyDown={e => {
                     if (e.key === 'Escape') {
                       e.preventDefault();
+                      const tbx = allTextboxes.find(t => t.id === editingTextboxId);
+                      if (tbx && editingTextboxContent.trim()) {
+                        onAnnotationUpdated({ ...tbx, content: editingTextboxContent, color: editingTextboxColor, fontSize: editingTextboxFontSize });
+                      }
                       setEditingTextboxId(null);
                       setShowEditColorPicker(false);
                     }
@@ -783,14 +775,16 @@ export const AnnotationLayer: React.FC<Props> = ({
                     border: `1px solid ${editingTextboxColor}`,
                     borderRadius: '4px',
                     color: editingTextboxColor,
-                    fontSize: `${tb.fontSize}px`,
+                    fontSize: `${editingTextboxFontSize}px`,
                     fontFamily: 'sans-serif',
                     padding: '4px 8px',
                     outline: 'none',
-                    minWidth: '150px',
-                    resize: 'horizontal',
-                    overflowY: 'hidden',
+                    minWidth: '60px',
+                    width: `${Math.max(60, Math.max(...editingTextboxContent.split('\n').map(l => l.length)) * editingTextboxFontSize * 0.62 + 28)}px`,
+                    height: `${Math.max(1, editingTextboxContent.split('\n').length) * editingTextboxFontSize * 1.4 + 12}px`,
                     lineHeight: '1.4',
+                    resize: 'none',
+                    overflow: 'hidden',
                   }}
                 />
                 {/* Compact toolbar: current color circle + delete icon */}
@@ -850,6 +844,43 @@ export const AnnotationLayer: React.FC<Props> = ({
                       <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
                     </svg>
                   </button>
+                  {/* Font size controls */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+                    <button
+                      type="button"
+                      onClick={() => setEditingTextboxFontSize(prev => Math.max(8, prev - 2))}
+                      style={{
+                        background: 'transparent', border: '1px solid #555', borderRadius: '4px',
+                        color: '#aaa', cursor: 'pointer', padding: '0 4px',
+                        fontSize: '14px', lineHeight: '20px', fontWeight: 'bold',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        width: 22, height: 22,
+                      }}
+                      title="Decrease font size"
+                    >
+                      −
+                    </button>
+                    <span style={{
+                      color: '#ccc', fontSize: '11px', fontWeight: 500,
+                      minWidth: '28px', textAlign: 'center', userSelect: 'none',
+                    }}>
+                      {editingTextboxFontSize}px
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setEditingTextboxFontSize(prev => Math.min(72, prev + 2))}
+                      style={{
+                        background: 'transparent', border: '1px solid #555', borderRadius: '4px',
+                        color: '#aaa', cursor: 'pointer', padding: '0 4px',
+                        fontSize: '14px', lineHeight: '20px', fontWeight: 'bold',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        width: 22, height: 22,
+                      }}
+                      title="Increase font size"
+                    >
+                      +
+                    </button>
+                  </div>
                 </div>
               </div>
             ) : (
@@ -859,7 +890,6 @@ export const AnnotationLayer: React.FC<Props> = ({
                   fontSize: `${tb.fontSize * propZoom}px`,
                   fontFamily: 'sans-serif',
                   whiteSpace: 'pre-wrap',
-                  maxWidth: `${cssWidth - tb.x * cssWidth - 24}px`,
                   lineHeight: 1.3,
                   textShadow: '0 0 2px rgba(0,0,0,0.5)',
                 }}
@@ -885,20 +915,21 @@ export const AnnotationLayer: React.FC<Props> = ({
         >
           <textarea
             autoFocus
-            rows={1}
             value={textboxEdit.content}
             onChange={e => {
               setTextboxEdit(prev => prev ? { ...prev, content: e.target.value } : prev);
-              const ta = e.target;
-              ta.style.height = 'auto';
-              const lineH = parseFloat(getComputedStyle(ta).lineHeight) || (propFontSize * 1.4);
-              const maxH = lineH * 5;
-              ta.style.height = `${Math.min(ta.scrollHeight, maxH)}px`;
-              ta.style.overflowY = ta.scrollHeight > maxH ? 'auto' : 'hidden';
             }}
             onKeyDown={e => {
               if (e.key === 'Escape') {
                 e.preventDefault();
+                if (textboxEdit.content.trim()) {
+                  const ann: TextboxAnnotation = {
+                    id: uuidv4(), file_id: fileId, page, type: 'textbox',
+                    x: textboxEdit.x, y: textboxEdit.y,
+                    content: textboxEdit.content, color: textColorRef.current, fontSize: fontSizeRef.current,
+                  };
+                  onAnnotationCreated(ann);
+                }
                 setTextboxEdit(null);
               }
             }}
@@ -925,10 +956,12 @@ export const AnnotationLayer: React.FC<Props> = ({
               fontFamily: 'sans-serif',
               padding: '4px 8px',
               outline: 'none',
-              minWidth: '150px',
-              resize: 'horizontal',
-              overflowY: 'hidden',
+              minWidth: '60px',
+              width: `${Math.max(60, Math.max(...(textboxEdit.content || ' ').split('\n').map(l => l.length)) * propFontSize * 0.62 + 28)}px`,
+              height: `${Math.max(1, (textboxEdit.content || ' ').split('\n').length) * propFontSize * 1.4 + 12}px`,
               lineHeight: '1.4',
+              resize: 'none',
+              overflow: 'hidden',
             }}
           />
         </div>
