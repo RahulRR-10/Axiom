@@ -30,10 +30,14 @@
   z-index: 2;
   color-scheme: only light;
 
-  /* Receive pointer events; only spans are selectable (not gaps) */
+  /* Receive pointer events; spans are selectable.
+     NOTE: selectstart is prevented by PDFViewer JS to block native drag-
+     selection.  user-select must be 'text' (not 'none') so that programmatic
+     Selection.addRange() can span across multiple text layers for cross-page
+     selection. */
   pointer-events: auto;
-  -webkit-user-select: none;
-  user-select: none;
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 /* Scale helpers (official formula) */

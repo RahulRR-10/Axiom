@@ -303,7 +303,7 @@ const PDFPage = React.memo(function PDFPage({
         if (!el) return null;
 
         const span = el.closest("span");
-        if (!span || !textLayerDiv.contains(span)) return null;
+        if (!span || !span.closest('.textLayer')) return null;
         if (span.getAttribute("role") === "img") return null;
         return span;
       };
@@ -331,7 +331,7 @@ const PDFPage = React.memo(function PDFPage({
         for (const rect of rects) {
           const maxInset = Math.max(0, rect.height / 2 - 1);
           const verticalInset = strict
-            ? Math.min(Math.max(rect.height * 0.32, 1.5), maxInset)
+            ? Math.min(Math.max(rect.height * 0.08, 0.5), maxInset)
             : Math.min(Math.max(rect.height * 0.02, 0), maxInset);
           const horizontalInset = strict
             ? Math.min(Math.max(rect.width * 0.005, 0), 0.5)
@@ -605,10 +605,10 @@ const PDFPage = React.memo(function PDFPage({
       const applySelectionAtPoint = (clientX: number, clientY: number) => {
         if (!dragSelecting || !anchorNode || !cachedSel) return;
 
-        // Skip sub-pixel jitter
+        // Skip sub-pixel jitter (very small threshold for responsiveness)
         const dx = clientX - lastPointerX;
         const dy = clientY - lastPointerY;
-        if (dx * dx + dy * dy < 1) return;
+        if (dx === 0 && dy === 0) return;
         lastPointerX = clientX;
         lastPointerY = clientY;
 
@@ -622,7 +622,14 @@ const PDFPage = React.memo(function PDFPage({
 
         const caretSpan = getSelectableSpan(endNode);
         if (!caretSpan) return;
-        if (!isPointInsideSpanBand(caretSpan, clientX, clientY, true)) return;
+        // Use strict band checking on the local page to prevent whitespace
+        // jumping; use loose checking on other pages to allow cross-page
+        // selection to work smoothly.
+        const anchorTL = anchorNode.nodeType === Node.TEXT_NODE 
+          ? anchorNode.parentElement?.closest('.textLayer') 
+          : (anchorNode as Element).closest('.textLayer');
+        const useStrict = caretSpan.closest('.textLayer') === anchorTL;
+        if (!isPointInsideSpanBand(caretSpan, clientX, clientY, useStrict)) return;
 
         const cmp = anchorNode.compareDocumentPosition(endNode);
         const forward =
@@ -860,6 +867,8 @@ export const PDFViewer: React.FC<Props> = ({
   const [visibleRange, setVisibleRange] = useState<[number, number]>([1, 3]);
   const [pdfLoadNonce, setPdfLoadNonce] = useState(0);
   const [renderNonce, setRenderNonce] = useState(0);
+  /** Scroll position to restore after a save-triggered reload */
+  const pendingRestoreScrollRef = useRef<number | null>(null);
 
   /* ── Toast state for "Note saved" notification ───────────────────────────── */
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -909,7 +918,10 @@ export const PDFViewer: React.FC<Props> = ({
     setPdf(null);
     setNumPages(0);
     setPageMeta(null);
-    setCurrentPage(1);
+    // Only reset currentPage when not restoring scroll after save
+    if (pendingRestoreScrollRef.current == null) {
+      setCurrentPage(1);
+    }
     visiblePages.current.clear();
 
     (async () => {
@@ -938,6 +950,17 @@ export const PDFViewer: React.FC<Props> = ({
         height: Math.floor(vp.height),
       });
       setLoading(false);
+
+      // Restore scroll position after a save-triggered reload
+      if (pendingRestoreScrollRef.current != null) {
+        const savedScroll = pendingRestoreScrollRef.current;
+        pendingRestoreScrollRef.current = null;
+        requestAnimationFrame(() => {
+          if (scrollRef.current) {
+            scrollRef.current.scrollTop = savedScroll;
+          }
+        });
+      }
     })().catch((err) => {
       console.error("[PDFViewer] load error", err);
       setError(String(err));
@@ -1246,6 +1269,10 @@ export const PDFViewer: React.FC<Props> = ({
       }
 
       // 5. Clear pending state and reload from DB
+      // Capture scroll position before reloading so we can restore it
+      if (scrollRef.current) {
+        pendingRestoreScrollRef.current = scrollRef.current.scrollTop;
+      }
       setPendingAnnotations([]);
       setDeletedAnnotationIds(new Set());
       loadAnnotations();

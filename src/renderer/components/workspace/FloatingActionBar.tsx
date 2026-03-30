@@ -37,60 +37,163 @@ type Props = {
 };
 
 /**
- * Build a highlight annotation from the current browser selection.
- * Returns null if the selection doesn't live inside a page wrapper.
+ * Resolve which page a text layer belongs to.
+ */
+function getPageNum(textLayer: HTMLElement): number {
+  const wrapper = textLayer.parentElement;
+  if (!wrapper?.parentElement) return 1;
+  const siblings = wrapper.parentElement.children;
+  for (let i = 0; i < siblings.length; i++) {
+    if (siblings[i] === wrapper) return i + 1;
+  }
+  return 1;
+}
+
+/**
+ * Build highlight annotation(s) from the current browser selection.
+ * Uses span-level bounding rects to avoid including non-text DOM elements.
+ * Returns one annotation per page so cross-page selections work.
  */
 function buildHighlightFromSelection(
   fileId: string,
   color: string,
-): { annotation: HighlightAnnotation; page: number } | null {
+): { annotation: HighlightAnnotation; page: number }[] | null {
   const sel = window.getSelection();
   if (!sel || sel.isCollapsed || sel.rangeCount === 0) return null;
 
   const text = sel.toString().trim();
   if (!text) return null;
 
-  const range    = sel.getRangeAt(0);
-  const ancestor = range.commonAncestorContainer;
-  const node     = ancestor.nodeType === Node.TEXT_NODE ? ancestor.parentElement : ancestor as HTMLElement;
-  if (!node) return null;
+  const range = sel.getRangeAt(0);
 
-  // Walk up to find the textLayer, then its parent page wrapper
-  const textLayer = node.closest('.textLayer');
-  if (!textLayer) return null;
-  const pageWrapper = textLayer.parentElement;
-  if (!pageWrapper) return null;
+  // Find all .textLayer elements that the selection touches.
+  // Start from the range's start/end containers and walk up to find text layers.
+  const getTextLayer = (node: Node): HTMLElement | null => {
+    const el = node.nodeType === Node.TEXT_NODE ? node.parentElement : (node as HTMLElement);
+    return el?.closest('.textLayer') as HTMLElement | null;
+  };
 
-  // Determine page number from sibling index
-  const allPages = pageWrapper.parentElement?.children;
-  let pageNum = 1;
-  if (allPages) {
-    for (let i = 0; i < allPages.length; i++) {
-      if (allPages[i] === pageWrapper) { pageNum = i + 1; break; }
+  const startTL = getTextLayer(range.startContainer);
+  const endTL = getTextLayer(range.endContainer);
+  if (!startTL && !endTL) return null;
+
+  // Collect the set of text layers involved
+  const textLayers: HTMLElement[] = [];
+  if (startTL) textLayers.push(startTL);
+  if (startTL && endTL && startTL !== endTL) {
+    // Add any intermediate text layers between start and end
+    const startWrapper = startTL.parentElement;
+    const endWrapper = endTL.parentElement;
+    const parent = startWrapper?.parentElement;
+    if (parent && startWrapper && endWrapper) {
+      let inRange = false;
+      for (let i = 0; i < parent.children.length; i++) {
+        const child = parent.children[i];
+        if (child === startWrapper) { inRange = true; continue; }
+        if (child === endWrapper) break;
+        if (inRange) {
+          const tl = child.querySelector('.textLayer') as HTMLElement | null;
+          if (tl) textLayers.push(tl);
+        }
+      }
+    }
+    textLayers.push(endTL);
+  } else if (!startTL && endTL) {
+    textLayers.push(endTL);
+  }
+
+  // For each text layer, find selected spans and collect their rects
+  const pageGroups = new Map<number, { wrapper: HTMLElement; rects: DOMRect[] }>();
+
+  for (const tl of textLayers) {
+    const wrapper = tl.parentElement;
+    if (!wrapper) continue;
+    const pageNum = getPageNum(tl);
+    const spans = tl.querySelectorAll('span:not([role="img"])');
+
+    for (const span of spans) {
+      // Check if this span is at least partially within the selection
+      if (!sel.containsNode(span, true)) continue;
+
+      // For the start/end spans, create a clipped sub-range
+      // For fully-contained spans, use the span's full bounding rect
+      let rects: DOMRectList | DOMRect[];
+
+      const spanContainsStart = span.contains(range.startContainer);
+      const spanContainsEnd = span.contains(range.endContainer);
+
+      if (spanContainsStart || spanContainsEnd) {
+        // Partially selected span — create a sub-range strictly on its TextNode
+        // to prevent `getClientRects()` from emitting duplicate overlapping rects.
+        const textNode = Array.from(span.childNodes).find(n => n.nodeType === Node.TEXT_NODE) as Text | undefined;
+        if (textNode) {
+          const sub = document.createRange();
+          
+          if (spanContainsStart && (range.startContainer === textNode || range.startContainer === span)) {
+            const offset = range.startContainer === textNode ? range.startOffset : (range.startOffset === 0 ? 0 : textNode.length);
+            sub.setStart(textNode, offset);
+          } else {
+            sub.setStart(textNode, 0);
+          }
+          
+          if (spanContainsEnd && (range.endContainer === textNode || range.endContainer === span)) {
+            const offset = range.endContainer === textNode ? range.endOffset : (range.endOffset === 0 ? 0 : textNode.length);
+            sub.setEnd(textNode, offset);
+          } else {
+            sub.setEnd(textNode, textNode.length);
+          }
+          
+          try {
+            rects = sub.getClientRects();
+          } catch {
+             rects = span.getClientRects(); // fallback if offsets are invalid
+          }
+        } else {
+          // Fallback if no text node is found
+          rects = span.getClientRects();
+        }
+      } else {
+        // Fully selected span — use its bounding rects directly
+        rects = span.getClientRects();
+      }
+
+      for (const r of rects) {
+        if (r.width > 0 && r.height > 0) {
+          if (!pageGroups.has(pageNum)) {
+            pageGroups.set(pageNum, { wrapper, rects: [] });
+          }
+          pageGroups.get(pageNum)!.rects.push(r);
+        }
+      }
     }
   }
 
-  const wrapRect = pageWrapper.getBoundingClientRect();
-  const wrapW    = wrapRect.width  || 1;
-  const wrapH    = wrapRect.height || 1;
+  if (pageGroups.size === 0) return null;
 
-  const rects = Array.from(range.getClientRects())
-    .filter(r => r.width > 0 && r.height > 0)
-    .map(r => ({
+  const results: { annotation: HighlightAnnotation; page: number }[] = [];
+
+  for (const [pageNum, group] of pageGroups) {
+    const wrapRect = group.wrapper.getBoundingClientRect();
+    const wrapW = wrapRect.width || 1;
+    const wrapH = wrapRect.height || 1;
+
+    const normalizedRects = group.rects.map(r => ({
       x: (r.left - wrapRect.left) / wrapW,
       y: (r.top  - wrapRect.top)  / wrapH,
       w: r.width  / wrapW,
       h: r.height / wrapH,
     }));
 
-  if (!rects.length) return null;
+    const annotation: HighlightAnnotation = {
+      id: uuidv4(), file_id: fileId, page: pageNum,
+      type: 'highlight', rects: normalizedRects, color,
+      text: pageGroups.size === 1 ? text : `[page ${pageNum}]`,
+    };
 
-  const annotation: HighlightAnnotation = {
-    id: uuidv4(), file_id: fileId, page: pageNum,
-    type: 'highlight', rects, color, text,
-  };
+    results.push({ annotation, page: pageNum });
+  }
 
-  return { annotation, page: pageNum };
+  return results.length > 0 ? results : null;
 }
 
 export const FloatingActionBar: React.FC<Props> = ({
@@ -141,9 +244,36 @@ export const FloatingActionBar: React.FC<Props> = ({
     const text = sel.toString().trim();
     if (!text) return null;
 
-    const range = sel.getRangeAt(0);
-    const rect  = range.getBoundingClientRect();
     const containerRect = container.getBoundingClientRect();
+
+    // Create a temporary range at the user's cursor (focus) to get
+    // an accurate rect. This completely avoids cross-page bounding box issues.
+    let rect: DOMRect;
+    try {
+      const focusRange = document.createRange();
+      if (sel.focusNode.nodeType === Node.TEXT_NODE) {
+        // If it's a text node, create range over the specific character or word
+        const offset = Math.max(0, sel.focusOffset - 1);
+        focusRange.setStart(sel.focusNode, offset);
+        focusRange.setEnd(sel.focusNode, sel.focusOffset);
+      } else {
+        focusRange.selectNodeContents(sel.focusNode);
+      }
+      rect = focusRange.getBoundingClientRect();
+    } catch {
+      // Fallback
+      rect = sel.getRangeAt(0).getBoundingClientRect();
+    }
+
+    // Default to range bottom right if temp range fails to yield meaningful rect
+    if (rect.width === 0 && rect.height === 0) {
+      const clientRects = sel.getRangeAt(0).getClientRects();
+      if (clientRects.length > 0) {
+        rect = clientRects[clientRects.length - 1];
+      } else {
+        rect = sel.getRangeAt(0).getBoundingClientRect();
+      }
+    }
 
     return {
       text,
@@ -167,7 +297,10 @@ export const FloatingActionBar: React.FC<Props> = ({
       if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
       const anchorEl = sel.anchorNode?.nodeType === Node.TEXT_NODE
         ? sel.anchorNode.parentElement : sel.anchorNode as Element | null;
-      if (!anchorEl?.closest('.textLayer')) return;
+      const focusEl = sel.focusNode?.nodeType === Node.TEXT_NODE
+        ? sel.focusNode.parentElement : sel.focusNode as Element | null;
+      // Accept if either end of the selection is inside a text layer
+      if (!anchorEl?.closest('.textLayer') && !focusEl?.closest('.textLayer')) return;
 
       const result = computePosition();
       if (!result) return;
@@ -240,10 +373,12 @@ export const FloatingActionBar: React.FC<Props> = ({
       return;
     }
 
-    const result = buildHighlightFromSelection(fileId, color);
-    if (!result) return;
+    const results = buildHighlightFromSelection(fileId, color);
+    if (!results || results.length === 0) return;
 
-    onAnnotationCreated(result.annotation);
+    for (const result of results) {
+      onAnnotationCreated(result.annotation);
+    }
     window.getSelection()?.removeAllRanges();
 
     setPos(null);
@@ -512,4 +647,3 @@ export const FloatingActionBar: React.FC<Props> = ({
     </div>
   );
 };
-
