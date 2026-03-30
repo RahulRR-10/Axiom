@@ -209,7 +209,12 @@ export const FloatingActionBar: React.FC<Props> = ({
   annotations,
   onAnnotationDeleted,
 }) => {
-  const [pos, setPos]                   = useState<Position | null>(null);
+  type PositionInfo = {
+    top: number;
+    left: number;
+    rects: { top: number; left: number; width: number; height: number }[];
+  };
+  const [pos, setPos]                   = useState<PositionInfo | null>(null);
   const [selectedText, setSelectedText] = useState('');
   const [hlOpen, setHlOpen]             = useState(false);
   const [barHighlightColor, setBarHighlightColor] = useState(highlightColor);
@@ -222,11 +227,10 @@ export const FloatingActionBar: React.FC<Props> = ({
   // Clear session default when vault changes
   syncSessionVault(vaultPath);
 
-  // Focus the textarea whenever the AI dropdown opens
+  // (Autofocus is intentionally disabled because focusing the textarea
+  // natively collapses/clears the text selection in the browser.)
   useEffect(() => {
-    if (aiDropdownOpen) {
-      setTimeout(() => textareaRef.current?.focus(), 0);
-    }
+    // If we wanted to focus, we'd do it here, but it clears the selection.
   }, [aiDropdownOpen]);
 
   useEffect(() => {
@@ -285,11 +289,24 @@ export const FloatingActionBar: React.FC<Props> = ({
     // Ensure it doesn't clip off the top scroll boundary either
     const clampedTop = Math.max(container.scrollTop + 10, rawTop);
 
+    // Also capture the raw selection rects to display a 'fake' native selection
+    // when the textarea takes focus (which otherwise clears the hardware selection)
+    const rawRects = Array.from(sel.getRangeAt(0).getClientRects())
+      .filter(r => r.width > 0 && r.height > 0 && r.height < 100); // filter out huge container rects
+    
+    const fakeRects = rawRects.map(r => ({
+      top: r.top - containerRect.top + container.scrollTop,
+      left: r.left - containerRect.left + container.scrollLeft,
+      width: r.width,
+      height: r.height,
+    }));
+
     return {
       text,
       pos: {
         top:  clampedTop,
         left: clampedLeft,
+        rects: fakeRects,
       },
     };
   }, [containerRef]);
@@ -444,12 +461,36 @@ export const FloatingActionBar: React.FC<Props> = ({
   if (!pos) return null;
 
   return (
-    <div
-      ref={barRef}
-      style={{
-        position:     'absolute',
-        top:          pos.top,
-        left:         pos.left,
+    <>
+      {/* ── Fake DOM Selection Overlay ── */}
+      {/* 
+        When the AI textarea is focused, the browser natively collapses the 
+        text selection. We render these distinct blue rectangles to visually 
+        preserve the user's selection while they are interacting with the bar.
+      */}
+      {aiDropdownOpen && pos.rects.map((r, i) => (
+        <div
+          key={i}
+          style={{
+            position: 'absolute',
+            top: r.top,
+            left: r.left,
+            width: r.width,
+            height: r.height,
+            background: 'rgba(56, 139, 253, 0.25)', // Native-looking selection blue
+            pointerEvents: 'none',
+            zIndex: 1, // just above the text
+          }}
+        />
+      ))}
+
+      {/* ── The Floating Bar ── */}
+      <div
+        ref={barRef}
+        style={{
+          position:     'absolute',
+          top:          pos.top,
+          left:         pos.left,
         transform:    'translateX(-50%)',
         background:   '#2d2d2d',
         border:       '1px solid #444',
@@ -535,6 +576,7 @@ export const FloatingActionBar: React.FC<Props> = ({
       <div className="relative flex items-center">
         <button
           type="button"
+          onMouseDown={(e) => e.preventDefault()}
           onClick={() => dispatchSendToAI()}
           className="flex items-center gap-1 px-2 py-1 text-xs text-[#d4d4d4] rounded-l hover:bg-[#3a3a3a] transition-colors"
         >
@@ -543,6 +585,7 @@ export const FloatingActionBar: React.FC<Props> = ({
         </button>
         <button
           type="button"
+          onMouseDown={(e) => e.preventDefault()}
           onClick={() => { setAiDropdownOpen(o => !o); setHlOpen(false); setNotePopoverOpen(false); }}
           className="px-1 py-1 text-xs text-[#8a8a8a] rounded-r hover:bg-[#3a3a3a] transition-colors"
           title="Add custom prompt"
@@ -655,5 +698,6 @@ export const FloatingActionBar: React.FC<Props> = ({
         )}
       </div>
     </div>
+    </>
   );
 };
