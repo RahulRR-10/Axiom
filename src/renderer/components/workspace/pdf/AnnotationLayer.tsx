@@ -147,6 +147,41 @@ export const AnnotationLayer: React.FC<Props> = ({
     return () => el.removeEventListener('mouseup', handleMouseUp);
   }, [wrapperRef, handleMouseUp]);
 
+  /* ── Double-click to select an existing highlight ────────────────────────── */
+  const allHighlightsRef = useRef<HighlightAnnotation[]>([]);
+
+  useEffect(() => {
+    if (activeTool !== 'none') return;
+    const el = wrapperRef.current;
+    if (!el) return;
+
+    const onDblClick = (e: MouseEvent) => {
+      const rect = el.getBoundingClientRect();
+      const relX = (e.clientX - rect.left) / (rect.width || 1);
+      const relY = (e.clientY - rect.top) / (rect.height || 1);
+
+      // Check all highlights to see if click falls inside any rect
+      for (const hl of allHighlightsRef.current) {
+        for (const r of hl.rects) {
+          if (relX >= r.x && relX <= r.x + r.w && relY >= r.y && relY <= r.y + r.h) {
+            e.stopPropagation();
+            e.preventDefault();
+            // Clear any text selection that may have happened from the dblclick
+            window.getSelection()?.removeAllRanges();
+            // Dismiss the FloatingActionBar if it appeared from the first click
+            window.dispatchEvent(new CustomEvent('highlightSelected'));
+            setSelectedHighlightId(hl.id);
+            setShowHlColorPicker(false);
+            return;
+          }
+        }
+      }
+    };
+
+    el.addEventListener('dblclick', onDblClick);
+    return () => el.removeEventListener('dblclick', onDblClick);
+  }, [wrapperRef, activeTool]);
+
   /* ══════════════════════════════════════════════════════════════════════════
      STICKY NOTE TOOL
   ══════════════════════════════════════════════════════════════════════════ */
@@ -320,6 +355,7 @@ export const AnnotationLayer: React.FC<Props> = ({
     ...annotations.filter((a): a is HighlightAnnotation => a.type === 'highlight'),
     ...newHighlights,
   ].filter((a, i, arr) => arr.findIndex(b => b.id === a.id) === i);
+  allHighlightsRef.current = allHighlights;
 
   const allStickies = annotations.filter(
     (a): a is StickyAnnotation => a.type === 'sticky',
@@ -431,18 +467,13 @@ export const AnnotationLayer: React.FC<Props> = ({
                   opacity: isSelected ? 0.55 : 0.4,
                   mixBlendMode: 'multiply',
                   borderRadius: 2,
-                  pointerEvents: activeTool === 'none' ? 'auto' : 'none',
+                  pointerEvents: isSelected ? 'auto' : 'none',
                   zIndex: isSelected ? 20 : 3,
-                  cursor: activeTool === 'none' ? 'pointer' : 'default',
+                  cursor: isSelected ? 'default' : 'default',
                   outline: isSelected ? '2px solid rgba(255,255,255,0.7)' : 'none',
                   outlineOffset: 1,
                 }}
-                onClick={(e) => {
-                  if (activeTool !== 'none') return;
-                  e.stopPropagation();
-                  setSelectedHighlightId(prev => prev === h.id ? null : h.id);
-                  setShowHlColorPicker(false);
-                }}
+                onClick={isSelected ? (e) => e.stopPropagation() : undefined}
               />
             ))}
 

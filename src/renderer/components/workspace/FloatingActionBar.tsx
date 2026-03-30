@@ -355,6 +355,19 @@ export const FloatingActionBar: React.FC<Props> = ({
     return () => document.removeEventListener('mousedown', onMouseDown);
   }, []);
 
+  // Hide bar when a highlight annotation is selected (double-click on highlight)
+  useEffect(() => {
+    const onHighlightSelected = () => {
+      setPos(null);
+      setHlOpen(false);
+      setNotePopoverOpen(false);
+      setAiDropdownOpen(false);
+      setCustomPrompt('');
+    };
+    window.addEventListener('highlightSelected', onHighlightSelected);
+    return () => window.removeEventListener('highlightSelected', onHighlightSelected);
+  }, []);
+
   // ── Instant highlight with given color ──────────────────────────────────
   const doHighlight = useCallback((color: string) => {
     const results = buildHighlightFromSelection(fileId, color);
