@@ -12,7 +12,7 @@ import { initAppUpdater } from './updater';
 import { initEmbedders, teardownEmbedders } from './workers/embedderManager';
 import { AI_CHANNELS } from '../shared/ipc/channels';
 import type { VaultInjectRequest, VaultInjectResponse } from '../shared/ipc/contracts';
-import { writeLog, logFile } from './logger';
+import { writeLog } from './logger';
 
 declare const MAIN_WINDOW_WEBPACK_ENTRY: string;
 declare const MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY: string;
@@ -21,7 +21,6 @@ declare const MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY: string;
 
 function logStep(step: string): void {
   const line = `[${new Date().toISOString()}] STEP: ${step}\n`;
-  try { fs.appendFileSync(logFile, line); } catch { /* ignore */ }
   console.log(line.trim());
 }
 
@@ -33,14 +32,14 @@ process.on('unhandledRejection', (reason) => {
 // Catch synchronous exceptions that escape all other handlers
 process.on('uncaughtException', (err) => {
   writeLog('uncaughtException', err);
-  dialog.showErrorBox('Axiom crashed', `${err.message}\n\nSee crash.log in:\n${logFile}`);
+  dialog.showErrorBox('Axiom crashed', err.message);
   app.exit(1);
 });
 
 // Catch renderer / GPU / utility process crashes
 app.on('render-process-gone', (_event, wc, details) => {
   try { writeLog('CRASH:renderer', `reason:${details.reason} exit:${details.exitCode} url:${wc.getURL()}`); } catch { /* ignore */ }
-  dialog.showErrorBox('Renderer crashed', `Reason: ${details.reason}\nExit code: ${details.exitCode}\n\nSee crash.log in:\n${logFile}`);
+  dialog.showErrorBox('Renderer crashed', `Reason: ${details.reason}\nExit code: ${details.exitCode}`);
 });
 
 app.on('child-process-gone', (_event, details) => {
