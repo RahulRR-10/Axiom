@@ -955,10 +955,26 @@ export const PDFViewer: React.FC<Props> = ({
       if (pendingRestoreScrollRef.current != null) {
         const savedScroll = pendingRestoreScrollRef.current;
         pendingRestoreScrollRef.current = null;
+        // Use double-rAF to ensure the DOM has fully laid out the page list
+        // before restoring scroll. A single rAF sometimes fires before layout
+        // is complete, causing the scroll to not stick.
         requestAnimationFrame(() => {
-          if (scrollRef.current) {
-            scrollRef.current.scrollTop = savedScroll;
-          }
+          requestAnimationFrame(() => {
+            if (scrollRef.current) {
+              scrollRef.current.scrollTop = savedScroll;
+              // Immediately recompute visible range so the virtualization
+              // doesn't flash the wrong pages before the scroll event fires.
+              const viewportH = scrollRef.current.clientHeight;
+              const pageH = Math.floor(vp.height) + PAGE_GAP;
+              if (pageH > 0 && viewportH > 0) {
+                const firstVisible = Math.max(1, Math.floor((savedScroll - BUFFER_PX) / pageH) + 1);
+                const lastVisible = Math.min(n, Math.ceil((savedScroll + viewportH + BUFFER_PX) / pageH));
+                setVisibleRange([firstVisible, lastVisible]);
+                const centerY = savedScroll + viewportH / 2;
+                setCurrentPage(Math.max(1, Math.min(n, Math.ceil(centerY / pageH))));
+              }
+            }
+          });
         });
       }
     })().catch((err) => {
