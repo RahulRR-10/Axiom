@@ -20,8 +20,7 @@ declare const MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY: string;
 /* ── Crash logging ─────────────────────────────────────────────────────────── */
 
 function logStep(step: string): void {
-  const line = `[${new Date().toISOString()}] STEP: ${step}\n`;
-  console.log(line.trim());
+  console.log(`[${new Date().toISOString()}] STEP: ${step}`);
 }
 
 // Catch unhandled promise rejections (most common silent crash cause)
@@ -38,7 +37,7 @@ process.on('uncaughtException', (err) => {
 
 // Catch renderer / GPU / utility process crashes
 app.on('render-process-gone', (_event, wc, details) => {
-  try { writeLog('CRASH:renderer', `reason:${details.reason} exit:${details.exitCode} url:${wc.getURL()}`); } catch { /* ignore */ }
+  writeLog('CRASH:renderer', `reason:${details.reason} exit:${details.exitCode} url:${wc.getURL()}`);
   dialog.showErrorBox('Renderer crashed', `Reason: ${details.reason}\nExit code: ${details.exitCode}`);
 });
 
@@ -402,5 +401,4 @@ app.on('activate', () => {
     createWindow();
   }
 });
-
 
