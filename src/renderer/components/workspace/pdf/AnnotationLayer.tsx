@@ -67,6 +67,25 @@ export const AnnotationLayer: React.FC<Props> = ({
   // Color picker popup for textbox editing
   const [showEditColorPicker, setShowEditColorPicker] = useState(false);
 
+  // ── Selected highlight state ────────────────────────────────────────────
+  const [selectedHighlightId, setSelectedHighlightId] = useState<string | null>(null);
+  const [showHlColorPicker, setShowHlColorPicker] = useState(false);
+
+  const highlightPickerColors = [
+    { label: 'Yellow', value: '#fde68a' },
+    { label: 'Green',  value: '#a7f3d0' },
+    { label: 'Pink',   value: '#fbb6ce' },
+    { label: 'Blue',   value: '#93c5fd' },
+  ];
+
+  // Dismiss highlight selection when tool changes away from 'none'
+  useEffect(() => {
+    if (activeTool !== 'none') {
+      setSelectedHighlightId(null);
+      setShowHlColorPicker(false);
+    }
+  }, [activeTool]);
+
   // Drag state for annotations
   const dragAnn = useRef<{ id: string; type: 'sticky' | 'textbox'; startX: number; startY: number; origX: number; origY: number } | null>(null);
 
@@ -111,28 +130,6 @@ export const AnnotationLayer: React.FC<Props> = ({
         h: r.height / wrapH,
       }));
     if (!rects.length) { sel.removeAllRanges(); return; }
-
-    // Clear mode: remove overlapping highlights instead of creating new ones
-    if (highlightColor === 'clear') {
-      const allHl = [
-        ...annotations.filter((a): a is HighlightAnnotation => a.type === 'highlight' && a.page === page),
-        ...newHighlights.filter(a => a.page === page),
-      ];
-      for (const hl of allHl) {
-        const overlaps = hl.rects.some(hr =>
-          rects.some(sr =>
-            sr.x < hr.x + hr.w && sr.x + sr.w > hr.x &&
-            sr.y < hr.y + hr.h && sr.y + sr.h > hr.y
-          )
-        );
-        if (overlaps) {
-          setNewHighlights(prev => prev.filter(a => a.id !== hl.id));
-          onAnnotationDeleted(hl.id);
-        }
-      }
-      sel.removeAllRanges();
-      return;
-    }
 
     const ann: HighlightAnnotation = {
       id: uuidv4(), file_id: fileId, page, type: 'highlight',
@@ -404,21 +401,145 @@ export const AnnotationLayer: React.FC<Props> = ({
         />
       )}
 
-      {/* ── Highlight rects ── */}
-      {allHighlights.map(h =>
-        h.rects.map((r, i) => (
-          <div
-            key={`hl-${h.id}-${i}`}
-            style={{
-              position: 'absolute',
-              top: r.y * cssHeight, left: r.x * cssWidth,
-              width: r.w * cssWidth, height: r.h * cssHeight,
-              background: h.color, opacity: 0.4, mixBlendMode: 'multiply',
-              borderRadius: 2, pointerEvents: 'none', zIndex: 3,
-            }}
-          />
-        )),
+      {/* ── Click-outside overlay for selected highlight ── */}
+      {selectedHighlightId && (
+        <div
+          style={{
+            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+            zIndex: 19, cursor: 'default',
+          }}
+          onClick={() => {
+            setSelectedHighlightId(null);
+            setShowHlColorPicker(false);
+          }}
+        />
       )}
+
+      {/* ── Highlight rects ── */}
+      {allHighlights.map(h => {
+        const isSelected = selectedHighlightId === h.id;
+        return (
+          <React.Fragment key={`hl-group-${h.id}`}>
+            {h.rects.map((r, i) => (
+              <div
+                key={`hl-${h.id}-${i}`}
+                style={{
+                  position: 'absolute',
+                  top: r.y * cssHeight, left: r.x * cssWidth,
+                  width: r.w * cssWidth, height: r.h * cssHeight,
+                  background: h.color,
+                  opacity: isSelected ? 0.55 : 0.4,
+                  mixBlendMode: 'multiply',
+                  borderRadius: 2,
+                  pointerEvents: activeTool === 'none' ? 'auto' : 'none',
+                  zIndex: isSelected ? 20 : 3,
+                  cursor: activeTool === 'none' ? 'pointer' : 'default',
+                  outline: isSelected ? '2px solid rgba(255,255,255,0.7)' : 'none',
+                  outlineOffset: 1,
+                }}
+                onClick={(e) => {
+                  if (activeTool !== 'none') return;
+                  e.stopPropagation();
+                  setSelectedHighlightId(prev => prev === h.id ? null : h.id);
+                  setShowHlColorPicker(false);
+                }}
+              />
+            ))}
+
+            {/* ── Inline toolbar for selected highlight ── */}
+            {isSelected && h.rects.length > 0 && (() => {
+              // Position toolbar below the last rect of the highlight
+              const lastRect = h.rects[h.rects.length - 1];
+              return (
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: (lastRect.y + lastRect.h) * cssHeight + 6,
+                    left: lastRect.x * cssWidth,
+                    display: 'flex', alignItems: 'center', gap: '8px',
+                    background: 'rgba(0,0,0,0.85)', borderRadius: '20px',
+                    padding: '5px 10px',
+                    width: 'fit-content',
+                    zIndex: 21,
+                    pointerEvents: 'all',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.5)',
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {/* Color circle (toggles picker) */}
+                  <div style={{ position: 'relative' }}>
+                    <button
+                      type="button"
+                      onClick={() => setShowHlColorPicker(prev => !prev)}
+                      style={{
+                        width: 22, height: 22, borderRadius: '50%',
+                        background: h.color,
+                        border: '2px solid #666', cursor: 'pointer', padding: 0,
+                      }}
+                      title="Change color"
+                    />
+                    {showHlColorPicker && (
+                      <div style={{
+                        position: 'absolute', bottom: '30px', left: '50%',
+                        transform: 'translateX(-50%)',
+                        display: 'flex', gap: '4px',
+                        background: 'rgba(0,0,0,0.95)', borderRadius: '14px',
+                        padding: '5px 8px', boxShadow: '0 2px 8px rgba(0,0,0,0.5)',
+                      }}>
+                        {highlightPickerColors.map(c => (
+                          <button
+                            key={c.value}
+                            type="button"
+                            onClick={() => {
+                              const updated: HighlightAnnotation = { ...h, color: c.value };
+                              // Update in local new-highlights state
+                              setNewHighlights(prev => {
+                                const idx = prev.findIndex(a => a.id === h.id);
+                                if (idx < 0) return prev;
+                                const next = [...prev];
+                                next[idx] = updated;
+                                return next;
+                              });
+                              onAnnotationUpdated(updated);
+                              setShowHlColorPicker(false);
+                            }}
+                            style={{
+                              width: 18, height: 18, borderRadius: '50%',
+                              background: c.value,
+                              border: h.color === c.value ? '2px solid #fff' : '1px solid #555',
+                              cursor: 'pointer', padding: 0, flexShrink: 0,
+                            }}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  {/* Delete icon */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNewHighlights(prev => prev.filter(a => a.id !== h.id));
+                      onAnnotationDeleted(h.id);
+                      setSelectedHighlightId(null);
+                      setShowHlColorPicker(false);
+                    }}
+                    style={{
+                      background: 'transparent', border: 'none', cursor: 'pointer', padding: '2px',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}
+                    title="Delete"
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#aaa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="3 6 5 6 21 6"/>
+                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                    </svg>
+                  </button>
+                </div>
+              );
+            })()}
+          </React.Fragment>
+        );
+      })}
 
       {/* ── Draw strokes (SVG) ── */}
       {(allDrawings.length > 0 || drawing) && (

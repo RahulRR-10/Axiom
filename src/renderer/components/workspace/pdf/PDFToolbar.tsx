@@ -24,7 +24,6 @@ export const HIGHLIGHT_COLORS = [
   { label: 'Green',  value: '#a7f3d0' },
   { label: 'Pink',   value: '#fbb6ce' },
   { label: 'Blue',   value: '#93c5fd' },
-  { label: 'Clear',  value: 'clear'   },
 ] as const;
 
 export const TEXT_COLORS = [
@@ -145,9 +144,7 @@ export const PDFToolbar: React.FC<Props> = ({
               title="Highlight color"
             >
               <span
-                style={{ background: highlightColor === 'clear'
-                  ? 'repeating-conic-gradient(#555 0% 25%, #333 0% 50%) 50% / 6px 6px'
-                  : highlightColor }}
+                style={{ background: highlightColor }}
                 className="inline-block w-3 h-3 rounded-sm border border-[#444]"
               />
               <span className="text-[#6e6e6e] text-xs ml-0.5">▾</span>
@@ -169,9 +166,7 @@ export const PDFToolbar: React.FC<Props> = ({
                   type="button"
                   onClick={() => { onColorChange(c.value); setColorOpen(false); }}
                   title={c.label}
-                  style={c.value === 'clear' ? {
-                    background: 'repeating-conic-gradient(#555 0% 25%, #333 0% 50%) 50% / 8px 8px',
-                  } : { background: c.value }}
+                  style={{ background: c.value }}
                   className={`w-7 h-7 rounded border-2 transition-colors ${
                     highlightColor === c.value ? 'border-white' : 'border-transparent'
                   }`}
