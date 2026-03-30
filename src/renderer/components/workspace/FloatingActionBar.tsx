@@ -275,11 +275,21 @@ export const FloatingActionBar: React.FC<Props> = ({
       }
     }
 
+    const rawLeft = rect.left - containerRect.left + container.scrollLeft + rect.width / 2;
+    const rawTop  = rect.top - containerRect.top + container.scrollTop - 40;
+
+    // The floating bar is roughly 380px wide depending on state. With translateX(-50%), 
+    // it requires ~190px clearance on each side to avoid being clipped by `overflow: auto`.
+    const clampedLeft = Math.max(container.scrollLeft + 190, Math.min(container.scrollLeft + container.clientWidth - 190, rawLeft));
+
+    // Ensure it doesn't clip off the top scroll boundary either
+    const clampedTop = Math.max(container.scrollTop + 10, rawTop);
+
     return {
       text,
       pos: {
-        top:  rect.top  - containerRect.top  + container.scrollTop  - 40,
-        left: rect.left - containerRect.left + container.scrollLeft + rect.width / 2,
+        top:  clampedTop,
+        left: clampedLeft,
       },
     };
   }, [containerRef]);
