@@ -1037,6 +1037,26 @@ export const PDFViewer: React.FC<Props> = ({
     }
   }, [isActive, pageMeta, loading, zoom, numPages]);
 
+  /* ── Guard against DOM-reorder scroll resets (e.g. tab drag) ──────────────
+     When React reorders sibling components (same key, different position in
+     the children array), the browser detaches and reattaches the DOM node,
+     resetting scrollTop to 0.  This runs synchronously before paint so we
+     can restore the saved position before the user sees a flash.  We skip
+     the fix during tab activation (handled above) and initial load.          */
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el || !isActive || loading || !pageMeta) return;
+    // If scrollTop is now 0 but we had a saved position > 0, the browser
+    // must have reset it due to DOM reorder.
+    if (
+      el.scrollTop === 0 &&
+      savedScrollTopRef.current != null &&
+      savedScrollTopRef.current > 0
+    ) {
+      el.scrollTop = savedScrollTopRef.current;
+    }
+  });
+
   /* ── Scroll to initialPage after load ───────────────────────────────────── */
   useEffect(() => {
     if (!initialPage || !pageMeta || !scrollRef.current || loading) return;

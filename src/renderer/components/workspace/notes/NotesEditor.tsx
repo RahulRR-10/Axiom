@@ -270,6 +270,7 @@ function imagePreviewPlugin(fileDir: string) {
 
 export const NotesEditor: React.FC<NotesEditorProps> = ({ filePath, noteId, vaultPath }) => {
     const editorRef = useRef<HTMLDivElement>(null);
+    const editorAreaRef = useRef<HTMLDivElement>(null);
     const readViewRef = useRef<HTMLDivElement>(null);
     const viewRef = useRef<EditorView | null>(null);
     const [mode, setMode] = useState<ViewMode>('write');
@@ -281,6 +282,8 @@ export const NotesEditor: React.FC<NotesEditorProps> = ({ filePath, noteId, vaul
     const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const contentRef = useRef(content);
     const lastLoadedAtRef = useRef<number>(Math.floor(Date.now() / 1000));
+    /** Saved scroll fraction (0..1) to restore after mode switch */
+    const savedScrollFractionRef = useRef<number | null>(null);
 
     const fileDir = useMemo(() => getFileDir(filePath), [filePath]);
     const noteName = useMemo(() => getNoteName(filePath), [filePath]);
@@ -585,17 +588,55 @@ export const NotesEditor: React.FC<NotesEditorProps> = ({ filePath, noteId, vaul
         return cleanup;
     }, [noteId, vaultPath]);
 
+    // ── Helper: capture scroll position (raw pixels) before mode switch ─────
+    const saveScrollPosition = useCallback(() => {
+        if (mode === 'write') {
+            const scroller = viewRef.current?.scrollDOM;
+            if (scroller) {
+                savedScrollFractionRef.current = scroller.scrollTop;
+            }
+        } else {
+            const el = editorAreaRef.current;
+            if (el) {
+                savedScrollFractionRef.current = el.scrollTop;
+            }
+        }
+    }, [mode]);
+
+    // ── Restore scroll position after mode switch ─────────────────────────
+    useEffect(() => {
+        if (savedScrollFractionRef.current == null) return;
+        const savedTop = savedScrollFractionRef.current;
+        savedScrollFractionRef.current = null;
+
+        // Use rAF to wait for the new view to render and lay out
+        requestAnimationFrame(() => {
+            if (mode === 'write') {
+                const scroller = viewRef.current?.scrollDOM;
+                if (scroller) {
+                    scroller.scrollTop = savedTop;
+                }
+            } else {
+                const el = editorAreaRef.current;
+                if (el) {
+                    el.scrollTop = savedTop;
+                }
+            }
+        });
+    }, [mode]);
+
     // ── Keyboard shortcut: Ctrl+E toggles modes ────────────────────────────
     useEffect(() => {
         const onKeyDown = (e: KeyboardEvent) => {
             if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'e') {
                 e.preventDefault();
+                saveScrollPosition();
                 setMode((prev) => prev === 'write' ? 'read' : 'write');
             }
         };
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
-    }, []);
+    }, [saveScrollPosition]);
 
     // ── Toolbar action handler ─────────────────────────────────────────────
     const handleToolbarAction = useCallback((action: ToolbarAction) => {
@@ -821,14 +862,14 @@ li { margin: 0.2em 0 !important; color: #1a1a1a !important; }
                         <button
                             type="button"
                             className={`notes-mode-btn ${mode === 'write' ? 'active' : ''}`}
-                            onClick={() => setMode('write')}
+                            onClick={() => { saveScrollPosition(); setMode('write'); }}
                         >
                             Write
                         </button>
                         <button
                             type="button"
                             className={`notes-mode-btn ${mode === 'read' ? 'active' : ''}`}
-                            onClick={() => setMode('read')}
+                            onClick={() => { saveScrollPosition(); setMode('read'); }}
                         >
                             Read
                         </button>
@@ -847,7 +888,7 @@ li { margin: 0.2em 0 !important; color: #1a1a1a !important; }
             </div>
 
             {/* ── Editor / Read view ── */}
-            <div className={`notes-editor-area${mode === 'read' ? ' read-mode' : ''}`}>
+            <div ref={editorAreaRef} className={`notes-editor-area${mode === 'read' ? ' read-mode' : ''}`}>
                 {mode === 'read' ? (
                     <div className="notes-read-view" ref={readViewRef}>
                         <ReactMarkdown
