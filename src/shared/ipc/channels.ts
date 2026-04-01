@@ -58,6 +58,11 @@ export const AI_CHANNELS = {
   REGISTER_WEBVIEW: 'ai:register-webview',
 } as const;
 
+export const SCREENSHOT_CHANNELS = {
+  TRIGGER: 'screenshot:trigger',        // renderer → main: ask to capture
+  CAPTURED: 'screenshot:captured',       // main → renderer: push data URL
+} as const;
+
 export const UPDATER_CHANNELS = {
   GET_STATE: 'updater:get-state',
   STATE_CHANGED: 'updater:state-changed',

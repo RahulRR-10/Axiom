@@ -87,6 +87,10 @@ declare global {
       getAppUpdateState: () => Promise<AppUpdateState>;
       onAppUpdateStateChange: (callback: (state: AppUpdateState) => void) => () => void;
       downloadLatestRelease: () => Promise<void>;
+
+      // ── Screenshot ──────────────────────────────────────────────────────
+      triggerScreenshot: () => void;
+      onScreenshotCaptured: (callback: (dataUrl: string) => void) => () => void;
     };
   }
 }

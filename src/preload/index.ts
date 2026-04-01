@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
-import { VAULT_CHANNELS, WINDOW_CHANNELS, SEARCH_CHANNELS, ANNOTATION_CHANNELS, NOTES_CHANNELS, AI_CHANNELS, UPDATER_CHANNELS } from '../shared/ipc/channels';
+import { VAULT_CHANNELS, WINDOW_CHANNELS, SEARCH_CHANNELS, ANNOTATION_CHANNELS, NOTES_CHANNELS, AI_CHANNELS, SCREENSHOT_CHANNELS, UPDATER_CHANNELS } from '../shared/ipc/channels';
 import type { FileNode, IndexStatus, SearchResult, Annotation, NoteSummary, NoteDetail, AppUpdateState } from '../shared/types';
 import type { VaultIndexProgressPayload } from '../shared/ipc/contracts';
 
@@ -259,6 +259,18 @@ const electronAPI = {
 
   downloadLatestRelease: (): Promise<void> =>
     ipcRenderer.invoke(UPDATER_CHANNELS.DOWNLOAD_LATEST),
+
+  // ── Screenshot ─────────────────────────────────────────────────────────
+  triggerScreenshot: (): void =>
+    ipcRenderer.send(SCREENSHOT_CHANNELS.TRIGGER),
+
+  onScreenshotCaptured: (
+    callback: (dataUrl: string) => void,
+  ): (() => void) => {
+    const listener = (_: unknown, dataUrl: string): void => callback(dataUrl);
+    ipcRenderer.on(SCREENSHOT_CHANNELS.CAPTURED, listener);
+    return () => ipcRenderer.removeListener(SCREENSHOT_CHANNELS.CAPTURED, listener);
+  },
 };
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI);

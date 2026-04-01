@@ -5,6 +5,7 @@ import { AppLayout } from './components/layout/AppLayout';
 import { PDFViewer } from './components/workspace/pdf/PDFViewer';
 import { NotesEditor } from './components/workspace/notes/NotesEditor';
 import { WindowControlsToolbar } from './components/layout/WindowControlsToolbar';
+import { ScreenshotOverlay } from './components/screenshot/ScreenshotOverlay';
 import { bytesToDataUri } from './utils/binaryUtils';
 
 /**
@@ -209,7 +210,17 @@ const SingleFileWindow: React.FC<{ filePath: string; fileType: string; vaultPath
 
 export const App: React.FC = () => {
   if (singleFilePath) {
-    return <SingleFileWindow filePath={singleFilePath} fileType={singleFileType} vaultPath={singleVaultPath} />;
+    return (
+      <>
+        <SingleFileWindow filePath={singleFilePath} fileType={singleFileType} vaultPath={singleVaultPath} />
+        <ScreenshotOverlay />
+      </>
+    );
   }
-  return <AppLayout />;
+  return (
+    <>
+      <AppLayout />
+      <ScreenshotOverlay />
+    </>
+  );
 };

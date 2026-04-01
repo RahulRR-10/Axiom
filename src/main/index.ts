@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, shell, webContents } from 'electron';
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, shell, webContents } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -10,7 +10,7 @@ import { setupAISessions, writeWebviewPreload } from './ai/spoofing';
 import { injectPrompt } from './ai/vaultInject';
 import { initAppUpdater } from './updater';
 import { initEmbedders, teardownEmbedders } from './workers/embedderManager';
-import { AI_CHANNELS } from '../shared/ipc/channels';
+import { AI_CHANNELS, SCREENSHOT_CHANNELS } from '../shared/ipc/channels';
 import type { VaultInjectRequest, VaultInjectResponse } from '../shared/ipc/contracts';
 import { writeLog } from './logger';
 
@@ -381,6 +381,25 @@ app.whenReady().then(() => {
     try { writeLog('embedder:init', `Failed: ${err}`); } catch { /* ignore */ }
   });
 
+  // ── Screenshot capture ──────────────────────────────────────────────────────
+  const captureAndSend = async (): Promise<void> => {
+    const win = getMainWindow();
+    if (!win) return;
+    try {
+      const image = await win.webContents.capturePage();
+      const dataUrl = image.toDataURL();
+      win.webContents.send(SCREENSHOT_CHANNELS.CAPTURED, dataUrl);
+    } catch (err) {
+      try { writeLog('screenshot:error', String(err)); } catch { /* ignore */ }
+    }
+  };
+
+  // Renderer can trigger it via IPC too
+  ipcMain.on(SCREENSHOT_CHANNELS.TRIGGER, () => { void captureAndSend(); });
+
+  // Register Ctrl+Shift+S global shortcut
+  globalShortcut.register('Ctrl+Shift+S', () => { void captureAndSend(); });
+
   logStep('startup complete');
 }).catch((err) => {
   writeLog('app.whenReady error', err);
@@ -388,6 +407,7 @@ app.whenReady().then(() => {
 
 app.on('before-quit', () => {
   try { writeLog('APP:quit', 'before-quit fired'); } catch { /* ignore */ }
+  globalShortcut.unregisterAll();
   teardownEmbedders();
 });
 
