@@ -34,18 +34,38 @@ const ImageViewer: React.FC<{ filePath: string; name: string }> = ({ filePath, n
       .catch(() => setError(true));
   }, [filePath]);
 
-  // Touchpad pinch-to-zoom — exact same mechanism as PDFViewer
+  // Touchpad pinch-to-zoom — smooth multiplicative zooming
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
+    let pendingDelta = 0;
+    let rafId: number | null = null;
+
+    const applyZoom = () => {
+      rafId = null;
+      if (pendingDelta === 0) return;
+      const delta = pendingDelta;
+      pendingDelta = 0;
+      setZoom(prev => {
+        const factor = Math.pow(1.01, -delta);
+        return Math.min(4, Math.max(0.25, prev * factor));
+      });
+    };
+
     const handler = (e: WheelEvent) => {
       if (!e.ctrlKey) return;
       e.preventDefault();
-      const delta = -e.deltaY * 0.01;
-      setZoom(prev => Math.min(4, Math.max(0.25, prev + delta)));
+      const clamped = Math.max(-15, Math.min(15, e.deltaY));
+      pendingDelta += clamped;
+      if (rafId === null) {
+        rafId = requestAnimationFrame(applyZoom);
+      }
     };
     el.addEventListener('wheel', handler, { passive: false });
-    return () => el.removeEventListener('wheel', handler);
+    return () => {
+      el.removeEventListener('wheel', handler);
+      if (rafId !== null) cancelAnimationFrame(rafId);
+    };
   }, [src]);
 
   // Grab-to-pan — left-click drag or middle-click drag scrolls in all directions

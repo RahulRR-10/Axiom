@@ -1733,7 +1733,12 @@ export const PDFViewer: React.FC<Props> = ({
       if (pendingDelta === 0) return;
       const delta = pendingDelta;
       pendingDelta = 0;
-      setZoom((prev) => Math.min(4, Math.max(0.25, prev + delta)));
+      // Multiplicative zoom: each unit of delta scales by ~1%
+      // This gives smooth, proportional zooming at any zoom level
+      setZoom((prev) => {
+        const factor = Math.pow(1.01, -delta);
+        return Math.min(4, Math.max(0.25, prev * factor));
+      });
     };
 
     const handler = (e: WheelEvent) => {
@@ -1741,7 +1746,9 @@ export const PDFViewer: React.FC<Props> = ({
       if (!e.ctrlKey) return;
       e.preventDefault();
       e.stopPropagation();
-      pendingDelta += -e.deltaY * 0.01;
+      // Clamp per-event delta to avoid huge jumps from discrete mouse wheels
+      const clamped = Math.max(-15, Math.min(15, e.deltaY));
+      pendingDelta += clamped;
       if (rafId === null) {
         rafId = requestAnimationFrame(applyZoom);
       }
