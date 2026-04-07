@@ -765,8 +765,8 @@ ${katexCSS}
 @page { size: A4; margin: 2cm; }
 html, body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif !important;
-  font-size: 15px !important;
-  line-height: 1.7 !important;
+  font-size: 14px !important;
+  line-height: 1.45 !important;
   color: #1a1a1a !important;
   background: #ffffff !important;
   max-width: 760px;
@@ -776,26 +776,26 @@ html, body {
   overflow: visible !important;
 }
 * { box-sizing: border-box; }
-h1,h2,h3,h4,h5,h6 { margin-top: 1.4em !important; margin-bottom: 0.5em !important; font-weight: 600 !important; color: #111111 !important; }
-h1 { font-size: 2em !important; border-bottom: 1px solid #ddd; padding-bottom: 0.3em; }
-h2 { font-size: 1.5em !important; border-bottom: 1px solid #eee; padding-bottom: 0.2em; }
-h3 { font-size: 1.25em !important; }
+h1,h2,h3,h4,h5,h6 { margin-top: 1.2em !important; margin-bottom: 0.4em !important; font-weight: 600 !important; color: #111111 !important; }
+h1 { font-size: 1.8em !important; border-bottom: 1px solid #ddd; padding-bottom: 0.25em; }
+h2 { font-size: 1.4em !important; border-bottom: 1px solid #eee; padding-bottom: 0.2em; }
+h3 { font-size: 1.15em !important; }
 h4,h5,h6 { font-size: 1em !important; }
-p { margin: 0.8em 0 !important; color: #1a1a1a !important; }
+p { margin: 0.4em 0 !important; color: #1a1a1a !important; }
 a { color: #0366d6 !important; }
-code { background: #f0f0f0 !important; padding: 0.15em 0.35em !important; border-radius: 3px; font-size: 0.88em !important; color: #1a1a1a !important; }
-pre { background: #f6f8fa !important; border: 1px solid #ddd !important; border-radius: 6px; padding: 1em !important; overflow-x: auto; page-break-inside: avoid; }
+code { background: #f0f0f0 !important; padding: 0.12em 0.3em !important; border-radius: 3px; font-size: 0.88em !important; color: #1a1a1a !important; }
+pre { background: #f6f8fa !important; border: 1px solid #ddd !important; border-radius: 6px; padding: 0.8em !important; overflow-x: auto; page-break-inside: avoid; }
 pre code { background: none !important; padding: 0 !important; font-size: 0.85em !important; }
 blockquote { border-left: 4px solid #dfe2e5 !important; padding-left: 1em !important; margin-left: 0 !important; color: #6a737d !important; }
-table { border-collapse: collapse !important; width: 100% !important; margin: 1em 0 !important; page-break-inside: avoid; }
-th, td { border: 1px solid #dfe2e5 !important; padding: 0.5em 0.75em !important; color: #1a1a1a !important; }
+table { border-collapse: collapse !important; width: 100% !important; margin: 0.6em 0 !important; page-break-inside: avoid; }
+th, td { border: 1px solid #dfe2e5 !important; padding: 0.4em 0.65em !important; color: #1a1a1a !important; }
 th { background: #f6f8fa !important; font-weight: 600 !important; }
 tr:nth-child(even) td { background: #fafafa !important; }
-img { max-width: 100% !important; border-radius: 6px; margin: 0.5em 0; }
+img { max-width: 100% !important; border-radius: 6px; margin: 0.4em 0; }
 input[type="checkbox"] { margin-right: 0.4em; }
-hr { border: none !important; border-top: 1px solid #ddd !important; margin: 1.5em 0 !important; }
-ul, ol { padding-left: 1.5em !important; margin: 0.5em 0 !important; }
-li { margin: 0.2em 0 !important; color: #1a1a1a !important; }
+hr { border: none !important; border-top: 1px solid #ddd !important; margin: 1em 0 !important; }
+ul, ol { padding-left: 1.5em !important; margin: 0.3em 0 !important; }
+li { margin: 0.15em 0 !important; color: #1a1a1a !important; }
 .task-list-item { list-style: none !important; margin-left: -1.5em !important; }
 </style>
 </head>

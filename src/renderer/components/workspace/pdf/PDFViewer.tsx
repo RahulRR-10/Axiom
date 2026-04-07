@@ -183,7 +183,10 @@ const PDFPage = React.memo(function PDFPage({
         return;
       }
 
-      const dpr = window.devicePixelRatio || 1;
+      const rawDpr = window.devicePixelRatio || 1;
+      // Cap DPR to avoid enormous canvas sizes on high-DPI displays,
+      // which cause image-heavy PDFs to render very slowly.
+      const dpr = Math.min(rawDpr, 2);
       const cssViewport = page.getViewport({ scale });
       const canvasViewport = page.getViewport({ scale: scale * dpr });
 
@@ -751,7 +754,7 @@ const PDFPage = React.memo(function PDFPage({
               : activeTool === "eraser"
                 ? "crosshair"
                 : activeTool === "highlight"
-                  ? "text"
+                  ? "crosshair"
                   : activeTool === "textbox"
                     ? "crosshair"
                     : "default",

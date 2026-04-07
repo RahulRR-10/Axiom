@@ -98,48 +98,73 @@ export const AnnotationLayer: React.FC<Props> = ({
 
   // ── Draw state ──────────────────────────────────────────────────────────
   const [drawing, setDrawing]             = useState(false);
-  const [drawPoints, setDrawPoints]       = useState<Array<{ x: number; y: number }>>([]);
+  const [drawPoints, setDrawPoints]       = useState<Array<{ x: number; y: number }>>([]); 
   const drawRef                           = useRef(false);
+
+  // ── Freehand-highlight drag state (for non-text areas) ──────────────────
+  const [hlDrawing, setHlDrawing]         = useState(false);
+  const hlDrawRef                         = useRef(false);
+  const [hlDrawPoints, setHlDrawPoints]   = useState<Array<{ x: number; y: number }>>([]);
 
   /* ══════════════════════════════════════════════════════════════════════════
      HIGHLIGHT TOOL
   ══════════════════════════════════════════════════════════════════════════ */
   const handleMouseUp = useCallback(() => {
     if (activeTool !== 'highlight') return;
+
+    // First try text-based highlight
     const sel = window.getSelection();
-    if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
-    const text = sel.toString().trim();
-    if (!text || !wrapperRef.current) return;
+    if (sel && !sel.isCollapsed && sel.rangeCount > 0) {
+      const text = sel.toString().trim();
+      if (text && wrapperRef.current) {
+        const wrapRect = wrapperRef.current.getBoundingClientRect();
+        const range    = sel.getRangeAt(0);
+        const ancestor = range.commonAncestorContainer;
+        const within   = wrapperRef.current === ancestor
+          || wrapperRef.current.contains(
+            ancestor.nodeType === Node.TEXT_NODE ? ancestor.parentNode as Node : ancestor,
+          );
+        if (within) {
+          const wrapW = wrapRect.width || 1;
+          const wrapH = wrapRect.height || 1;
+          const rects = Array.from(range.getClientRects())
+            .filter(r => r.width > 0 && r.height > 0)
+            .map(r => ({
+              x: (r.left - wrapRect.left) / wrapW,
+              y: (r.top  - wrapRect.top)  / wrapH,
+              w: r.width  / wrapW,
+              h: r.height / wrapH,
+            }));
+          if (rects.length) {
+            const ann: HighlightAnnotation = {
+              id: uuidv4(), file_id: fileId, page, type: 'highlight',
+              rects, color: highlightColor, text,
+            };
+            setNewHighlights(prev => [...prev, ann]);
+            onAnnotationCreated(ann);
+            sel.removeAllRanges();
+            // Clear freehand state
+            setHlDrawing(false); hlDrawRef.current = false;
+            setHlDrawPoints([]);
+            return;
+          }
+        }
+      }
+    }
 
-    const wrapRect = wrapperRef.current.getBoundingClientRect();
-    const range    = sel.getRangeAt(0);
-    const ancestor = range.commonAncestorContainer;
-    const within   = wrapperRef.current === ancestor
-      || wrapperRef.current.contains(
-        ancestor.nodeType === Node.TEXT_NODE ? ancestor.parentNode as Node : ancestor,
-      );
-    if (!within) return;
-
-    const wrapW = wrapRect.width || 1;
-    const wrapH = wrapRect.height || 1;
-    const rects = Array.from(range.getClientRects())
-      .filter(r => r.width > 0 && r.height > 0)
-      .map(r => ({
-        x: (r.left - wrapRect.left) / wrapW,
-        y: (r.top  - wrapRect.top)  / wrapH,
-        w: r.width  / wrapW,
-        h: r.height / wrapH,
-      }));
-    if (!rects.length) { sel.removeAllRanges(); return; }
-
-    const ann: HighlightAnnotation = {
-      id: uuidv4(), file_id: fileId, page, type: 'highlight',
-      rects, color: highlightColor, text,
-    };
-    setNewHighlights(prev => [...prev, ann]);
-    onAnnotationCreated(ann);
-    sel.removeAllRanges();
-  }, [activeTool, highlightColor, fileId, page, vaultPath, wrapperRef, onAnnotationCreated, annotations, newHighlights, onAnnotationDeleted]);
+    // Fallback: freehand highlight (for non-text / image areas)
+    if (hlDrawRef.current && hlDrawPoints.length >= 2) {
+      const ann: DrawAnnotation = {
+        id: uuidv4(), file_id: fileId, page, type: 'draw',
+        points: hlDrawPoints, color: highlightColor, strokeWidth: 12,
+      };
+      setNewDrawings(d => [...d, ann]);
+      onAnnotationCreated(ann);
+    }
+    setHlDrawing(false); hlDrawRef.current = false;
+    setHlDrawPoints([]);
+    sel?.removeAllRanges();
+  }, [activeTool, highlightColor, fileId, page, vaultPath, wrapperRef, onAnnotationCreated, annotations, newHighlights, onAnnotationDeleted, hlDrawPoints]);
 
   useEffect(() => {
     const el = wrapperRef.current;
@@ -147,6 +172,48 @@ export const AnnotationLayer: React.FC<Props> = ({
     el.addEventListener('mouseup', handleMouseUp);
     return () => el.removeEventListener('mouseup', handleMouseUp);
   }, [wrapperRef, handleMouseUp]);
+
+  // ── Freehand-highlight via wrapper events (for non-text areas) ──────────
+  useEffect(() => {
+    if (activeTool !== 'highlight') return;
+    const el = wrapperRef.current;
+    if (!el) return;
+
+    const onDown = (e: MouseEvent) => {
+      // If the click target is an actual text span, let text selection happen.
+      // The textLayer div covers the full page, so we check for a span inside it.
+      const target = e.target as HTMLElement;
+      const inTextLayer = target.closest('.textLayer') || target.closest('[class*="textLayer"]');
+      const isTextSpan = inTextLayer && target.tagName === 'SPAN';
+      if (isTextSpan) return;
+
+      e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const pt = {
+        x: (e.clientX - rect.left) / (rect.width || 1),
+        y: (e.clientY - rect.top) / (rect.height || 1),
+      };
+      setHlDrawPoints([pt]);
+      setHlDrawing(true);
+      hlDrawRef.current = true;
+    };
+
+    const onMove = (e: MouseEvent) => {
+      if (!hlDrawRef.current) return;
+      const rect = el.getBoundingClientRect();
+      setHlDrawPoints(prev => [...prev, {
+        x: (e.clientX - rect.left) / (rect.width || 1),
+        y: (e.clientY - rect.top) / (rect.height || 1),
+      }]);
+    };
+
+    el.addEventListener('mousedown', onDown);
+    el.addEventListener('mousemove', onMove);
+    return () => {
+      el.removeEventListener('mousedown', onDown);
+      el.removeEventListener('mousemove', onMove);
+    };
+  }, [activeTool, wrapperRef]);
 
   /* ── Double-click to select an existing highlight ────────────────────────── */
   const allHighlightsRef = useRef<HighlightAnnotation[]>([]);
@@ -438,6 +505,7 @@ export const AnnotationLayer: React.FC<Props> = ({
         />
       )}
 
+
       {/* ── Click-outside overlay for selected highlight ── */}
       {selectedHighlightId && (
         <div
@@ -574,7 +642,7 @@ export const AnnotationLayer: React.FC<Props> = ({
       })}
 
       {/* ── Draw strokes (SVG) ── */}
-      {(allDrawings.length > 0 || drawing) && (
+      {(allDrawings.length > 0 || drawing || hlDrawing) && (
         <svg
           style={{
             position: 'absolute', top: 0, left: 0,
@@ -591,6 +659,7 @@ export const AnnotationLayer: React.FC<Props> = ({
               strokeWidth={d.strokeWidth}
               strokeLinecap="round"
               strokeLinejoin="round"
+              opacity={d.strokeWidth >= 10 ? 0.4 : 1}
             />
           ))}
           {drawing && drawPoints.length > 1 && (
@@ -602,6 +671,17 @@ export const AnnotationLayer: React.FC<Props> = ({
               strokeLinecap="round"
               strokeLinejoin="round"
               strokeDasharray="4 2"
+            />
+          )}
+          {hlDrawing && hlDrawPoints.length > 1 && (
+            <polyline
+              points={toSvgPoints(hlDrawPoints)}
+              fill="none"
+              stroke={highlightColor}
+              strokeWidth={12}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              opacity={0.4}
             />
           )}
         </svg>
