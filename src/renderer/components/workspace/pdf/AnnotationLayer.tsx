@@ -72,6 +72,10 @@ export const AnnotationLayer: React.FC<Props> = ({
   const [selectedHighlightId, setSelectedHighlightId] = useState<string | null>(null);
   const [showHlColorPicker, setShowHlColorPicker] = useState(false);
 
+  // ── Selected draw (freehand highlight) state ───────────────────────────
+  const [selectedDrawId, setSelectedDrawId] = useState<string | null>(null);
+  const [showDrawColorPicker, setShowDrawColorPicker] = useState(false);
+
   const highlightPickerColors = [
     { label: 'Yellow', value: '#fde68a' },
     { label: 'Green',  value: '#a7f3d0' },
@@ -79,11 +83,13 @@ export const AnnotationLayer: React.FC<Props> = ({
     { label: 'Blue',   value: '#93c5fd' },
   ];
 
-  // Dismiss highlight selection when tool changes away from 'none'
+  // Dismiss highlight/draw selection when tool changes away from 'none'
   useEffect(() => {
     if (activeTool !== 'none') {
       setSelectedHighlightId(null);
       setShowHlColorPicker(false);
+      setSelectedDrawId(null);
+      setShowDrawColorPicker(false);
     }
   }, [activeTool]);
 
@@ -156,7 +162,7 @@ export const AnnotationLayer: React.FC<Props> = ({
     if (hlDrawRef.current && hlDrawPoints.length >= 2) {
       const ann: DrawAnnotation = {
         id: uuidv4(), file_id: fileId, page, type: 'draw',
-        points: hlDrawPoints, color: highlightColor, strokeWidth: 12,
+        points: hlDrawPoints, color: highlightColor, strokeWidth: 20,
       };
       setNewDrawings(d => [...d, ann]);
       onAnnotationCreated(ann);
@@ -215,8 +221,9 @@ export const AnnotationLayer: React.FC<Props> = ({
     };
   }, [activeTool, wrapperRef]);
 
-  /* ── Double-click to select an existing highlight ────────────────────────── */
+  /* ── Double-click to select an existing highlight or freehand draw ──────── */
   const allHighlightsRef = useRef<HighlightAnnotation[]>([]);
+  const allDrawingsRef = useRef<DrawAnnotation[]>([]);
 
   useEffect(() => {
     if (activeTool !== 'none') return;
@@ -234,11 +241,32 @@ export const AnnotationLayer: React.FC<Props> = ({
           if (relX >= r.x && relX <= r.x + r.w && relY >= r.y && relY <= r.y + r.h) {
             e.stopPropagation();
             e.preventDefault();
-            // Clear any text selection that may have happened from the dblclick
             window.getSelection()?.removeAllRanges();
-            // Dismiss the FloatingActionBar if it appeared from the first click
             window.dispatchEvent(new CustomEvent('highlightSelected'));
             setSelectedHighlightId(hl.id);
+            setShowHlColorPicker(false);
+            setSelectedDrawId(null);
+            setShowDrawColorPicker(false);
+            return;
+          }
+        }
+      }
+
+      // Check freehand draw annotations (thick strokes = freehand highlights)
+      const threshold = 0.025; // normalized distance threshold
+      for (const dr of allDrawingsRef.current) {
+        if (dr.strokeWidth < 10) continue; // only thick strokes (freehand highlights)
+        for (const pt of dr.points) {
+          const dx = relX - pt.x;
+          const dy = relY - pt.y;
+          if (Math.sqrt(dx * dx + dy * dy) < threshold) {
+            e.stopPropagation();
+            e.preventDefault();
+            window.getSelection()?.removeAllRanges();
+            window.dispatchEvent(new CustomEvent('highlightSelected'));
+            setSelectedDrawId(dr.id);
+            setShowDrawColorPicker(false);
+            setSelectedHighlightId(null);
             setShowHlColorPicker(false);
             return;
           }
@@ -433,6 +461,7 @@ export const AnnotationLayer: React.FC<Props> = ({
     ...annotations.filter((a): a is DrawAnnotation => a.type === 'draw'),
     ...newDrawings,
   ].filter((a, i, arr) => arr.findIndex(b => b.id === a.id) === i);
+  allDrawingsRef.current = allDrawings;
 
   const allTextboxes = annotations.filter(
     (a): a is TextboxAnnotation => a.type === 'textbox',
@@ -678,7 +707,7 @@ export const AnnotationLayer: React.FC<Props> = ({
               points={toSvgPoints(hlDrawPoints)}
               fill="none"
               stroke={highlightColor}
-              strokeWidth={12}
+              strokeWidth={20}
               strokeLinecap="round"
               strokeLinejoin="round"
               opacity={0.4}
@@ -686,6 +715,114 @@ export const AnnotationLayer: React.FC<Props> = ({
           )}
         </svg>
       )}
+
+      {/* ── Click-outside overlay for selected draw annotation ── */}
+      {selectedDrawId && (
+        <div
+          style={{
+            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+            zIndex: 19, cursor: 'default',
+          }}
+          onClick={() => {
+            setSelectedDrawId(null);
+            setShowDrawColorPicker(false);
+          }}
+        />
+      )}
+
+      {/* ── Selected draw annotation toolbar ── */}
+      {selectedDrawId && (() => {
+        const dr = allDrawings.find(d => d.id === selectedDrawId);
+        if (!dr || dr.points.length === 0) return null;
+        // Position toolbar near the middle of the stroke
+        const midIdx = Math.floor(dr.points.length / 2);
+        const midPt = dr.points[midIdx];
+        return (
+          <div
+            style={{
+              position: 'absolute',
+              top: midPt.y * cssHeight + 16,
+              left: midPt.x * cssWidth,
+              display: 'flex', alignItems: 'center', gap: '8px',
+              background: 'rgba(0,0,0,0.85)', borderRadius: '20px',
+              padding: '5px 10px',
+              width: 'fit-content',
+              zIndex: 21,
+              pointerEvents: 'all',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.5)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Color circle (toggles picker) */}
+            <div style={{ position: 'relative' }}>
+              <button
+                type="button"
+                onClick={() => setShowDrawColorPicker(prev => !prev)}
+                style={{
+                  width: 22, height: 22, borderRadius: '50%',
+                  background: dr.color,
+                  border: '2px solid #666', cursor: 'pointer', padding: 0,
+                }}
+                title="Change color"
+              />
+              {showDrawColorPicker && (
+                <div style={{
+                  position: 'absolute', bottom: '30px', left: '50%',
+                  transform: 'translateX(-50%)',
+                  display: 'flex', gap: '4px',
+                  background: 'rgba(0,0,0,0.95)', borderRadius: '14px',
+                  padding: '5px 8px', boxShadow: '0 2px 8px rgba(0,0,0,0.5)',
+                }}>
+                  {highlightPickerColors.map(c => (
+                    <button
+                      key={c.value}
+                      type="button"
+                      onClick={() => {
+                        const updated: DrawAnnotation = { ...dr, color: c.value };
+                        setNewDrawings(prev => {
+                          const idx = prev.findIndex(a => a.id === dr.id);
+                          if (idx < 0) return prev;
+                          const next = [...prev];
+                          next[idx] = updated;
+                          return next;
+                        });
+                        onAnnotationUpdated(updated);
+                        setShowDrawColorPicker(false);
+                      }}
+                      style={{
+                        width: 18, height: 18, borderRadius: '50%',
+                        background: c.value,
+                        border: dr.color === c.value ? '2px solid #fff' : '1px solid #555',
+                        cursor: 'pointer', padding: 0, flexShrink: 0,
+                      }}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+            {/* Delete icon */}
+            <button
+              type="button"
+              onClick={() => {
+                setNewDrawings(prev => prev.filter(a => a.id !== dr.id));
+                onAnnotationDeleted(dr.id);
+                setSelectedDrawId(null);
+                setShowDrawColorPicker(false);
+              }}
+              style={{
+                background: 'transparent', border: 'none', cursor: 'pointer', padding: '2px',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}
+              title="Delete"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#aaa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="3 6 5 6 21 6"/>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+              </svg>
+            </button>
+          </div>
+        );
+      })()}
 
       {/* ── Sticky note pins ── */}
       {allStickies.map(s => {
