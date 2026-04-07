@@ -872,6 +872,9 @@ export const PDFViewer: React.FC<Props> = ({
   /** Scroll position saved when the tab becomes inactive, so we can restore it
    *  when the tab becomes visible again (browsers reset scrollTop on display:none). */
   const savedScrollTopRef = useRef<number | null>(null);
+  /** Tracks the last applied initialPage + scrollNonce so the effect doesn't
+   *  re-scroll when only pageMeta changes (e.g. after a tab switch). */
+  const appliedInitialScrollRef = useRef<string | null>(null);
 
   /* ── Toast state for "Note saved" notification ───────────────────────────── */
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -1060,6 +1063,12 @@ export const PDFViewer: React.FC<Props> = ({
   /* ── Scroll to initialPage after load ───────────────────────────────────── */
   useEffect(() => {
     if (!initialPage || !pageMeta || !scrollRef.current || loading) return;
+    // Only scroll when initialPage or scrollNonce actually changed, not when
+    // pageMeta is recalculated (e.g. ResizeObserver on tab switch).
+    const key = `${initialPage}-${scrollNonce ?? 0}`;
+    if (appliedInitialScrollRef.current === key) return;
+    appliedInitialScrollRef.current = key;
+
     const el = scrollRef.current;
     // Use the same floored page height as computeRange() so scroll position
     // and visible-range boundaries are always in sync.
@@ -1645,7 +1654,7 @@ export const PDFViewer: React.FC<Props> = ({
         // Always focus the search input, whether new or already open
         setTimeout(() => searchInputRef.current?.focus(), 50);
       }
-      if (!isTyping && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+      if (!isTyping && !e.shiftKey && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
         e.preventDefault();
         savePdf();
       }

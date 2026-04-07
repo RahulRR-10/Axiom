@@ -397,8 +397,12 @@ app.whenReady().then(() => {
   // Renderer can trigger it via IPC too
   ipcMain.on(SCREENSHOT_CHANNELS.TRIGGER, () => { void captureAndSend(); });
 
-  // Register Ctrl+Shift+S global shortcut
-  globalShortcut.register('Ctrl+Shift+S', () => { void captureAndSend(); });
+  // Register Ctrl+Shift+S global shortcut — only fire when app is focused
+  globalShortcut.register('Ctrl+Shift+S', () => {
+    if (BrowserWindow.getFocusedWindow()) {
+      void captureAndSend();
+    }
+  });
 
   logStep('startup complete');
 }).catch((err) => {

@@ -512,6 +512,13 @@ export const VaultSidebar: React.FC<VaultSidebarProps> = ({ onVaultOpen, onFileO
         </div>
       )}
 
+      {/* Indent guide hover styles */}
+      <style>{`
+        .tree-row:hover .tree-indent-guide {
+          background: rgba(255,255,255,0.12) !important;
+        }
+      `}</style>
+
       {/* File tree — right-click empty space for context menu */}
       <div
         className="flex-1 overflow-y-auto py-1"
@@ -667,6 +674,33 @@ export const VaultSidebar: React.FC<VaultSidebarProps> = ({ onVaultOpen, onFileO
   );
 };
 
+// ── Indent Guides ─────────────────────────────────────────────────────────────────
+const INDENT_WIDTH = 16;
+
+const IndentGuides: React.FC<{ depth: number }> = ({ depth }) => {
+  if (depth === 0) return null;
+  return (
+    <>
+      {Array.from({ length: depth }, (_, i) => (
+        <span
+          key={i}
+          className="tree-indent-guide"
+          style={{
+            position: 'absolute',
+            left: 8 + i * INDENT_WIDTH + INDENT_WIDTH / 2,
+            top: 0,
+            bottom: 0,
+            width: 1,
+            background: 'rgba(255,255,255,0.06)',
+            pointerEvents: 'none',
+            transition: 'background 150ms ease',
+          }}
+        />
+      ))}
+    </>
+  );
+};
+
 // ── TreeNode ──────────────────────────────────────────────────────────────────
 
 type TreeNodeProps = {
@@ -682,7 +716,16 @@ type TreeNodeProps = {
 };
 
 const TreeNode: React.FC<TreeNodeProps> = ({ node, depth, activeFile, vaultPath, selectedPaths, onFileClick, onNewNoteInFolder, onNewFolderInFolder, onTreeChanged }) => {
-  const [open, setOpen] = useState<boolean>(true);
+  const [open, setOpen] = useState<boolean>(() => {
+    try {
+      const stored = localStorage.getItem('vault-expanded-folders');
+      if (stored) {
+        const set: string[] = JSON.parse(stored);
+        return set.includes(node.path);
+      }
+    } catch { /* ignore */ }
+    return false;
+  });
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
   const [showCopyPathSub, setShowCopyPathSub] = useState(false);
   const [renaming, setRenaming] = useState(false);
@@ -954,7 +997,17 @@ const TreeNode: React.FC<TreeNodeProps> = ({ node, depth, activeFile, vaultPath,
           onDragOver={handleFolderDragOver}
           onDragLeave={handleFolderDragLeave}
           onDrop={handleFolderDrop}
-          onClick={() => setOpen((o) => !o)}
+          onClick={() => setOpen((o) => {
+            const next = !o;
+            try {
+              const stored = localStorage.getItem('vault-expanded-folders');
+              const set: string[] = stored ? JSON.parse(stored) : [];
+              const s = new Set(set);
+              if (next) s.add(node.path); else s.delete(node.path);
+              localStorage.setItem('vault-expanded-folders', JSON.stringify([...s]));
+            } catch { /* ignore */ }
+            return next;
+          })}
           onContextMenu={(e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -962,12 +1015,14 @@ const TreeNode: React.FC<TreeNodeProps> = ({ node, depth, activeFile, vaultPath,
             setCtxMenu({ x: e.clientX, y: e.clientY });
           }}
           style={{
-            paddingLeft: depth * 12 + 8,
+            paddingLeft: depth * INDENT_WIDTH + 8,
             background: dropTarget ? 'rgba(74, 158, 255, 0.15)' : undefined,
             borderLeft: dropTarget ? '2px solid #4a9eff' : '2px solid transparent',
+            position: 'relative',
           }}
-          className="w-full flex items-center gap-1.5 py-1 pr-2 text-left hover:bg-[#2a2a2a] rounded transition-colors"
+          className="tree-row w-full flex items-center gap-1.5 py-1.5 pr-2 text-left hover:bg-[#2a2a2a] rounded transition-colors"
         >
+          <IndentGuides depth={depth} />
           <span className="text-[#6a6a6a] shrink-0">
             {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
           </span>
@@ -1053,7 +1108,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({ node, depth, activeFile, vaultPath,
 
         {/* Inline rename for folder */}
         {renaming && (
-          <div style={{ paddingLeft: depth * 12 + 20 }} className="flex items-center gap-1.5 py-0.5 pr-2">
+          <div style={{ paddingLeft: depth * INDENT_WIDTH + 20, position: 'relative' }} className="tree-row flex items-center gap-1.5 py-0.5 pr-2">
             <Folder size={13} className="shrink-0 text-[#6a6a6a]" />
             <input
               ref={renameRef}
@@ -1101,7 +1156,8 @@ const TreeNode: React.FC<TreeNodeProps> = ({ node, depth, activeFile, vaultPath,
   // Inline rename mode
   if (renaming) {
     return (
-      <div data-tree-node style={{ paddingLeft: depth * 12 + 20 }} className="flex items-center gap-1.5 py-0.5 pr-2">
+      <div data-tree-node style={{ paddingLeft: depth * INDENT_WIDTH + 20, position: 'relative' }} className="tree-row flex items-center gap-1.5 py-0.5 pr-2">
+        <IndentGuides depth={depth} />
         <FileIcon fileType={node.fileType ?? ''} />
         <input
           ref={renameRef}
@@ -1202,14 +1258,16 @@ const TreeNode: React.FC<TreeNodeProps> = ({ node, depth, activeFile, vaultPath,
           setCtxMenu({ x: e.clientX, y: e.clientY });
         }}
         style={{
-          paddingLeft: depth * 12 + 20,
+          paddingLeft: depth * INDENT_WIDTH + 20,
           background: dropTarget ? 'rgba(74, 158, 255, 0.15)' : undefined,
           borderLeft: dropTarget ? '2px solid #4a9eff' : '2px solid transparent',
+          position: 'relative',
         }}
-        className={`w-full flex items-center gap-1.5 py-1 pr-2 text-left rounded transition-colors ${
+        className={`tree-row w-full flex items-center gap-1.5 py-1.5 pr-2 text-left rounded transition-colors ${
           selectedPaths.has(node.path) ? 'bg-[#1e3a5f]' : isActive ? 'bg-[#3a3a3a]' : 'hover:bg-[#2a2a2a]'
         }`}
       >
+        <IndentGuides depth={depth} />
         <FileIcon fileType={node.fileType ?? ''} />
         <span className="text-xs text-[#d4d4d4] truncate">{node.name}</span>
       </button>
