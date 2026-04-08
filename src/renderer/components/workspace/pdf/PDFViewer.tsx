@@ -7,7 +7,19 @@ import React, {
   useState,
 } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import { BlendMode, PDFDocument, rgb } from "pdf-lib";
+import {
+  BlendMode,
+  LineCapStyle,
+  PDFDocument,
+  popGraphicsState,
+  pushGraphicsState,
+  rgb,
+  setLineCap,
+  setLineJoin,
+  LineJoinStyle,
+  setGraphicsState,
+} from "pdf-lib";
+
 import type {
   Annotation,
   HighlightAnnotation,
@@ -1285,20 +1297,76 @@ export const PDFViewer: React.FC<Props> = ({
           }
         } else if (ann.type === "draw") {
           const dr = ann as DrawAnnotation;
+          if (dr.points.length < 2) continue;
           const hex = dr.color.replace("#", "");
           const cr = parseInt(hex.substring(0, 2), 16) / 255;
           const cg = parseInt(hex.substring(2, 4), 16) / 255;
           const cb = parseInt(hex.substring(4, 6), 16) / 255;
-          for (let i = 0; i < dr.points.length - 1; i++) {
-            const p1 = dr.points[i],
-              p2 = dr.points[i + 1];
-            pdfPage.drawLine({
-              start: { x: p1.x * pw, y: (1 - p1.y) * ph },
-              end: { x: p2.x * pw, y: (1 - p2.y) * ph },
-              thickness: dr.strokeWidth,
-              color: rgb(cr, cg, cb),
-            });
+          const isFreehandHighlight = dr.strokeWidth >= 10;
+
+          // Scale strokeWidth from CSS pixels to PDF points.
+          // In the SVG overlay the stroke is in CSS pixels on a canvas of
+          // (pageMeta.width * zoom) px.  In the PDF the same dimension is pw
+          // points.  Dividing by the ratio keeps the visual size consistent.
+          const cssPageWidth = (pageMeta?.width ?? pw) * zoom;
+          const pdfStrokeWidth = dr.strokeWidth * (pw / cssPageWidth);
+
+          // Build an SVG path string from the points.
+          // pdf-lib's drawSvgPath uses the PDF coordinate system
+          // (origin = bottom-left), and we pass x/y to position the origin.
+          // So we build relative to (0,0) and use x/y offset = first point.
+          const firstPt = dr.points[0];
+          const originX = firstPt.x * pw;
+          const originY = (1 - firstPt.y) * ph;
+          let svgPath = "M 0 0";
+          for (let i = 1; i < dr.points.length; i++) {
+            const pt = dr.points[i];
+            const dx = pt.x * pw - originX;
+            // SVG y goes down, but pdf-lib flips it, so negate
+            const dy = -(((1 - pt.y) * ph) - originY);
+            svgPath += ` L ${dx} ${dy}`;
           }
+
+          // Push graphics state, set round line cap & join
+          pdfPage.pushOperators(
+            pushGraphicsState(),
+            setLineCap(LineCapStyle.Round),
+            setLineJoin(LineJoinStyle.Round),
+          );
+
+          if (isFreehandHighlight) {
+            // Create an ExtGState with transparency for the highlight effect
+            const extGState = pdfDoc.context.obj({
+              Type: 'ExtGState',
+              CA: 0.4,  // stroke opacity
+              ca: 0.4,  // fill opacity
+              BM: 'Multiply',
+            });
+            const extGStateRef = pdfDoc.context.register(extGState);
+            // Add the ExtGState to the page's resources
+            const pageDict = pdfPage.node;
+            let resources = pageDict.get(pdfDoc.context.obj('Resources') as any) as any;
+            if (!resources) {
+              resources = pageDict.lookup(pdfDoc.context.obj('Resources') as any) as any;
+            }
+            // Use a unique name for this ExtGState
+            const gsName = `GS_HL_${ann.id.replace(/-/g, '').substring(0, 8)}`;
+            pdfPage.node.setExtGState(
+              pdfDoc.context.obj(gsName) as any,
+              extGStateRef,
+            );
+            pdfPage.pushOperators(setGraphicsState(gsName));
+          }
+
+          pdfPage.drawSvgPath(svgPath, {
+            x: originX,
+            y: originY,
+            borderColor: rgb(cr, cg, cb),
+            borderWidth: pdfStrokeWidth,
+            borderLineCap: LineCapStyle.Round,
+          });
+
+          pdfPage.pushOperators(popGraphicsState());
         }
       }
 
@@ -1365,6 +1433,8 @@ export const PDFViewer: React.FC<Props> = ({
     mergedAnnotations,
     effectiveFileId,
     loadAnnotations,
+    pageMeta,
+    zoom,
   ]);
 
   /* ── PDF text search ──────────────────────────────────────────────────────── */
