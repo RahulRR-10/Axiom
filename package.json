@@ -1,7 +1,7 @@
 {
   "name": "axiom",
   "productName": "Axiom",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "A local-first desktop environment that turns your folder of PDFs and notes into a fully searchable, annotatable, AI-assisted knowledge base.",
   "main": ".webpack/main",
   "private": true,

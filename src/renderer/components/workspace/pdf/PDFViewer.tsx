@@ -1973,6 +1973,27 @@ export const PDFViewer: React.FC<Props> = ({
     return () => ro.disconnect();
   }, [pdf, loading]);
 
+  /* ── Re-render canvases when window regains focus / becomes visible ───────
+     Chromium (and Electron) may discard GPU-backed canvas bitmaps when the
+     window is minimised, occluded, or idle for a while.  When the user comes
+     back, those canvases appear blank.  Bumping renderNonce forces every
+     visible PDFPage to re-paint. ──────────────────────────────────────────── */
+  useEffect(() => {
+    const repaintCanvases = () => {
+      // Only repaint when the page is actually visible
+      if (document.visibilityState === "visible") {
+        setRenderNonce((n) => n + 1);
+      }
+    };
+
+    document.addEventListener("visibilitychange", repaintCanvases);
+    window.addEventListener("focus", repaintCanvases);
+    return () => {
+      document.removeEventListener("visibilitychange", repaintCanvases);
+      window.removeEventListener("focus", repaintCanvases);
+    };
+  }, []);
+
   /* ── Build page list with virtualization ──────────────────────────────────── */
   const pageList = useMemo(() => {
     if (!pdf || !pageMeta) return null;
