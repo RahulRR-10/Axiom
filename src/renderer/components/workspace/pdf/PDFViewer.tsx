@@ -43,6 +43,11 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
 const PAGE_GAP = 16;
 const BUFFER_PX = 1200; // render pages within this many pixels of the viewport
 
+/** Module-level: page number where a drag-selection started.
+ *  Used to keep that page mounted (skip virtualisation) so the
+ *  anchor DOM node stays in the document during long cross-page drags. */
+let activeDragAnchorPage: number | null = null;
+
 const shouldRenderPersistedOverlay = (annotation: Annotation) =>
   annotation.type === "sticky" || annotation.type === "textbox";
 
@@ -292,8 +297,7 @@ const PDFPage = React.memo(function PDFPage({
       let anchorOffset = 0;
       let lastAppliedEndNode: Node | null = null;
       let lastAppliedEndOffset = -1;
-      let lastPointerX = -1;
-      let lastPointerY = -1;
+      let rafPending = false;
 
       // Reusable Range to avoid per-move allocations
       const reusableRange = document.createRange();
@@ -347,7 +351,7 @@ const PDFPage = React.memo(function PDFPage({
           const maxInset = Math.max(0, rect.height / 2 - 1);
           const verticalInset = strict
             ? Math.min(Math.max(rect.height * 0.08, 0.5), maxInset)
-            : Math.min(Math.max(rect.height * 0.02, 0), maxInset);
+            : Math.min(Math.max(rect.height * 0.01, 0), maxInset);
           const horizontalInset = strict
             ? Math.min(Math.max(rect.width * 0.005, 0), 0.5)
             : 0;
@@ -500,10 +504,9 @@ const PDFPage = React.memo(function PDFPage({
         dragSelecting = true;
         anchorNode = caretRange.startContainer;
         anchorOffset = caretRange.startOffset;
-        lastPointerX = evt.clientX;
-        lastPointerY = evt.clientY;
         lastAppliedEndNode = anchorNode;
         lastAppliedEndOffset = anchorOffset;
+        activeDragAnchorPage = pageNum;
 
         if (!cachedSel) return;
         reusableRange.setStart(anchorNode, anchorOffset);
@@ -620,31 +623,30 @@ const PDFPage = React.memo(function PDFPage({
       const applySelectionAtPoint = (clientX: number, clientY: number) => {
         if (!dragSelecting || !anchorNode || !cachedSel) return;
 
-        // Skip sub-pixel jitter (very small threshold for responsiveness)
-        const dx = clientX - lastPointerX;
-        const dy = clientY - lastPointerY;
-        if (dx === 0 && dy === 0) return;
-        lastPointerX = clientX;
-        lastPointerY = clientY;
+        // If the anchor node was detached (page virtualised / re-rendered),
+        // abort the drag — the selection can't be extended.
+        if (!document.contains(anchorNode)) {
+          dragSelecting = false;
+          anchorNode = null;
+          activeDragAnchorPage = null;
+          return;
+        }
 
         const caretRange = getCaretRangeFromPoint(clientX, clientY);
         if (!caretRange) return;
         const endNode = caretRange.startContainer;
         const endOffset = caretRange.startOffset;
 
-        // Skip if caret didn't move
-        if (endNode === lastAppliedEndNode && endOffset === lastAppliedEndOffset) return;
-
         const caretSpan = getSelectableSpan(endNode);
         if (!caretSpan) return;
-        // Use strict band checking on the local page to prevent whitespace
-        // jumping; use loose checking on other pages to allow cross-page
-        // selection to work smoothly.
-        const anchorTL = anchorNode.nodeType === Node.TEXT_NODE 
-          ? anchorNode.parentElement?.closest('.textLayer') 
-          : (anchorNode as Element).closest('.textLayer');
-        const useStrict = caretSpan.closest('.textLayer') === anchorTL;
-        if (!isPointInsideSpanBand(caretSpan, clientX, clientY, useStrict)) return;
+
+        // Use loose band checking during drag — much more forgiving than strict
+        // (strict insets 8% vertically, loose insets ~1%) so the selection
+        // doesn't get stuck, but still prevents bleeding through whitespace gaps.
+        if (!isPointInsideSpanBand(caretSpan, clientX, clientY, false)) return;
+
+        // Skip if caret didn't move
+        if (endNode === lastAppliedEndNode && endOffset === lastAppliedEndOffset) return;
 
         const cmp = anchorNode.compareDocumentPosition(endNode);
         const forward =
@@ -652,24 +654,36 @@ const PDFPage = React.memo(function PDFPage({
             ? anchorOffset <= endOffset
             : !!(cmp & Node.DOCUMENT_POSITION_FOLLOWING);
 
-        if (forward) {
-          reusableRange.setStart(anchorNode, anchorOffset);
-          reusableRange.setEnd(endNode, endOffset);
-        } else {
-          reusableRange.setStart(endNode, endOffset);
-          reusableRange.setEnd(anchorNode, anchorOffset);
+        try {
+          if (forward) {
+            reusableRange.setStart(anchorNode, anchorOffset);
+            reusableRange.setEnd(endNode, endOffset);
+          } else {
+            reusableRange.setStart(endNode, endOffset);
+            reusableRange.setEnd(anchorNode, anchorOffset);
+          }
+
+          cachedSel.removeAllRanges();
+          cachedSel.addRange(reusableRange);
+
+          lastAppliedEndNode = endNode;
+          lastAppliedEndOffset = endOffset;
+        } catch {
+          // Range endpoints in incompatible DOM subtrees — keep existing selection
         }
-
-        cachedSel.removeAllRanges();
-        cachedSel.addRange(reusableRange);
-
-        lastAppliedEndNode = endNode;
-        lastAppliedEndOffset = endOffset;
       };
 
       const onMouseMove = (evt: MouseEvent) => {
         if (!dragSelecting || !anchorNode) return;
-        applySelectionAtPoint(evt.clientX, evt.clientY);
+        // Throttle to one update per animation frame for smooth 60fps selection
+        if (rafPending) return;
+        rafPending = true;
+        const cx = evt.clientX;
+        const cy = evt.clientY;
+        requestAnimationFrame(() => {
+          rafPending = false;
+          applySelectionAtPoint(cx, cy);
+        });
       };
       document.addEventListener("mousemove", onMouseMove);
 
@@ -677,10 +691,10 @@ const PDFPage = React.memo(function PDFPage({
         dragSelecting = false;
         anchorNode = null;
         anchorOffset = 0;
-        lastPointerX = -1;
-        lastPointerY = -1;
+        rafPending = false;
         lastAppliedEndNode = null;
         lastAppliedEndOffset = -1;
+        activeDragAnchorPage = null;
       };
       document.addEventListener("mouseup", onMouseUp);
 
@@ -1852,7 +1866,7 @@ export const PDFViewer: React.FC<Props> = ({
     // correctly on the first paint — no intermediate wrong-range frame.
     const pageH = Math.floor(pageMeta.height * zoom) + PAGE_GAP;
     const viewportH = el.clientHeight;
-    const firstVisible = Math.max(
+    let firstVisible = Math.max(
       1,
       Math.floor((scrollTop - BUFFER_PX) / pageH) + 1,
     );
@@ -1860,6 +1874,10 @@ export const PDFViewer: React.FC<Props> = ({
       numPages,
       Math.ceil((scrollTop + viewportH + BUFFER_PX) / pageH),
     );
+    // Keep the drag-anchor page mounted so its DOM nodes stay alive
+    if (activeDragAnchorPage != null) {
+      firstVisible = Math.min(firstVisible, activeDragAnchorPage);
+    }
     setVisibleRange([firstVisible, lastVisible]);
   }, [zoom, pageMeta, numPages]);
 
@@ -1888,14 +1906,19 @@ export const PDFViewer: React.FC<Props> = ({
       );
       setCurrentPage(centerPage);
 
-      const firstVisible = Math.max(
+      let firstVisible = Math.max(
         1,
         Math.floor((scrollTop - BUFFER_PX) / pageH) + 1,
       );
-      const lastVisible = Math.min(
+      let lastVisible = Math.min(
         numPages,
         Math.ceil((scrollTop + viewportH + BUFFER_PX) / pageH),
       );
+      // Keep the drag-anchor page mounted so its DOM nodes stay alive
+      if (activeDragAnchorPage != null) {
+        firstVisible = Math.min(firstVisible, activeDragAnchorPage);
+        lastVisible = Math.max(lastVisible, activeDragAnchorPage);
+      }
       setVisibleRange([firstVisible, lastVisible]);
     };
 
