@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, memo } from 'react';
 import {
   Highlighter,
   StickyNote,
@@ -56,7 +56,7 @@ type Props = {
   onSearchToggle?:   () => void;
 };
 
-export const PDFToolbar: React.FC<Props> = ({
+export const PDFToolbar: React.FC<Props> = memo(({
   activeTool,
   onToolChange,
   highlightColor,
@@ -348,4 +348,4 @@ export const PDFToolbar: React.FC<Props> = ({
       </div>
     </div>
   );
-};
+});

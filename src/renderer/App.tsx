@@ -123,7 +123,6 @@ const StandaloneImageViewer: React.FC<{ filePath: string }> = ({ filePath }) => 
 const SingleFileWindow: React.FC<{ filePath: string; fileType: string; vaultPath: string | null }> = ({ filePath, fileType, vaultPath }) => {
   const name = filePath.split(/[\\/]/).pop() ?? filePath;
   const [fileId, setFileId] = useState<string | null>(null);
-  const [pdfNonce, setPdfNonce] = useState(0);
 
   // Resolve fileId from DB so annotations/notes load correctly
   useEffect(() => {
@@ -144,23 +143,10 @@ const SingleFileWindow: React.FC<{ filePath: string; fileType: string; vaultPath
     return unsub;
   }, [filePath, fileType]);
 
-  // Cross-window sync: force-reload PDF when saved elsewhere
-  useEffect(() => {
-    if (fileType !== 'pdf') return;
-    const unsub1 = window.electronAPI.onPdfFileChanged((changedPath) => {
-      if (normalizePath(changedPath) === normalizePath(filePath)) setPdfNonce(Date.now());
-    });
-    const unsub2 = window.electronAPI.onAnnotationsSaved((savedPath) => {
-      if (normalizePath(savedPath) === normalizePath(filePath)) setPdfNonce(Date.now());
-    });
-    return () => { unsub1(); unsub2(); };
-  }, [filePath, fileType]);
-
   const renderContent = () => {
     if (fileType === 'pdf') {
       return (
         <PDFViewer
-          key={pdfNonce}
           filePath={filePath}
           fileId={fileId ?? ''}
           vaultPath={vaultPath}

@@ -41,7 +41,6 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
 ).href;
 
 const PAGE_GAP = 16;
-const BUFFER_PX = 1200; // render pages within this many pixels of the viewport
 
 /** Module-level: page number where a drag-selection started.
  *  Used to keep that page mounted (skip virtualisation) so the
@@ -52,18 +51,156 @@ const shouldRenderPersistedOverlay = (annotation: Annotation) =>
   annotation.type === "sticky" || annotation.type === "textbox";
 
 /* ─── PDF document cache ───────────────────────────────────────────────────── */
-const pdfCache = new Map<string, PDFDocumentProxy>();
+type PdfCacheEntry = {
+  key: string;
+  generation: number;
+  doc: PDFDocumentProxy | null;
+  loadPromise: Promise<PDFDocumentProxy> | null;
+  refCount: number;
+  lastUsedAt: number;
+  stale: boolean;
+};
+
+const PDF_CACHE_MAX_UNUSED = 2;
+const pdfCache = new Map<string, PdfCacheEntry>();
+
+const normalizePdfCacheKey = (filePath: string) =>
+  filePath.replace(/\\/g, "/").toLowerCase();
+
+const destroyPdfDocument = (doc: PDFDocumentProxy | null) => {
+  if (!doc) return;
+  void doc.destroy().catch((err) => {
+    console.warn("[PDFViewer] Failed to destroy cached PDF:", err);
+  });
+};
+
+const createPdfCacheEntry = (
+  key: string,
+  generation: number,
+): PdfCacheEntry => ({
+  key,
+  generation,
+  doc: null,
+  loadPromise: null,
+  refCount: 0,
+  lastUsedAt: Date.now(),
+  stale: false,
+});
+
+const touchPdfEntry = (entry: PdfCacheEntry) => {
+  entry.lastUsedAt = Date.now();
+};
+
+const maybeDestroyDetachedEntry = (entry: PdfCacheEntry) => {
+  if (!entry.stale || entry.refCount > 0) return;
+  if (entry.loadPromise) return;
+  const doc = entry.doc;
+  entry.doc = null;
+  destroyPdfDocument(doc);
+};
+
+const retirePdfEntry = (entry: PdfCacheEntry) => {
+  entry.stale = true;
+  maybeDestroyDetachedEntry(entry);
+};
+
+const trimPdfCache = () => {
+  const removable = Array.from(pdfCache.entries())
+    .filter(([, entry]) => entry.refCount === 0 && !entry.loadPromise)
+    .sort((a, b) => a[1].lastUsedAt - b[1].lastUsedAt);
+
+  while (removable.length > PDF_CACHE_MAX_UNUSED) {
+    const [key, entry] = removable.shift()!;
+    if (pdfCache.get(key) !== entry) continue;
+    pdfCache.delete(key);
+    retirePdfEntry(entry);
+  }
+};
+
+const loadPdfEntry = async (
+  entry: PdfCacheEntry,
+  filePath: string,
+): Promise<PDFDocumentProxy> => {
+  if (entry.doc) return entry.doc;
+
+  if (!entry.loadPromise) {
+    entry.loadPromise = window.electronAPI
+      .readFile(filePath)
+      .then((data) => pdfjsLib.getDocument({ data }).promise)
+      .then((doc) => {
+        entry.doc = doc;
+        return doc;
+      })
+      .finally(() => {
+        entry.loadPromise = null;
+        maybeDestroyDetachedEntry(entry);
+      });
+  }
+
+  return entry.loadPromise;
+};
+
+const acquirePdf = async (
+  filePath: string,
+  minGeneration = 0,
+): Promise<PdfCacheEntry> => {
+  const key = normalizePdfCacheKey(filePath);
+  let entry = pdfCache.get(key);
+
+  if (!entry || entry.generation < minGeneration) {
+    const nextGeneration = entry
+      ? Math.max(entry.generation + 1, minGeneration)
+      : Math.max(0, minGeneration);
+    const nextEntry = createPdfCacheEntry(key, nextGeneration);
+    pdfCache.set(key, nextEntry);
+    if (entry) retirePdfEntry(entry);
+    entry = nextEntry;
+  }
+
+  entry.refCount += 1;
+  touchPdfEntry(entry);
+
+  try {
+    await loadPdfEntry(entry, filePath);
+    touchPdfEntry(entry);
+    return entry;
+  } catch (err) {
+    entry.refCount = Math.max(0, entry.refCount - 1);
+    if (entry.refCount === 0 && pdfCache.get(key) !== entry) {
+      retirePdfEntry(entry);
+    }
+    throw err;
+  }
+};
+
+const releasePdf = (entry: PdfCacheEntry | null | undefined) => {
+  if (!entry) return;
+  entry.refCount = Math.max(0, entry.refCount - 1);
+  touchPdfEntry(entry);
+
+  if (entry.refCount === 0) {
+    if (entry.stale) {
+      maybeDestroyDetachedEntry(entry);
+      return;
+    }
+    trimPdfCache();
+  }
+};
+
+const invalidatePdf = (filePath: string, generation?: number) => {
+  const key = normalizePdfCacheKey(filePath);
+  const entry = pdfCache.get(key);
+  if (!entry) return;
+  if (generation != null && entry.generation !== generation) return;
+  pdfCache.delete(key);
+  retirePdfEntry(entry);
+};
 
 // Evict cache entries when files are deleted (e.g. during note → PDF re-export)
 // so reopening the same path reads the fresh file from disk.
-if (typeof window !== 'undefined' && window.electronAPI?.onFileDeleted) {
+if (typeof window !== "undefined" && window.electronAPI?.onFileDeleted) {
   window.electronAPI.onFileDeleted((deletedPath) => {
-    const norm = deletedPath.replace(/\\/g, '/').toLowerCase();
-    for (const [key] of pdfCache) {
-      if (key.replace(/\\/g, '/').toLowerCase() === norm) {
-        pdfCache.delete(key);
-      }
-    }
+    invalidatePdf(deletedPath);
   });
 }
 
@@ -185,6 +322,7 @@ const PDFPage = React.memo(function PDFPage({
   }, [pdf, pageNum]);
 
   /* Render canvas + text layer */
+  const initialRenderRef = useRef(true);
   useEffect(() => {
     const canvas = canvasRef.current;
     const textLayerDiv = textLayerRef.current;
@@ -192,7 +330,12 @@ const PDFPage = React.memo(function PDFPage({
     let cancelled = false;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let renderTask: any = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
 
+    const delay = initialRenderRef.current ? (pageNum - 1) * 15 : 0;
+    initialRenderRef.current = false;
+
+    timer = setTimeout(() => {
     (async () => {
       const page = await pdf.getPage(pageNum);
       if (cancelled) {
@@ -709,9 +852,11 @@ const PDFPage = React.memo(function PDFPage({
 
       page.cleanup();
     })().catch(console.error);
+    }, delay);
 
     return () => {
       cancelled = true;
+      if (timer) clearTimeout(timer);
       // Cancel the in-flight pdf.js render task so it doesn't write to
       // the canvas after this component unmounts or re-renders
       try {
@@ -839,28 +984,6 @@ const PDFPage = React.memo(function PDFPage({
   );
 });
 
-/* ─── Placeholder for off-screen pages (keeps scroll height correct) ──────── */
-const PagePlaceholder = React.memo(function PagePlaceholder({
-  cssWidth,
-  cssHeight,
-}: {
-  cssWidth: number;
-  cssHeight: number;
-}) {
-  return (
-    <div
-      style={{
-        width: cssWidth,
-        height: cssHeight,
-        flexShrink: 0,
-        marginBottom: PAGE_GAP,
-        background: "#1e1e1e",
-        borderRadius: 2,
-      }}
-    />
-  );
-});
-
 /* ═══════════════════════════════════════════════════════════════════════════════
    PDFViewer — main component
 ═══════════════════════════════════════════════════════════════════════════════ */
@@ -872,7 +995,8 @@ export const PDFViewer: React.FC<Props> = ({
   scrollNonce,
   isActive = true,
 }) => {
-  const effectiveFileId = fileId || filePath;
+  // Use filePath as the stable identifier to prevent re-renders when fileId changes from null to a value
+  const effectiveFileId = filePath;
 
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [numPages, setNumPages] = useState(0);
@@ -893,17 +1017,15 @@ export const PDFViewer: React.FC<Props> = ({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [visibleRange, setVisibleRange] = useState<[number, number]>([1, 3]);
   const [pdfLoadNonce, setPdfLoadNonce] = useState(0);
   const [renderNonce, setRenderNonce] = useState(0);
-  /** Scroll position to restore after a save-triggered reload */
-  const pendingRestoreScrollRef = useRef<number | null>(null);
   /** Scroll position saved when the tab becomes inactive, so we can restore it
    *  when the tab becomes visible again (browsers reset scrollTop on display:none). */
   const savedScrollTopRef = useRef<number | null>(null);
   /** Tracks the last applied initialPage + scrollNonce so the effect doesn't
    *  re-scroll when only pageMeta changes (e.g. after a tab switch). */
   const appliedInitialScrollRef = useRef<string | null>(null);
+  const lastCurrentPageRef = useRef<number | null>(null);
 
   /* ── Toast state for "Note saved" notification ───────────────────────────── */
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -940,134 +1062,219 @@ export const PDFViewer: React.FC<Props> = ({
   const isPanning = useRef(false);
   const panStart = useRef({ x: 0, y: 0, scrollLeft: 0, scrollTop: 0 });
   const prevActiveRef = useRef(isActive);
+  const activeEntryRef = useRef<PdfCacheEntry | null>(null);
+  const pendingReleaseEntryRef = useRef<PdfCacheEntry | null>(null);
+  const loadRequestIdRef = useRef(0);
+  const reloadRequestRef = useRef<{
+    preserveView: boolean;
+    forceDiskRead: boolean;
+  }>({
+    preserveView: false,
+    forceDiskRead: false,
+  });
+  const pendingReloadRef = useRef<{
+    preserveView: boolean;
+    forceDiskRead: boolean;
+  } | null>(null);
+  const loadInFlightRef = useRef(false);
+  const pageMetaRef = useRef<PageMeta | null>(null);
+  const zoomRef = useRef(zoom);
+  const numPagesRef = useRef(numPages);
   // Keep a ref to the latest DB annotations so onAnnotationUpdated can check
   // whether an annotation is already persisted without needing it as a dep.
   const annotationsRef = useRef<Annotation[]>([]);
   useEffect(() => { annotationsRef.current = annotations; }, [annotations]);
+  useEffect(() => { pageMetaRef.current = pageMeta; }, [pageMeta]);
+  useEffect(() => { zoomRef.current = zoom; }, [zoom]);
+  useEffect(() => { numPagesRef.current = numPages; }, [numPages]);
+
+  const measurePdfLayout = useCallback(async (
+    doc: PDFDocumentProxy,
+    containerWidth?: number,
+  ): Promise<PageMeta> => {
+    const page1 = await doc.getPage(1);
+    try {
+      const vp1 = page1.getViewport({ scale: 1 });
+      const rawWidth = containerWidth ?? scrollRef.current?.clientWidth ?? 800;
+      const safeWidth = rawWidth > 32 ? rawWidth : 800;
+      const baseScale = (safeWidth - 32) / vp1.width;
+      baseScaleRef.current = baseScale;
+
+      const vp = page1.getViewport({ scale: baseScale });
+      return {
+        width: Math.floor(vp.width),
+        height: Math.floor(vp.height),
+      };
+    } finally {
+      page1.cleanup();
+    }
+  }, []);
+
+  const reloadPdf = useCallback((
+    options?: {
+      preserveView?: boolean;
+      forceDiskRead?: boolean;
+    },
+  ) => {
+    const nextRequest = {
+      preserveView: options?.preserveView ?? false,
+      forceDiskRead: options?.forceDiskRead ?? false,
+    };
+
+    if (loadInFlightRef.current) {
+      pendingReloadRef.current = pendingReloadRef.current
+        ? {
+            preserveView:
+              pendingReloadRef.current.preserveView || nextRequest.preserveView,
+            forceDiskRead:
+              pendingReloadRef.current.forceDiskRead || nextRequest.forceDiskRead,
+          }
+        : nextRequest;
+      return;
+    }
+
+    reloadRequestRef.current = nextRequest;
+    setPdfLoadNonce((n) => n + 1);
+  }, []);
 
   /* ── Load PDF (fast — only reads page 1 for sizing) ──────────────────────── */
   useEffect(() => {
     if (!filePath) return;
+    const request = reloadRequestRef.current;
+    reloadRequestRef.current = {
+      preserveView: false,
+      forceDiskRead: false,
+    };
+
+    const requestId = ++loadRequestIdRef.current;
+    const hadDocument = !!activeEntryRef.current?.doc;
+    const preservedScroll = request.preserveView
+      ? scrollRef.current?.scrollTop ?? savedScrollTopRef.current ?? 0
+      : null;
+    let cancelled = false;
+    let acquiredEntry: PdfCacheEntry | null = null;
+
+    loadInFlightRef.current = true;
     setLoading(true);
     setError(null);
-    setPdf(null);
-    setNumPages(0);
-    setPageMeta(null);
-    // Only reset currentPage when not restoring scroll after save
-    if (pendingRestoreScrollRef.current == null) {
-      setCurrentPage(1);
-    }
     visiblePages.current.clear();
 
     (async () => {
       // Check cache first
-      let doc = pdfCache.get(filePath);
-      if (!doc) {
-        const data = await window.electronAPI.readFile(filePath);
-        doc = await pdfjsLib.getDocument({ data }).promise;
-        pdfCache.set(filePath, doc);
+      const previousGeneration = activeEntryRef.current?.generation ?? -1;
+      const latestEntry = pdfCache.get(normalizePdfCacheKey(filePath));
+      const minGeneration = request.forceDiskRead
+        ? Math.max(latestEntry?.generation ?? 0, previousGeneration + 1)
+        : latestEntry?.generation ?? Math.max(previousGeneration, 0);
+
+      acquiredEntry = await acquirePdf(filePath, minGeneration);
+      const nextEntry = acquiredEntry;
+      const nextDoc = nextEntry.doc;
+      if (!nextDoc) throw new Error("Failed to acquire PDF document");
+
+      const nextMeta = await measurePdfLayout(nextDoc);
+      if (cancelled || loadRequestIdRef.current !== requestId) {
+        releasePdf(nextEntry);
+        return;
       }
 
-      const n = doc.numPages;
-      setNumPages(n);
-      setPdf(doc);
-
       // Use page 1 dimensions for all pages (fast — avoids N sequential getPage calls)
-      const page1 = await doc.getPage(1);
-      const vp1 = page1.getViewport({ scale: 1 });
-      const containerW = scrollRef.current?.clientWidth || 800;
-      const baseScale = (containerW - 32) / vp1.width;
-      baseScaleRef.current = baseScale;
+      const previousEntry = activeEntryRef.current;
+      activeEntryRef.current = nextEntry;
+      if (previousEntry && previousEntry !== nextEntry) {
+        pendingReleaseEntryRef.current = previousEntry;
+      }
 
-      const vp = page1.getViewport({ scale: baseScale });
-      setPageMeta({
-        width: Math.floor(vp.width),
-        height: Math.floor(vp.height),
-      });
+      setPdf(nextDoc);
+      setNumPages(nextDoc.numPages);
+      setPageMeta(nextMeta);
+      if (!request.preserveView) {
+        setCurrentPage(1);
+      }
       setLoading(false);
 
       // Restore scroll position after a save-triggered reload
-      if (pendingRestoreScrollRef.current != null) {
-        const savedScroll = pendingRestoreScrollRef.current;
-        pendingRestoreScrollRef.current = null;
-        // Use double-rAF to ensure the DOM has fully laid out the page list
-        // before restoring scroll. A single rAF sometimes fires before layout
-        // is complete, causing the scroll to not stick.
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            if (scrollRef.current) {
-              scrollRef.current.scrollTop = savedScroll;
-              // Immediately recompute visible range so the virtualization
-              // doesn't flash the wrong pages before the scroll event fires.
-              const viewportH = scrollRef.current.clientHeight;
-              const pageH = Math.floor(vp.height) + PAGE_GAP;
-              if (pageH > 0 && viewportH > 0) {
-                const firstVisible = Math.max(1, Math.floor((savedScroll - BUFFER_PX) / pageH) + 1);
-                const lastVisible = Math.min(n, Math.ceil((savedScroll + viewportH + BUFFER_PX) / pageH));
-                setVisibleRange([firstVisible, lastVisible]);
-                const centerY = savedScroll + viewportH / 2;
-                setCurrentPage(Math.max(1, Math.min(n, Math.ceil(centerY / pageH))));
-              }
-            }
-          });
-        });
+      if (preservedScroll != null && scrollRef.current) {
+        scrollRef.current.scrollTop = preservedScroll;
       }
     })().catch((err) => {
       console.error("[PDFViewer] load error", err);
-      setError(String(err));
+      if (cancelled || loadRequestIdRef.current !== requestId) return;
+      if (acquiredEntry && activeEntryRef.current !== acquiredEntry) {
+        releasePdf(acquiredEntry);
+      }
+
       setLoading(false);
+      if (!hadDocument) {
+        setPdf(null);
+        setNumPages(0);
+        setPageMeta(null);
+        setError(String(err));
+      } else {
+        setError(null);
+        setToastMessage("PDF reload failed; keeping previous view");
+        if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+        toastTimerRef.current = setTimeout(() => setToastMessage(null), 5000);
+      }
+    }).finally(() => {
+      if (cancelled || loadRequestIdRef.current !== requestId) return;
+      loadInFlightRef.current = false;
+      const queuedReload = pendingReloadRef.current;
+      if (queuedReload) {
+        pendingReloadRef.current = null;
+        reloadRequestRef.current = queuedReload;
+        setPdfLoadNonce((n) => n + 1);
+      }
     });
-  }, [filePath, pdfLoadNonce]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    filePath,
+    pdfLoadNonce,
+    measurePdfLayout,
+  ]);
+
+  useEffect(() => {
+    const staleEntry = pendingReleaseEntryRef.current;
+    if (!staleEntry || staleEntry === activeEntryRef.current) return;
+    pendingReleaseEntryRef.current = null;
+    releasePdf(staleEntry);
+  }, [pdf]);
+
+  useEffect(() => {
+    return () => {
+      loadRequestIdRef.current += 1;
+      loadInFlightRef.current = false;
+      pendingReloadRef.current = null;
+
+      const pendingEntry = pendingReleaseEntryRef.current;
+      pendingReleaseEntryRef.current = null;
+      releasePdf(pendingEntry);
+
+      const activeEntry = activeEntryRef.current;
+      activeEntryRef.current = null;
+      releasePdf(activeEntry);
+    };
+  }, [filePath]);
 
   /* ── Restore scroll position + repaint when tab becomes active again ─────── */
   useEffect(() => {
     const wasActive = prevActiveRef.current;
     prevActiveRef.current = isActive;
 
-    // Tab just became ACTIVE — restore scroll and recompute visible range.
-    // Scroll position was saved continuously by the scroll handler (see
-    // computeRange below).  We cannot save it on deactivation because
-    // the useEffect fires AFTER display:none is applied and scrollTop is
-    // already reset to 0.
+    // Tab just became ACTIVE — restore scroll and force canvas repaint.
+    // Scroll position was saved continuously by the scroll handler.
     if (!wasActive && isActive && pageMeta && !loading) {
       const el = scrollRef.current;
-      if (el) {
-        // Restore the saved scroll position (the browser has reset it to 0).
-        if (savedScrollTopRef.current != null) {
-          el.scrollTop = savedScrollTopRef.current;
-        }
-        // Use rAF to wait for the element to be visible and laid out before
-        // recomputing the visible range; clientHeight is 0 until layout.
-        requestAnimationFrame(() => {
-          if (!scrollRef.current) return;
-          // Re-apply saved scroll in case DOM wasn't ready on the first set.
-          if (savedScrollTopRef.current != null) {
-            scrollRef.current.scrollTop = savedScrollTopRef.current;
-          }
-          const scrollTop = scrollRef.current.scrollTop;
-          const viewportH = scrollRef.current.clientHeight;
-          const pageH = Math.floor(pageMeta.height * zoom) + PAGE_GAP;
-          if (pageH > 0 && viewportH > 0) {
-            const firstVisible = Math.max(
-              1,
-              Math.floor((scrollTop - BUFFER_PX) / pageH) + 1,
-            );
-            const lastVisible = Math.min(
-              numPages,
-              Math.ceil((scrollTop + viewportH + BUFFER_PX) / pageH),
-            );
-            setVisibleRange([firstVisible, lastVisible]);
-            // Update currentPage to match restored scroll position
-            const centerY = scrollTop + viewportH / 2;
-            setCurrentPage(Math.max(1, Math.min(numPages, Math.ceil(centerY / pageH))));
-          }
-          // Canvas backing stores may have been discarded by the GPU while hidden.
-          // Bump renderNonce so every visible PDFPage re-paints its canvas.
-          setRenderNonce((n) => n + 1);
-        });
+      if (el && savedScrollTopRef.current != null) {
+        el.scrollTop = savedScrollTopRef.current;
       }
+      // Force canvas repaint in case GPU discarded bitmap while hidden
+      requestAnimationFrame(() => setRenderNonce((n) => n + 1));
     }
-  }, [isActive, pageMeta, loading, zoom, numPages]);
+  }, [isActive, loading, numPages, pageMeta]);
 
   /* ── Guard against DOM-reorder scroll resets (e.g. tab drag) ──────────────
      When React reorders sibling components (same key, different position in
@@ -1092,32 +1299,28 @@ export const PDFViewer: React.FC<Props> = ({
   /* ── Scroll to initialPage after load ───────────────────────────────────── */
   useEffect(() => {
     if (!initialPage || !pageMeta || !scrollRef.current || loading) return;
-    // Only scroll when initialPage or scrollNonce actually changed, not when
-    // pageMeta is recalculated (e.g. ResizeObserver on tab switch).
     const key = `${initialPage}-${scrollNonce ?? 0}`;
     if (appliedInitialScrollRef.current === key) return;
     appliedInitialScrollRef.current = key;
 
     const el = scrollRef.current;
-    // Use the same floored page height as computeRange() so scroll position
-    // and visible-range boundaries are always in sync.
     const pageH = Math.floor(pageMeta.height * zoom) + PAGE_GAP;
-    const target = (initialPage - 1) * pageH;
-    el.scrollTop = target;
-
-    // Update visibleRange now — setting scrollTop fires the scroll event
-    // asynchronously, so without this the first render after a jump still
-    // shows the old range and the target page renders as a blank placeholder.
-    const viewportH = el.clientHeight || 600;
-    const firstVisible = Math.max(1, Math.floor((target - BUFFER_PX) / pageH) + 1);
-    const lastVisible = Math.min(numPages, Math.ceil((target + viewportH + BUFFER_PX) / pageH));
-    setVisibleRange([firstVisible, lastVisible]);
+    el.scrollTop = (initialPage - 1) * pageH;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialPage, scrollNonce, pageMeta, loading]);
 
   /* ── Annotations ─────────────────────────────────────────────────────────── */
+  const lastLoadedFileRef = useRef<{ effectiveFileId: string; vaultPath: string | null } | null>(null);
+  
   const loadAnnotations = useCallback(() => {
     if (!vaultPath) return;
+    // Prevent duplicate loads for the same file
+    const lastLoaded = lastLoadedFileRef.current;
+    if (lastLoaded && lastLoaded.effectiveFileId === effectiveFileId && lastLoaded.vaultPath === vaultPath) {
+      return;
+    }
+    lastLoadedFileRef.current = { effectiveFileId, vaultPath };
+    
     window.electronAPI
       .loadAnnotations(vaultPath, effectiveFileId)
       // Highlights and pen strokes are flattened into the PDF on save,
@@ -1125,9 +1328,11 @@ export const PDFViewer: React.FC<Props> = ({
       .then((data) => setAnnotations(data.filter(shouldRenderPersistedOverlay)))
       .catch(console.error);
   }, [effectiveFileId, vaultPath]);
+
+  // Load annotations when effectiveFileId or vaultPath changes
   useEffect(() => {
     loadAnnotations();
-  }, [loadAnnotations]);
+  }, [effectiveFileId, vaultPath]);
 
   /* ── Listen for annotation saves from other windows ───────────────────────── */
   useEffect(() => {
@@ -1135,13 +1340,14 @@ export const PDFViewer: React.FC<Props> = ({
     const unsub = window.electronAPI.onAnnotationsSaved((savedPath) => {
       const normalizedSaved = savedPath.replace(/\\/g, "/").toLowerCase();
       if (normalizedSaved === normalizedLocal) {
-        pdfCache.delete(filePath);
+        invalidatePdf(filePath, activeEntryRef.current?.generation);
+        lastLoadedFileRef.current = null; // Force reload
         loadAnnotations();
-        setPdfLoadNonce((n) => n + 1);
+        reloadPdf({ preserveView: true, forceDiskRead: true });
       }
     });
     return unsub;
-  }, [filePath, loadAnnotations]);
+  }, [filePath, reloadPdf, loadAnnotations]);
 
   /* ── Listen for PDF file changes from other windows ──────────────────────── */
   useEffect(() => {
@@ -1149,12 +1355,13 @@ export const PDFViewer: React.FC<Props> = ({
     const unsub = window.electronAPI.onPdfFileChanged((changedPath) => {
       const normalizedChanged = changedPath.replace(/\\/g, "/").toLowerCase();
       if (normalizedChanged !== normalizedLocal) return;
-      pdfCache.delete(filePath);
-      setPdfLoadNonce((n) => n + 1);
+      invalidatePdf(filePath, activeEntryRef.current?.generation);
+      reloadPdf({ preserveView: true, forceDiskRead: true });
+      lastLoadedFileRef.current = null; // Force reload
       loadAnnotations();
     });
     return unsub;
-  }, [filePath, loadAnnotations]);
+  }, [filePath, reloadPdf, loadAnnotations]);
 
   /* ── Merged annotations (DB + pending - deleted) ─────────────────────────── */
   const mergedAnnotations = useMemo(() => {
@@ -1395,8 +1602,8 @@ export const PDFViewer: React.FC<Props> = ({
         return;
       }
 
-      // Invalidate cache since file changed
-      pdfCache.delete(filePath);
+      // Drop the current cached generation so the reload comes from disk.
+      invalidatePdf(filePath, activeEntryRef.current?.generation);
       try {
         await window.electronAPI.writeFile(filePath, new Uint8Array(savedBytes));
       } catch (writeErr) {
@@ -1421,15 +1628,11 @@ export const PDFViewer: React.FC<Props> = ({
         }
       }
 
-      // 5. Clear pending state and reload from DB
-      // Capture scroll position before reloading so we can restore it
-      if (scrollRef.current) {
-        pendingRestoreScrollRef.current = scrollRef.current.scrollTop;
-      }
+      // 5. Clear pending state and reload from disk while preserving the viewport
       setPendingAnnotations([]);
       setDeletedAnnotationIds(new Set());
       loadAnnotations();
-      setPdfLoadNonce((n) => n + 1);
+      reloadPdf({ preserveView: true, forceDiskRead: true });
     } catch (err) {
       console.error("[PDFViewer] Save failed", err);
       setToastMessage("Save failed: unexpected error");
@@ -1448,6 +1651,7 @@ export const PDFViewer: React.FC<Props> = ({
     effectiveFileId,
     loadAnnotations,
     pageMeta,
+    reloadPdf,
     zoom,
   ]);
 
@@ -1480,7 +1684,7 @@ export const PDFViewer: React.FC<Props> = ({
   // Clear cached page texts when PDF changes
   useEffect(() => {
     pageTextsRef.current = new Map();
-  }, [filePath, pdfLoadNonce]);
+  }, [filePath, pdf]);
 
   // Find matches when query changes
   const doSearch = useCallback((query: string) => {
@@ -1502,14 +1706,14 @@ export const PDFViewer: React.FC<Props> = ({
     setSearchMatches(matches);
     // Pick the first match at or after the current viewport position
     if (matches.length > 0) {
-      const viewPage = currentPage;
+      const viewPage = lastCurrentPageRef.current ?? 1;
       let startIdx = matches.findIndex((m) => m.page >= viewPage);
       if (startIdx < 0) startIdx = 0; // wrap to beginning if all matches are before
       setCurrentMatchIdx(startIdx);
       lastScrolledMatchRef.current = -1;
       prevScrolledForIdx.current = -1;
     }
-  }, [numPages, currentPage]);
+  }, [numPages]);
 
   // Run search whenever query changes
   useEffect(() => { doSearch(searchQuery); }, [searchQuery, doSearch]);
@@ -1642,11 +1846,10 @@ export const PDFViewer: React.FC<Props> = ({
     if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
     highlightTimeoutRef.current = setTimeout(applySearchHighlights, 150);
     return () => { if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current); };
-  }, [applySearchHighlights, visibleRange, renderNonce]);
+  }, [applySearchHighlights, renderNonce]);
 
   // After highlights are applied for a NEW match navigation, scroll to the
-  // precise position within the page. We use a separate effect so the scroll
-  // only fires when the user navigates matches, not on every visibleRange tick.
+  // precise position within the page.
   const prevScrolledForIdx = useRef<number>(-1);
   useEffect(() => {
     if (searchMatches.length === 0 || !scrollRef.current || !pageMeta) return;
@@ -1674,7 +1877,7 @@ export const PDFViewer: React.FC<Props> = ({
       prevScrolledForIdx.current = currentMatchIdx;
     }, 200);
     return () => clearTimeout(timer);
-  }, [currentMatchIdx, searchMatches, pageMeta, visibleRange]);
+  }, [currentMatchIdx, searchMatches, pageMeta]);
 
   // Clean up highlights when search is dismissed
   useEffect(() => {
@@ -1845,89 +2048,52 @@ export const PDFViewer: React.FC<Props> = ({
     };
   }, []);
 
-  /* ── Scroll-based virtualization + page tracking ──────────────────────────── */
+  /* ── Scale scroll position on zoom (before paint) ──────────────────────────── */
   const prevZoomRef = useRef(zoom);
-  const currentPageRef = useRef(currentPage);
-  currentPageRef.current = currentPage;
-
-  /* ── Synchronously correct scroll + visible range on zoom (before paint) ─── */
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (!el || !pageMeta || prevZoomRef.current === zoom) return;
     const prevZoom = prevZoomRef.current;
     prevZoomRef.current = zoom;
+    el.scrollTop = el.scrollTop * (zoom / prevZoom);
+  }, [zoom, pageMeta]);
 
-    // Proportionally scale scroll position so the same content stays in view
-    const ratio = zoom / prevZoom;
-    const scrollTop = el.scrollTop * ratio;
-    el.scrollTop = scrollTop;
-
-    // Update visible range in the same synchronous flush so pageList renders
-    // correctly on the first paint — no intermediate wrong-range frame.
-    const pageH = Math.floor(pageMeta.height * zoom) + PAGE_GAP;
-    const viewportH = el.clientHeight;
-    let firstVisible = Math.max(
-      1,
-      Math.floor((scrollTop - BUFFER_PX) / pageH) + 1,
-    );
-    const lastVisible = Math.min(
-      numPages,
-      Math.ceil((scrollTop + viewportH + BUFFER_PX) / pageH),
-    );
-    // Keep the drag-anchor page mounted so its DOM nodes stay alive
-    if (activeDragAnchorPage != null) {
-      firstVisible = Math.min(firstVisible, activeDragAnchorPage);
-    }
-    setVisibleRange([firstVisible, lastVisible]);
-  }, [zoom, pageMeta, numPages]);
-
-  /* ── Scroll-based virtualization + page tracking ──────────────────────────── */
+  /* ── Scroll-based page tracking ─────────────────────────────────────────── */
   useEffect(() => {
     const el = scrollRef.current;
     if (!el || !pageMeta) return;
 
-    const computeRange = () => {
-      const scrollTop = el.scrollTop;
-      const viewportH = el.clientHeight;
-      const pageH = Math.floor(pageMeta.height * zoom) + PAGE_GAP;
-      // Skip when hidden (display:none) — viewportH is 0 and we'd compute
-      // a bogus range that replaces real pages with blank placeholders.
-      if (pageH <= 0 || viewportH <= 0) return;
+    let rafId: number | null = null;
 
-      // Continuously save scroll position so we can restore it when the tab
-      // becomes active again after being hidden (display:none resets scrollTop).
+    const trackScroll = () => {
+      const scrollTop = el.scrollTop;
       savedScrollTopRef.current = scrollTop;
 
-      // Current page = which page is at the center of the viewport
-      const centerY = scrollTop + viewportH / 2;
-      const centerPage = Math.max(
-        1,
-        Math.min(numPages, Math.ceil(centerY / pageH)),
-      );
-      setCurrentPage(centerPage);
+      const pageH = Math.floor(pageMeta.height * zoom) + PAGE_GAP;
+      if (pageH <= 0) return;
 
-      let firstVisible = Math.max(
-        1,
-        Math.floor((scrollTop - BUFFER_PX) / pageH) + 1,
-      );
-      let lastVisible = Math.min(
-        numPages,
-        Math.ceil((scrollTop + viewportH + BUFFER_PX) / pageH),
-      );
-      // Keep the drag-anchor page mounted so its DOM nodes stay alive
-      if (activeDragAnchorPage != null) {
-        firstVisible = Math.min(firstVisible, activeDragAnchorPage);
-        lastVisible = Math.max(lastVisible, activeDragAnchorPage);
+      const centerY = scrollTop + el.clientHeight / 2;
+      const centerPage = Math.max(1, Math.min(numPages, Math.ceil(centerY / pageH)));
+      if (lastCurrentPageRef.current !== centerPage) {
+        lastCurrentPageRef.current = centerPage;
+        setCurrentPage(centerPage);
       }
-      setVisibleRange([firstVisible, lastVisible]);
     };
 
-    computeRange();
-    el.addEventListener("scroll", computeRange, { passive: true });
-    return () => el.removeEventListener("scroll", computeRange);
+    const throttled = () => {
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => { rafId = null; trackScroll(); });
+    };
+
+    trackScroll();
+    el.addEventListener("scroll", throttled, { passive: true });
+    return () => {
+      el.removeEventListener("scroll", throttled);
+      if (rafId !== null) cancelAnimationFrame(rafId);
+    };
   }, [pageMeta, zoom, numPages]);
 
-  /* ── Refit scale + force re-render when container goes hidden → visible ──── */
+  /* ── Refit scale when container goes hidden → visible ────────────────────── */
   useEffect(() => {
     const el = scrollRef.current;
     if (!el || !pdf || loading) return;
@@ -1942,26 +2108,12 @@ export const PDFViewer: React.FC<Props> = ({
       const nowVisible = w > 0 && h > 0;
 
       if (wasHidden && nowVisible) {
-        // Recompute the fit-scale with the real container width in case the
-        // PDF was loaded while the tab was hidden (display:none → clientWidth=0)
         (async () => {
-          const page1 = await pdf.getPage(1);
-          const vp1 = page1.getViewport({ scale: 1 });
-          const newBase = (w - 32) / vp1.width;
-          baseScaleRef.current = newBase;
-          const vp = page1.getViewport({ scale: newBase });
-          setPageMeta({
-            width: Math.floor(vp.width),
-            height: Math.floor(vp.height),
-          });
-          // Restore saved scroll position after pageMeta update triggers layout
-          requestAnimationFrame(() => {
-            if (savedScrollTopRef.current != null && el) {
-              el.scrollTop = savedScrollTopRef.current;
-            }
-            // Force GPU-discarded canvases to re-render
-            setRenderNonce((n) => n + 1);
-          });
+          const nextMeta = await measurePdfLayout(pdf, w);
+          setPageMeta(nextMeta);
+          if (savedScrollTopRef.current != null && scrollRef.current) {
+            scrollRef.current.scrollTop = savedScrollTopRef.current;
+          }
         })().catch(console.error);
       }
 
@@ -1971,80 +2123,57 @@ export const PDFViewer: React.FC<Props> = ({
 
     ro.observe(el);
     return () => ro.disconnect();
-  }, [pdf, loading]);
+  }, [loading, measurePdfLayout, numPages, pdf]);
 
-  /* ── Re-render canvases when window regains focus / becomes visible ───────
+  /* ── Re-render canvases when window becomes visible after being hidden ────
      Chromium (and Electron) may discard GPU-backed canvas bitmaps when the
-     window is minimised, occluded, or idle for a while.  When the user comes
-     back, those canvases appear blank.  Bumping renderNonce forces every
-     visible PDFPage to re-paint. ──────────────────────────────────────────── */
+     window is minimised or occluded.  Bumping renderNonce forces every
+     PDFPage to re-paint from the PDF. ────────────────────────────────────── */
   useEffect(() => {
     const repaintCanvases = () => {
-      // Only repaint when the page is actually visible
       if (document.visibilityState === "visible") {
         setRenderNonce((n) => n + 1);
       }
     };
 
     document.addEventListener("visibilitychange", repaintCanvases);
-    window.addEventListener("focus", repaintCanvases);
-    return () => {
-      document.removeEventListener("visibilitychange", repaintCanvases);
-      window.removeEventListener("focus", repaintCanvases);
-    };
+    return () => document.removeEventListener("visibilitychange", repaintCanvases);
   }, []);
 
-  /* ── Build page list with virtualization ──────────────────────────────────── */
+  /* ── Build page list (all pages rendered permanently) ─────────────────────── */
   const pageList = useMemo(() => {
     if (!pdf || !pageMeta) return null;
     const scale = baseScaleRef.current * zoom;
     const cssW = Math.floor(pageMeta.width * zoom);
     const cssH = Math.floor(pageMeta.height * zoom);
-    const [lo, hi] = visibleRange;
 
-    return Array.from({ length: numPages }, (_, i) => {
-      const pageNum = i + 1;
-
-      // Only render pages near the viewport; placeholders for the rest
-      if (pageNum < lo || pageNum > hi) {
-        return (
-          <PagePlaceholder
-            key={`ph-${pageNum}`}
-            cssWidth={cssW}
-            cssHeight={cssH}
-          />
-        );
-      }
-
-      return (
-        <PDFPage
-          key={`${filePath}-${pageNum}`}
-          pdf={pdf}
-          pageNum={pageNum}
-          scale={scale}
-          cssWidth={cssW}
-          cssHeight={cssH}
-          activeTool={activeTool}
-          highlightColor={hlColor}
-          fileId={effectiveFileId}
-          vaultPath={vaultPath ?? ""}
-          annotations={mergedAnnotations}
-          onAnnotationCreated={onAnnotationCreated}
-          onAnnotationDeleted={onAnnotationDeleted}
-          onAnnotationUpdated={onAnnotationUpdated}
-          fontSize={fontSize}
-          textColor={textColor}
-          zoom={zoom}
-          renderNonce={renderNonce}
-        />
-      );
-    });
+    return Array.from({ length: numPages }, (_, i) => (
+      <PDFPage
+        key={`${filePath}-${i + 1}`}
+        pdf={pdf}
+        pageNum={i + 1}
+        scale={scale}
+        cssWidth={cssW}
+        cssHeight={cssH}
+        activeTool={activeTool}
+        highlightColor={hlColor}
+        fileId={effectiveFileId}
+        vaultPath={vaultPath ?? ""}
+        annotations={mergedAnnotations}
+        onAnnotationCreated={onAnnotationCreated}
+        onAnnotationDeleted={onAnnotationDeleted}
+        onAnnotationUpdated={onAnnotationUpdated}
+        fontSize={fontSize}
+        textColor={textColor}
+        zoom={zoom}
+        renderNonce={renderNonce}
+      />
+    ));
   }, [
     pdf,
     pageMeta,
     zoom,
     numPages,
-    visibleRange,
     filePath,
     activeTool,
     hlColor,
@@ -2086,7 +2215,7 @@ export const PDFViewer: React.FC<Props> = ({
         textColor={textColor}
         onTextColorChange={setTextColor}
         onPageChange={scrollToPage}
-        onSearchToggle={() => { setShowSearch((s) => !s); setTimeout(() => searchInputRef.current?.focus(), 50); }}
+        onSearchToggle={useCallback(() => { setShowSearch((s) => !s); setTimeout(() => searchInputRef.current?.focus(), 50); }, [])}
       />
 
       {/* ── Toast notification ── */}
@@ -2182,11 +2311,29 @@ export const PDFViewer: React.FC<Props> = ({
           position: "relative",
         }}
       >
-        {loading && (
+        {loading && !pdf && (
           <div className="flex items-center justify-center h-full">
             <div className="text-[#6e6e6e] text-sm animate-pulse">
               Loading PDF…
             </div>
+          </div>
+        )}
+        {loading && pdf && !error && (
+          <div
+            style={{
+              position: "absolute",
+              top: 16,
+              right: 16,
+              zIndex: 20,
+              background: "rgba(20,20,20,0.88)",
+              border: "1px solid #2f2f2f",
+              borderRadius: 999,
+              padding: "6px 10px",
+              color: "#a3a3a3",
+              fontSize: 11,
+            }}
+          >
+            Refreshing PDF…
           </div>
         )}
         {error && (
@@ -2198,7 +2345,7 @@ export const PDFViewer: React.FC<Props> = ({
             </div>
           </div>
         )}
-        {!loading && !error && (
+        {pdf && pageMeta && !error && (
           <div
             className="pdf-scroll-inner"
             style={{
@@ -2213,7 +2360,7 @@ export const PDFViewer: React.FC<Props> = ({
             {pageList}
           </div>
         )}
-        {!loading && !error && (
+        {pdf && pageMeta && !error && (
           <FloatingActionBar
             containerRef={scrollRef as React.RefObject<HTMLElement>}
             currentPage={currentPage}

@@ -509,40 +509,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ vaultPath }) => {
   }, [normalizePath]);
 
   // ── Cross-window sync: close + reopen pdf tab when saved elsewhere ─────
-  useEffect(() => {
-    const unsub = window.electronAPI.onPdfFileChanged((changedPath) => {
-      const normalizedChanged = normalizePath(changedPath);
-      setOpenFiles((prev) => {
-        const file = prev.find((f) => normalizePath(f.filePath) === normalizedChanged && f.fileType === 'pdf');
-        if (!file) return prev;
-        // Replace with a new object to force remount (fresh load)
-        return prev.map((f) =>
-          normalizePath(f.filePath) === normalizedChanged
-            ? { ...f, scrollNonce: Date.now() }
-            : f
-        );
-      });
-    });
-    return unsub;
-  }, [normalizePath]);
-
   // ── Cross-window sync: refresh pdf tab when annotations saved elsewhere ──
-  useEffect(() => {
-    const unsub = window.electronAPI.onAnnotationsSaved((savedPath) => {
-      const normalizedSaved = normalizePath(savedPath);
-      setOpenFiles((prev) => {
-        const file = prev.find((f) => f.fileType === 'pdf' && normalizePath(f.filePath) === normalizedSaved);
-        if (!file) return prev;
-        return prev.map((f) =>
-          f.fileType === 'pdf' && normalizePath(f.filePath) === normalizedSaved
-            ? { ...f, scrollNonce: Date.now() }
-            : f,
-        );
-      });
-    });
-    return unsub;
-  }, [normalizePath]);
-
   const handleDragStart = useCallback(
     (e: React.DragEvent, type: "tab" | "group", id: string) => {
       dragRef.current =

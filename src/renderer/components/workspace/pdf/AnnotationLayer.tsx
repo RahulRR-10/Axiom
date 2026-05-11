@@ -17,7 +17,7 @@ type Props = {
   vaultPath:           string;
   cssWidth:            number;
   cssHeight:           number;
-  wrapperRef:          React.RefObject<HTMLDivElement>;
+  wrapperRef:          React.RefObject<HTMLDivElement | null>;
   annotations:         Annotation[];
   onAnnotationCreated: (ann: Annotation) => void;
   onAnnotationDeleted: (annId: string) => void;
