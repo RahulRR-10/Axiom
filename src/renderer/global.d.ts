@@ -1,4 +1,4 @@
-import type { Annotation, AppUpdateState, FileNode, IndexStatus, NoteDetail, NoteSummary, SearchResult } from '../shared/types';
+import type { Annotation, AppUpdateState, FileNode, IndexStatus, NoteDetail, NoteSummary, SearchResult, WorkspaceState } from '../shared/types';
 import type { VaultIndexProgressPayload } from '../shared/ipc/contracts';
 
 declare global {
@@ -87,6 +87,10 @@ declare global {
       getAppUpdateState: () => Promise<AppUpdateState>;
       onAppUpdateStateChange: (callback: (state: AppUpdateState) => void) => () => void;
       downloadLatestRelease: () => Promise<void>;
+
+      // ── Workspace session persistence ──────────────────────────────────
+      saveWorkspaceState: (state: WorkspaceState) => Promise<void>;
+      loadWorkspaceState: () => Promise<WorkspaceState | null>;
 
       // ── Screenshot ──────────────────────────────────────────────────────
       triggerScreenshot: () => void;

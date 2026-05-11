@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
-import { VAULT_CHANNELS, WINDOW_CHANNELS, SEARCH_CHANNELS, ANNOTATION_CHANNELS, NOTES_CHANNELS, AI_CHANNELS, SCREENSHOT_CHANNELS, UPDATER_CHANNELS } from '../shared/ipc/channels';
-import type { FileNode, IndexStatus, SearchResult, Annotation, NoteSummary, NoteDetail, AppUpdateState } from '../shared/types';
+import { VAULT_CHANNELS, WINDOW_CHANNELS, SEARCH_CHANNELS, ANNOTATION_CHANNELS, NOTES_CHANNELS, AI_CHANNELS, SCREENSHOT_CHANNELS, UPDATER_CHANNELS, WORKSPACE_CHANNELS } from '../shared/ipc/channels';
+import type { FileNode, IndexStatus, SearchResult, Annotation, NoteSummary, NoteDetail, AppUpdateState, WorkspaceState } from '../shared/types';
 import type { VaultIndexProgressPayload } from '../shared/ipc/contracts';
 
 const electronAPI = {
@@ -259,6 +259,13 @@ const electronAPI = {
 
   downloadLatestRelease: (): Promise<void> =>
     ipcRenderer.invoke(UPDATER_CHANNELS.DOWNLOAD_LATEST),
+
+  // ── Workspace session persistence ──────────────────────────────────────
+  saveWorkspaceState: (state: WorkspaceState): Promise<void> =>
+    ipcRenderer.invoke(WORKSPACE_CHANNELS.SAVE, state),
+
+  loadWorkspaceState: (): Promise<WorkspaceState | null> =>
+    ipcRenderer.invoke(WORKSPACE_CHANNELS.LOAD),
 
   // ── Screenshot ─────────────────────────────────────────────────────────
   triggerScreenshot: (): void =>

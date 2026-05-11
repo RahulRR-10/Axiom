@@ -6,6 +6,7 @@ import { registerVaultHandlers } from './ipc/vaultHandlers';
 import { registerSearchHandlers } from './ipc/searchHandlers';
 import { registerAnnotationHandlers } from './ipc/annotationHandlers';
 import { registerNotesHandlers } from './ipc/notesHandlers';
+import { registerWorkspaceHandlers } from './ipc/workspaceHandlers';
 import { setupAISessions, writeWebviewPreload } from './ai/spoofing';
 import { injectPrompt } from './ai/vaultInject';
 import { initAppUpdater } from './updater';
@@ -343,6 +344,8 @@ app.whenReady().then(() => {
   registerAnnotationHandlers();
   logStep('registerNotesHandlers');
   registerNotesHandlers();
+  logStep('registerWorkspaceHandlers');
+  registerWorkspaceHandlers();
 
   logStep('setupAISessions');
   // AI webview spoofing — rewrite headers + write fingerprint preload to disk

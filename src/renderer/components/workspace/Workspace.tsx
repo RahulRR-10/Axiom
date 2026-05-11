@@ -4,6 +4,7 @@ import { X, ChevronRight, ZoomIn, ZoomOut } from "lucide-react";
 
 import { PDFViewer } from "./pdf/PDFViewer";
 import { NotesEditor } from "./notes/NotesEditor";
+import type { WorkspaceState } from "../../../shared/types";
 
 // ── Simple image viewer (loads via IPC to bypass webSecurity) ─────────────────
 
@@ -234,6 +235,68 @@ export const Workspace: React.FC<WorkspaceProps> = ({ vaultPath }) => {
     | null
   >(null);
   const [dropIndicator, setDropIndicator] = useState<string | null>(null);
+
+  // ── Session persistence ───────────────────────────────────────────────
+  const pageNumbersRef = useRef<Record<string, number>>({});
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pageSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const doSave = useCallback(() => {
+    const state: WorkspaceState = {
+      openFiles: openFiles.map((f) => ({
+        filePath: f.filePath,
+        fileId: f.fileId,
+        fileType: f.fileType,
+        name: f.name,
+        initialPage: pageNumbersRef.current[f.filePath] || f.initialPage,
+      })),
+      activeFilePath,
+      tabGroups,
+      pageNumbers: { ...pageNumbersRef.current },
+    };
+    window.electronAPI.saveWorkspaceState(state);
+  }, [openFiles, activeFilePath, tabGroups]);
+
+  // Debounced save on state changes (tabs, groups, active file)
+  useEffect(() => {
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(doSave, 500);
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    };
+  }, [doSave]);
+
+  // Debounced save on page changes (longer debounce)
+  const handlePageChange = useCallback(
+    (filePath: string, page: number) => {
+      pageNumbersRef.current[filePath] = page;
+      if (pageSaveTimerRef.current) clearTimeout(pageSaveTimerRef.current);
+      pageSaveTimerRef.current = setTimeout(doSave, 2000);
+    },
+    [doSave],
+  );
+
+  // Restore workspace state when vault is opened
+  useEffect(() => {
+    if (!vaultPath) return;
+    window.electronAPI.loadWorkspaceState().then((saved) => {
+      if (!saved || saved.openFiles.length === 0) return;
+      setOpenFiles(
+        saved.openFiles.map((f) => ({
+          ...f,
+          scrollNonce: f.initialPage ? Date.now() : undefined,
+        })),
+      );
+      if (
+        saved.activeFilePath &&
+        saved.openFiles.some((f) => f.filePath === saved.activeFilePath)
+      ) {
+        setActiveFilePath(saved.activeFilePath);
+      }
+      if (saved.tabGroups) setTabGroups(saved.tabGroups);
+      if (saved.pageNumbers) pageNumbersRef.current = saved.pageNumbers;
+    });
+  }, [vaultPath]);
 
   // Derived active file
   const activeIdx = openFiles.findIndex(
@@ -915,6 +978,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ vaultPath }) => {
                   initialPage={f.initialPage}
                   scrollNonce={f.scrollNonce}
                   isActive={isActive}
+                  onPageChange={handlePageChange}
                 />
               </div>
             );

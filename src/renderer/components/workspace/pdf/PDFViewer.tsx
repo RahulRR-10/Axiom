@@ -217,6 +217,8 @@ type Props = {
   scrollNonce?: number;
   /** Whether this viewer's tab is currently active/visible */
   isActive?: boolean;
+  /** Called when the user scrolls to a different page */
+  onPageChange?: (filePath: string, page: number) => void;
 };
 
 /* ─── Single page renderer ─────────────────────────────────────────────────── */
@@ -994,6 +996,7 @@ export const PDFViewer: React.FC<Props> = ({
   initialPage,
   scrollNonce,
   isActive = true,
+  onPageChange,
 }) => {
   // Use filePath as the stable identifier to prevent re-renders when fileId changes from null to a value
   const effectiveFileId = filePath;
@@ -1026,6 +1029,8 @@ export const PDFViewer: React.FC<Props> = ({
    *  re-scroll when only pageMeta changes (e.g. after a tab switch). */
   const appliedInitialScrollRef = useRef<string | null>(null);
   const lastCurrentPageRef = useRef<number | null>(null);
+  const onPageChangeRef = useRef(onPageChange);
+  onPageChangeRef.current = onPageChange;
 
   /* ── Toast state for "Note saved" notification ───────────────────────────── */
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -2077,6 +2082,7 @@ export const PDFViewer: React.FC<Props> = ({
       if (lastCurrentPageRef.current !== centerPage) {
         lastCurrentPageRef.current = centerPage;
         setCurrentPage(centerPage);
+        onPageChangeRef.current?.(filePath, centerPage);
       }
     };
 

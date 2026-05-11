@@ -68,3 +68,8 @@ export const UPDATER_CHANNELS = {
   STATE_CHANGED: 'updater:state-changed',
   DOWNLOAD_LATEST: 'updater:download-latest',
 } as const;
+
+export const WORKSPACE_CHANNELS = {
+  SAVE: 'workspace:save',
+  LOAD: 'workspace:load',
+} as const;

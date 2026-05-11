@@ -135,3 +135,24 @@ export type TextboxAnnotation = AnnotationBase & {
 };
 
 export type Annotation = HighlightAnnotation | StickyAnnotation | DrawAnnotation | TextboxAnnotation;
+
+// ── Workspace Session ─────────────────────────────────────────────────────────
+
+export type WorkspaceState = {
+  openFiles: Array<{
+    filePath: string;
+    fileId: string | null;
+    fileType: string;
+    name: string;
+    initialPage?: number;
+  }>;
+  activeFilePath: string | null;
+  tabGroups: Array<{
+    id: string;
+    name: string;
+    color: string;
+    collapsed: boolean;
+    filePaths: string[];
+  }>;
+  pageNumbers: Record<string, number>;
+};
