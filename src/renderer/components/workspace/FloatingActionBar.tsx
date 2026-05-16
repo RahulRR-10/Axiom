@@ -53,7 +53,7 @@ function getPageNum(textLayer: HTMLElement): number {
  * Uses span-level bounding rects to avoid including non-text DOM elements.
  * Returns one annotation per page so cross-page selections work.
  */
-function buildHighlightFromSelection(
+export function buildHighlightFromSelection(
   fileId: string,
   color: string,
 ): { annotation: HighlightAnnotation; page: number }[] | null {

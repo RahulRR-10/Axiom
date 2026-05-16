@@ -9,6 +9,7 @@ import {
   ZoomOut,
   Save,
   Search,
+  RotateCcw,
 } from 'lucide-react';
 
 export type PDFTool =
@@ -54,6 +55,7 @@ type Props = {
   onTextColorChange: (c: string) => void;
   onPageChange?:     (page: number) => void;
   onSearchToggle?:   () => void;
+  onRotate?:         () => void;
 };
 
 export const PDFToolbar: React.FC<Props> = ({
@@ -73,6 +75,7 @@ export const PDFToolbar: React.FC<Props> = ({
   onTextColorChange,
   onPageChange,
   onSearchToggle,
+  onRotate,
 }) => {
   const [colorOpen, setColorOpen]       = useState(false);
   const [editingPage, setEditingPage]   = useState(false);
@@ -345,6 +348,17 @@ export const PDFToolbar: React.FC<Props> = ({
         >
           <ZoomIn size={16} />
         </button>
+
+        {onRotate && (
+          <button
+            type="button"
+            onClick={onRotate}
+            className="h-8 w-8 flex items-center justify-center rounded text-[#8a8a8a] hover:bg-[#2a2a2a] hover:text-[#d4d4d4] transition-colors ml-1"
+            title="Rotate PDF (Ctrl+Shift+R)"
+          >
+            <RotateCcw size={16} />
+          </button>
+        )}
       </div>
     </div>
   );

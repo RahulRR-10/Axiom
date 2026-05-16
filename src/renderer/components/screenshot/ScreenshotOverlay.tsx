@@ -389,12 +389,12 @@ export const ScreenshotOverlay: React.FC = () => {
             </div>
           )}
 
-          {/* Dimension label */}
+          {/* Dimension label (flip below when near top) */}
           <div
             style={{
               position: 'absolute',
               left: selRect.left,
-              top: selRect.top - 28,
+              top: selRect.top < 34 ? selRect.top + selRect.height + 6 : selRect.top - 28,
               background: 'rgba(0,0,0,0.75)',
               backdropFilter: 'blur(4px)',
               color: '#d4d4d4',
@@ -409,13 +409,15 @@ export const ScreenshotOverlay: React.FC = () => {
             {Math.round(selRect.width)} × {Math.round(selRect.height)}
           </div>
 
-          {/* ── Action toolbar (below selection) ── */}
+          {/* ── Action toolbar (below selection, flips above when near bottom) ── */}
           {finalized && (
             <div
               style={{
                 position: 'absolute',
                 left: selRect.left + selRect.width / 2,
-                top: selRect.top + selRect.height + 16,
+                top: selRect.top + selRect.height + 16 > window.innerHeight - 60
+                  ? Math.max(8, selRect.top - 56)
+                  : selRect.top + selRect.height + 16,
                 transform: 'translateX(-50%)',
                 display: 'flex',
                 gap: 8,

@@ -123,11 +123,12 @@ export const SearchPanel: React.FC<SearchPanelProps> = ({ vaultPath }) => {
 
   // ── Open / close via spotlight:open event ──────────────────────────────
   useEffect(() => {
-    const onOpen = (): void => {
+    const onOpen = (e: Event): void => {
+      const query = (e as CustomEvent<{ query?: string }>).detail?.query;
       // Dismiss any open vault context menus so they don't overlay the search
       window.dispatchEvent(new Event('dismissFileCtxMenu'));
       setOpen(true);
-      setQuery("");
+      setQuery(query ?? "");
       setResults([]);
       setCursor(0);
       setFilters({ fileType: "all", subject: "all", sort: "relevance" });

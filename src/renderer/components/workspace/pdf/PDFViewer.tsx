@@ -29,6 +29,14 @@ import type { PDFTool } from "./PDFToolbar";
 import { PDFToolbar } from "./PDFToolbar";
 import { FloatingActionBar } from "../FloatingActionBar";
 import { AnnotationLayer } from "./AnnotationLayer";
+import { Copy, Highlighter, Send, Search as SearchIcon, Camera, ExternalLink, StickyNote } from "lucide-react";
+import {
+  NotePickerPopover,
+  getSessionDefault,
+  setSessionDefault,
+  syncSessionVault,
+} from "../NotePickerPopover";
+import { buildHighlightFromSelection } from "../FloatingActionBar";
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 require("../../../styles/pdf-text-layer.css");
 
@@ -82,6 +90,16 @@ type Props = {
   isActive?: boolean;
 };
 
+/** Callback ref that keeps a fixed-position context menu within the viewport. */
+const clampMenuRef = (el: HTMLDivElement | null) => {
+  if (!el) return;
+  const rect = el.getBoundingClientRect();
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  if (rect.bottom > vh) el.style.top = `${Math.max(0, vh - rect.height)}px`;
+  if (rect.right > vw) el.style.left = `${Math.max(0, vw - rect.width)}px`;
+};
+
 /* ─── Single page renderer ─────────────────────────────────────────────────── */
 const PDFPage = React.memo(function PDFPage({
   pdf,
@@ -101,6 +119,7 @@ const PDFPage = React.memo(function PDFPage({
   textColor: propTextColor,
   zoom: propZoom,
   renderNonce: _renderNonce,
+  rotation = 0,
 }: {
   pdf: PDFDocumentProxy;
   pageNum: number;
@@ -119,6 +138,7 @@ const PDFPage = React.memo(function PDFPage({
   textColor: string;
   zoom: number;
   renderNonce: number;
+  rotation?: number;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const textLayerRef = useRef<HTMLDivElement>(null);
@@ -170,7 +190,7 @@ const PDFPage = React.memo(function PDFPage({
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const rawAnns: any[] = await page.getAnnotations();
         if (cancelled) { page.cleanup(); return; }
-        const viewport = page.getViewport({ scale: 1 });
+        const viewport = page.getViewport({ scale: 1, rotation });
         const naturalHeight = viewport.height;
         const links = rawAnns
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -182,7 +202,7 @@ const PDFPage = React.memo(function PDFPage({
       } catch { /* ignore */ }
     })();
     return () => { cancelled = true; };
-  }, [pdf, pageNum]);
+  }, [pdf, pageNum, rotation]);
 
   /* Render canvas + text layer */
   useEffect(() => {
@@ -204,8 +224,8 @@ const PDFPage = React.memo(function PDFPage({
       // Cap DPR to avoid enormous canvas sizes on high-DPI displays,
       // which cause image-heavy PDFs to render very slowly.
       const dpr = Math.min(rawDpr, 2);
-      const cssViewport = page.getViewport({ scale });
-      const canvasViewport = page.getViewport({ scale: scale * dpr });
+      const cssViewport = page.getViewport({ scale, rotation });
+      const canvasViewport = page.getViewport({ scale: scale * dpr, rotation });
 
       // Render into an offscreen canvas so the visible canvas is never blank.
       const offscreen = document.createElement("canvas");
@@ -758,7 +778,7 @@ const PDFPage = React.memo(function PDFPage({
       cleanupSelectionRef.dblclick = null;
       cleanupSelectionRef.div = null;
     };
-  }, [pdf, pageNum, scale, cssWidth, cssHeight, _renderNonce]);
+  }, [pdf, pageNum, scale, cssWidth, cssHeight, rotation, _renderNonce]);
 
   return (
     <div
@@ -793,6 +813,9 @@ const PDFPage = React.memo(function PDFPage({
           position: "absolute",
           top: 0,
           left: 0,
+          width: cssWidth,
+          height: cssHeight,
+          background: "#fff",
           pointerEvents: "none",
         }}
       />
@@ -896,6 +919,9 @@ export const PDFViewer: React.FC<Props> = ({
   const [visibleRange, setVisibleRange] = useState<[number, number]>([1, 3]);
   const [pdfLoadNonce, setPdfLoadNonce] = useState(0);
   const [renderNonce, setRenderNonce] = useState(0);
+  const [pageCtxMenu, setPageCtxMenu] = useState<{ x: number; y: number } | null>(null);
+  const [notePickerPos, setNotePickerPos] = useState<{ top: number; left: number } | null>(null);
+  const [rotation, setRotation] = useState(0);
   /** Scroll position to restore after a save-triggered reload */
   const pendingRestoreScrollRef = useRef<number | null>(null);
   /** Scroll position saved when the tab becomes inactive, so we can restore it
@@ -922,6 +948,22 @@ export const PDFViewer: React.FC<Props> = ({
       if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     };
   }, []);
+
+  /* ── Dismiss context menu on outside click / Escape ────────────────────── */
+  useEffect(() => {
+    if (!pageCtxMenu) return;
+    const dismiss = () => setPageCtxMenu(null);
+    window.addEventListener("click", dismiss);
+    window.addEventListener("dismissFileCtxMenu", dismiss);
+    window.addEventListener("toolchange", dismiss);
+    window.addEventListener("zoomchange", dismiss);
+    return () => {
+      window.removeEventListener("click", dismiss);
+      window.removeEventListener("dismissFileCtxMenu", dismiss);
+      window.removeEventListener("toolchange", dismiss);
+      window.removeEventListener("zoomchange", dismiss);
+    };
+  }, [pageCtxMenu]);
 
   /* ── Search state ────────────────────────────────────────────────────────── */
   const [showSearch, setShowSearch] = useState(false);
@@ -1718,7 +1760,24 @@ export const PDFViewer: React.FC<Props> = ({
     scrollRef.current.scrollTop = target;
   }, [pageMeta, zoom]);
 
-  /* ── Escape to deactivate tool / Ctrl+S to save / Ctrl+F to search ──────── */
+  const reloadPdf = useCallback((opts?: { preserveView?: boolean; forceDiskRead?: boolean }) => {
+    if (opts?.preserveView && scrollRef.current) {
+      pendingRestoreScrollRef.current = scrollRef.current.scrollTop;
+    }
+    if (opts?.forceDiskRead) {
+      pdfCache.delete(filePath);
+      setAnnotations([]);
+      setPendingAnnotations([]);
+      setDeletedAnnotationIds(new Set());
+    }
+    setPdfLoadNonce((n) => n + 1);
+  }, [filePath]);
+
+  const handleRotate = useCallback(() => {
+    setRotation((r) => (r + 90) % 360);
+  }, []);
+
+  /* ── Escape / keyboard shortcuts ─────────────────────────────────────────── */
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       // Don't intercept shortcuts when user is typing in an input/textarea
@@ -1730,6 +1789,7 @@ export const PDFViewer: React.FC<Props> = ({
       );
 
       if (e.key === "Escape") {
+        if (pageCtxMenu) { setPageCtxMenu(null); return; }
         if (showSearch) { closeSearch(); return; }
         if (!isTyping) setActiveTool("none");
       }
@@ -1745,10 +1805,25 @@ export const PDFViewer: React.FC<Props> = ({
         e.preventDefault();
         savePdf();
       }
+      if (!isTyping && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "r") {
+        e.preventDefault();
+        if (e.shiftKey) {
+          handleRotate();
+        } else {
+          reloadPdf({ preserveView: true, forceDiskRead: true });
+        }
+      }
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [savePdf, showSearch, closeSearch]);
+  }, [savePdf, showSearch, closeSearch, pageCtxMenu, reloadPdf]);
+
+  /* ── Right-click context menu on PDF pages ─────────────────────────────── */
+  const onPageContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setPageCtxMenu({ x: e.clientX, y: e.clientY });
+  }, []);
 
   /* ── Grab-to-pan (drag to scroll when zoomed in) ─────────────────────────── */
   useEffect(() => {
@@ -1998,8 +2073,9 @@ export const PDFViewer: React.FC<Props> = ({
   const pageList = useMemo(() => {
     if (!pdf || !pageMeta) return null;
     const scale = baseScaleRef.current * zoom;
-    const cssW = Math.floor(pageMeta.width * zoom);
-    const cssH = Math.floor(pageMeta.height * zoom);
+    const isSwapped = rotation === 90 || rotation === 270;
+    const cssW = Math.floor((isSwapped ? pageMeta.height : pageMeta.width) * zoom);
+    const cssH = Math.floor((isSwapped ? pageMeta.width : pageMeta.height) * zoom);
     const [lo, hi] = visibleRange;
 
     return Array.from({ length: numPages }, (_, i) => {
@@ -2036,6 +2112,7 @@ export const PDFViewer: React.FC<Props> = ({
           textColor={textColor}
           zoom={zoom}
           renderNonce={renderNonce}
+          rotation={rotation}
         />
       );
     });
@@ -2043,6 +2120,7 @@ export const PDFViewer: React.FC<Props> = ({
     pdf,
     pageMeta,
     zoom,
+    rotation,
     numPages,
     visibleRange,
     filePath,
@@ -2087,6 +2165,7 @@ export const PDFViewer: React.FC<Props> = ({
         onTextColorChange={setTextColor}
         onPageChange={scrollToPage}
         onSearchToggle={() => { setShowSearch((s) => !s); setTimeout(() => searchInputRef.current?.focus(), 50); }}
+        onRotate={handleRotate}
       />
 
       {/* ── Toast notification ── */}
@@ -2201,6 +2280,7 @@ export const PDFViewer: React.FC<Props> = ({
         {!loading && !error && (
           <div
             className="pdf-scroll-inner"
+            onContextMenu={onPageContextMenu}
             style={{
               display: "flex",
               flexDirection: "column",
@@ -2226,6 +2306,94 @@ export const PDFViewer: React.FC<Props> = ({
             annotations={mergedAnnotations}
             onAnnotationDeleted={onAnnotationDeleted}
           />
+        )}
+
+        {/* ── Page context menu ── */}
+        {pageCtxMenu && (
+          <div
+            ref={clampMenuRef}
+            style={{
+              position: 'fixed',
+              top: pageCtxMenu.y,
+              left: pageCtxMenu.x,
+              zIndex: 9998,
+              background: '#2d2d2d',
+              border: '1px solid #444',
+              borderRadius: '6px',
+              padding: '4px 0',
+              boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+              minWidth: '180px',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {(() => {
+              const sel = window.getSelection();
+              const hasText = sel && !sel.isCollapsed && sel.rangeCount > 0;
+              const sep = <div style={{ height: 1, background: '#3a3a3a', margin: '4px 0' }} />;
+              const item = (label: string, icon: React.ReactNode, onClick: () => void) => (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); setPageCtxMenu(null); onClick(); }}
+                  className="w-full text-left px-3 py-1.5 text-xs hover:bg-[#3a3a3a] transition-colors flex items-center gap-2"
+                  style={{ color: '#d4d4d4' }}
+                >
+                  {icon}
+                  {label}
+                </button>
+              );
+              const items: React.ReactNode[] = [];
+              if (hasText) {
+                items.push(item('Copy', <Copy size={12} />, () => { document.execCommand('copy'); }));
+                items.push(item('Highlight', <Highlighter size={12} />, () => {
+                  const build = buildHighlightFromSelection(effectiveFileId, hlColor);
+                  if (build) for (const b of build) onAnnotationCreated(b.annotation);
+                }));
+                items.push(item('Send to AI', <Send size={12} />, () => {
+                  window.dispatchEvent(new CustomEvent('openai:chat', { detail: { text: sel!.toString() } }));
+                }));
+                items.push(item('Save to Note', <StickyNote size={12} />, () => {
+                  setNotePickerPos({ top: pageCtxMenu.y, left: pageCtxMenu.x });
+                }));
+                items.push(item('Search vault…', <SearchIcon size={12} />, () => {
+                  window.dispatchEvent(new CustomEvent('spotlight:open', { detail: { query: sel!.toString() } }));
+                }));
+                items.push(sep);
+              }
+              items.push(item('Take screenshot', <Camera size={12} />, () => {
+                setTimeout(() => window.electronAPI.triggerScreenshot(), 50);
+              }));
+              items.push(item('Open in new window', <ExternalLink size={12} />, () => {
+                void window.electronAPI.openNewWindow(filePath, 'pdf', vaultPath ?? null);
+              }));
+              return items;
+            })()}
+          </div>
+        )}
+
+        {/* ── Note picker popover for "Save to Note" ── */}
+        {notePickerPos && (
+          <div
+            style={{
+              position: 'fixed',
+              top: notePickerPos.top,
+              left: notePickerPos.left,
+              zIndex: 10000,
+            }}
+          >
+            <NotePickerPopover
+              vaultPath={vaultPath ?? ''}
+              sourceSubject={null}
+              selectedText={window.getSelection()?.toString() ?? ''}
+              sourceFile={filePath}
+              sourcePage={currentPage}
+              onSaved={() => {
+                setNotePickerPos(null);
+                window.dispatchEvent(new CustomEvent('noteSavedToast', { detail: { noteTitle: '' } }));
+              }}
+              onDeleted={() => setNotePickerPos(null)}
+              onClose={() => setNotePickerPos(null)}
+            />
+          </div>
         )}
       </div>
     </div>
